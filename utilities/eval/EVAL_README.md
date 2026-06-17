@@ -32,7 +32,29 @@ repo `aux_tasks/evals`→`results/aux/evals`. The aux master CSV is no longer in
 # thinking is autodetected from the endpoint; override with --thinking on|off
 ```
 `--stages` is any subset. step1299 (multimodal) → `aux,benchmarks`. A visual-obs/oracle 27B
-ckpt → `visualobs` (+ `aux`). `eval_all.sh` orchestrates only — the server must already be up.
+ckpt → `visualobs` (+ `aux`). By default `eval_all.sh` orchestrates only — the server must already be up.
+
+## `--serve` — serve + eval + teardown in one shot (the sbatch pattern)
+Add `--serve` and `eval_all.sh` launches its OWN vLLM, waits for health, runs the stages,
+compiles the master CSV, then **kills only the server it started** on exit (trap on EXIT/INT/TERM
+— never `pkill`-by-pattern, honoring the never-stop-others'-processes rule). Wrap it in one
+`sbatch` script: allocate node → serve → eval all → teardown → node frees when the job ends.
+Fully unattended.
+```bash
+# inside an sbatch job (hostname/node already allocated):
+/home/sgsilva/utilities/eval/eval_all.sh \
+  --model /mnt/data/sgsilva/models/<exported-ckpt> --base-model qwen3.5-4b \
+  --stages aux,benchmarks,visualobs --serve --thinking off \
+  --base-url http://localhost:8000/v1 \
+  --train-group-id <group> --run-id <run>
+```
+- `--thinking on|off` is **REQUIRED** with `--serve` (can't probe a server that isn't up yet; it
+  sets `ENABLE_THINKING`). MUST match the SFT target (non-reasoning→off, else degenerate loop).
+- Serve params default by base-model (`4b/9b`→ TP 8 / max-len 32768; `27b`→ TP 8 / 65536);
+  override with `--tp` / `--max-len`. Port is parsed from `--base-url`.
+- `--serve-wait <secs>` health-wait budget (default 1800). Serve log →
+  `/mnt/data/sgsilva/logs/eval_all_serve_<model>_think<mode>.log`.
+- `--serve` and `--preflight` are mutually exclusive (preflight launches nothing).
 
 **ALWAYS preflight first** (5s, no eval launched) — add `--preflight` to the exact command you
 plan to run. It validates: server reachable + served id matches `--model`; `max_model_len` >

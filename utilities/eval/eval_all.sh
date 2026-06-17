@@ -40,6 +40,7 @@ VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visua
 MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1"
 THINKING=""; TRAIN_GROUP_ID=""; RUN_ID=""; TAG=""; TESTSET="1506"; MAX_SAMPLES=""
 BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""
+SERVE=0; TP=""; MAX_LEN=""; SERVE_WAIT=1800   # --serve: launch+teardown our own vLLM
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --judge-base-url) JUDGE_BASE_URL="$2"; shift 2;;
@@ -56,12 +57,34 @@ while [[ $# -gt 0 ]]; do
     --max-samples) MAX_SAMPLES="$2"; shift 2;;
     --bench-extra) BENCH_EXTRA="$2"; shift 2;;
     --preflight) PREFLIGHT=1; shift;;   # validate everything + exit WITHOUT running any eval
+    --serve) SERVE=1; shift;;           # launch our OWN vLLM, run, then kill it on exit (sbatch-friendly)
+    --tp) TP="$2"; shift 2;;            # tensor-parallel size (default by base-model)
+    --max-len) MAX_LEN="$2"; shift 2;;  # served max_model_len (default by base-model)
+    --serve-wait) SERVE_WAIT="$2"; shift 2;;  # seconds to wait for server health (default 1800)
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
 
 [[ -z "$MODEL" || -z "$STAGES" ]] && { echo "ERROR: --model and --stages are required." >&2; exit 2; }
 [[ "$BASE_URL" != */v1 ]] && BASE_URL="${BASE_URL%/}/v1"
+
+# ---- --serve: validate inputs that MUST be known before the server exists ----
+if [[ "$SERVE" == 1 ]]; then
+  # thinking can't be probed before the server is up -> must be explicit, and it sets ENABLE_THINKING.
+  [[ "$THINKING" == on || "$THINKING" == off ]] || {
+    echo "ERROR: --serve requires --thinking on|off (can't autodetect before the server is up; it sets ENABLE_THINKING)." >&2; exit 2; }
+  # serve params: explicit flags win, else per-base-model defaults.
+  if [[ -z "$TP" || -z "$MAX_LEN" ]]; then
+    case "$BASE_MODEL" in
+      *27b*) : "${TP:=8}"; : "${MAX_LEN:=65536}" ;;
+      *)     : "${TP:=8}"; : "${MAX_LEN:=32768}" ;;   # 4b/9b default
+    esac
+  fi
+  # derive host:port from --base-url (we serve there, then talk to it there)
+  SERVE_PORT="$(printf '%s' "$BASE_URL" | sed -E 's#https?://[^:/]+:?([0-9]*)/.*#\1#')"
+  [[ -z "$SERVE_PORT" ]] && SERVE_PORT=8000
+  [[ ! -d "$MODEL" ]] && { echo "ERROR: --serve needs a model PATH on disk (got: $MODEL)" >&2; exit 2; }
+fi
 
 # ---- autodetect thinking mode (reuses the run_eval.py probe shape) ----
 if [[ -z "$THINKING" ]]; then
@@ -96,6 +119,53 @@ fi
 [[ "$THINKING" == on || "$THINKING" == off ]] || { echo "ERROR: --thinking must be on|off" >&2; exit 2; }
 
 have_stage() { [[ ",$STAGES," == *",$1,"* ]]; }
+
+# ---- --serve: launch OUR OWN vLLM, wait for health, kill it on exit (sbatch-friendly) ----
+# Lets one sbatch job serve+eval+teardown so the node frees when the job ends. Teardown kills
+# ONLY the PID we launched (hard rule: never pkill-by-pattern — could hit another user's vLLM).
+OUR_SERVER_PID=""
+teardown_server() {
+  [[ -z "$OUR_SERVER_PID" ]] && return 0
+  if kill -0 "$OUR_SERVER_PID" 2>/dev/null; then
+    echo ">>> Tearing down our vLLM server (PID $OUR_SERVER_PID) + its process group"
+    kill -INT "-$OUR_SERVER_PID" 2>/dev/null || kill -INT "$OUR_SERVER_PID" 2>/dev/null
+    for _ in $(seq 1 30); do kill -0 "$OUR_SERVER_PID" 2>/dev/null || break; sleep 1; done
+    kill -KILL "-$OUR_SERVER_PID" 2>/dev/null || true
+  fi
+}
+if [[ "$SERVE" == 1 ]]; then
+  [[ "$PREFLIGHT" == 1 ]] && { echo "ERROR: --serve and --preflight are mutually exclusive (preflight launches nothing)." >&2; exit 2; }
+  trap teardown_server EXIT INT TERM
+  ENABLE_BIT="$([[ "$THINKING" == on ]] && echo 1 || echo 0)"
+  SERVE_LOG="/mnt/data/sgsilva/logs/eval_all_serve_$(basename "$MODEL")_think${THINKING}.log"
+  echo "==> --serve: launching vLLM  model=$(basename "$MODEL")  TP=$TP  max_len=$MAX_LEN  port=$SERVE_PORT  thinking=$THINKING"
+  echo "    serve log: $SERVE_LOG   (host $(hostname))"
+  # own process group (setsid) so teardown can signal the whole vLLM tree, not just the launcher
+  setsid env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv \
+    /home/sgsilva/vlm-evaluation/start_vllm_server.sh "$MODEL" "$TP" "$MAX_LEN" "$SERVE_PORT" \
+    >"$SERVE_LOG" 2>&1 &
+  OUR_SERVER_PID=$!
+  echo "    server PID (process group): $OUR_SERVER_PID  — monitor: tail -f $SERVE_LOG"
+  # poll /v1/models until the served id appears, OR the launcher dies, OR we time out
+  echo "==> waiting up to ${SERVE_WAIT}s for server health at $BASE_URL ..."
+  ready=0
+  for ((waited=0; waited<SERVE_WAIT; waited+=10)); do
+    if ! kill -0 "$OUR_SERVER_PID" 2>/dev/null; then
+      echo "ERROR: vLLM launcher exited during startup — see $SERVE_LOG" >&2; tail -20 "$SERVE_LOG" >&2; exit 1
+    fi
+    if "$VPT_PY" - "$BASE_URL" <<'PY' 2>/dev/null
+import json,sys,urllib.request
+base=sys.argv[1]
+try:
+    with urllib.request.urlopen(base.rstrip("/")+"/models",timeout=8) as r:
+        sys.exit(0 if json.loads(r.read()).get("data") else 1)
+except Exception: sys.exit(1)
+PY
+    then ready=1; echo "    server healthy after ~${waited}s"; break; fi
+    sleep 10
+  done
+  [[ "$ready" == 1 ]] || { echo "ERROR: server not healthy within ${SERVE_WAIT}s — see $SERVE_LOG" >&2; tail -20 "$SERVE_LOG" >&2; exit 1; }
+fi
 
 # ---- PREFLIGHT: validate everything cheaply, then (if --preflight) exit before any eval ----
 run_preflight() {
