@@ -5,7 +5,7 @@
 set -uo pipefail
 MODEL_DIR=qwen35-4b-mix-12k-1506-sft-step1299-thinkoff
 VMME=/home/sgsilva/benchmarks/results/video_mme/$MODEL_DIR
-MASTER=/mnt/data/sgsilva/results/eval_master/eval_master.csv
+MASTER=/mnt/data/sgsilva/results/master/eval_master.csv
 LOG=/mnt/data/sgsilva/logs/watch_benchmarks_step1299.log
 MAX_HOURS=12
 POLL=300

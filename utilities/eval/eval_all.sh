@@ -34,7 +34,7 @@ BENCH_DIR=/home/sgsilva/benchmarks
 BENCH_RUN=/home/sgsilva/benchmarks/scripts/run_eval.py
 BENCH_PY=/home/sgsilva/benchmarks/SIBench-VSR/.venv/bin/python
 VO_TEST=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test
-VO_OUT=/mnt/data/sgsilva/results/visual_obs_runs
+VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visual_obs_runs/ back-compat-symlinked)
 
 # ---- args ----
 MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1"
@@ -262,7 +262,7 @@ fi
 # ---------------- compile master CSV (additive; never touches per-stage outputs) ----------------
 echo ""; echo ">>> Compiling unified master CSV (read-only union/join on served path)"
 "$VPT_PY" "$(dirname "$0")/compile_eval_results.py" \
-  && STAGE_RESULTS+=("master: OK -> /mnt/data/sgsilva/results/eval_master/eval_master.csv") \
+  && STAGE_RESULTS+=("master: OK -> /mnt/data/sgsilva/results/master/eval_master.csv") \
   || STAGE_RESULTS+=("master: FAILED")
 
 echo ""

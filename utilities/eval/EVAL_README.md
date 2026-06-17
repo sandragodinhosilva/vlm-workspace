@@ -4,6 +4,22 @@ One place for everything about evaluating a served VLM checkpoint: the three eva
 where each saves, how each is collected, the one driver that runs them, and the unified master
 CSV. Recipes/skills: `/eval-vlm` (eval), `/serve-vllm` (serving).
 
+## Results tree (unified 2026-06-17 — all under `/mnt/data/sgsilva/results/`)
+```
+results/
+  aux/         eval_matrix.csv + eval_matrix_<base>.csv (RICH aux master) · evals/ (per-run JSON tree)
+  benchmarks/  summary*.csv · vsibench/ mmmu_val/ video_mme/ [_judged]/
+  visual_obs/  visual_obs_sft_results_1105[_formatted].csv · single_stage_results_1105.csv
+               runs/ · evaluations/ · agreements/
+  master/      eval_master.csv + eval_master_{4b,9b,27b}.csv (cross-stage join; baselines pinned top)
+```
+**Back-compat symlinks** (old hardcoded paths still resolve, so un-migrated scripts don't break):
+`/home/sgsilva/benchmarks/results`→`results/benchmarks`; `results/visual_obs_runs`→`visual_obs/runs`;
+`results/evaluations`→`visual_obs/evaluations`; `results/agreements`→`visual_obs/agreements`;
+repo `aux_tasks/evals`→`results/aux/evals`. The aux master CSV is no longer in the repo — it's at
+`results/aux/`. The VO master CSVs moved out of the repo (`visual-obs-sft/`) into `results/visual_obs/`
+(only the Google-sheet exports remain in the repo as reference inputs).
+
 ## TL;DR — run everything on an already-served model
 ```bash
 # serve first (see /serve-vllm); thinking mode MUST match the SFT target.

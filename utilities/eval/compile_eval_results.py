@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """Compile eval results from all three pipelines into ONE master CSV — additive, read-only.
 
+Unified results tree (reorg 2026-06-17): /mnt/data/sgsilva/results/{aux,benchmarks,visual_obs,master}.
+
 Sources (NEVER modified):
-  1. aux        — aux_tasks/evals/<bm>/multimodal/<group>/<family>/<run_id>/<ts>/results/
-                  multimodal_*.json   (the aggregate JSON: modalities.{video,text,image,...})
-  2. benchmarks — /home/sgsilva/benchmarks/results/summary[_judge].csv
+  1. aux        — PRIMARY: /mnt/data/sgsilva/results/aux/eval_matrix_qwen3.5-4b.csv (+ combined),
+                  the rich aux master (train_reasoning, train_sample_count, acc_weighted_3mod,
+                  per-task breakdowns). FALLBACK: the per-run multimodal_*.json under
+                  aux/evals/.../results/ for runs not yet exported into eval_matrix.
+  2. benchmarks — /mnt/data/sgsilva/results/benchmarks/summary[_judge].csv
                   (cols: Model, Reasoning, MMMU-val, Video-MME, VSI-Bench, Test set Acc)
-  3. visualobs  — /mnt/data/sgsilva/results/visual_obs_runs/*singlestage*.json | stage2_*.json
+  3. visualobs  — /mnt/data/sgsilva/results/visual_obs/runs/*singlestage*.json | stage2_*.json
                   (metrics.{error_detection_f1, sample_error_detection_f1, overall_severity_accuracy})
 
 Output (additive — originals stay the source of truth):
-  /mnt/data/sgsilva/results/eval_master/eval_master.csv      one row per (model, thinking)
-  /mnt/data/sgsilva/results/eval_master/runs/<run>/...       copies of each run's aggregate JSON + SUMMARY
+  /mnt/data/sgsilva/results/master/eval_master.csv          one row per (model, thinking)
+  /mnt/data/sgsilva/results/master/eval_master_{4b,9b,27b}.csv  per-base-model, baselines pinned top
+  /mnt/data/sgsilva/results/master/runs/<run>/...           copies of each run's aggregate JSON + SUMMARY
 
 This script does NOT run evals, re-score, or touch the per-stage collectors/CSVs. It only reads
 their outputs and unifies them. Re-run anytime; it rebuilds the master CSV from scratch.
@@ -28,26 +33,32 @@ import os
 import shutil
 from pathlib import Path
 
-AUX_EVALS = Path("/home/sgsilva/vlm-post-training/aux_tasks/evals")
-BENCH_RESULTS = Path("/mnt/data/sgsilva/results/benchmarks")  # moved here 2026-06-17 (was benchmarks/results; old path back-compat-symlinked)
+# Reorg 2026-06-17: unified results tree under /mnt/data/sgsilva/results/{aux,benchmarks,visual_obs,master}.
+AUX_EVALS = Path("/home/sgsilva/vlm-post-training/aux_tasks/evals")  # symlink -> /results/aux/evals (per-run JSON tree; fallback source)
+AUX_MATRIX = Path("/mnt/data/sgsilva/results/aux/eval_matrix.csv")             # rich aux master (combined base models)
+AUX_MATRIX_4B = Path("/mnt/data/sgsilva/results/aux/eval_matrix_qwen3.5-4b.csv")  # per-base-model (primary aux source)
+BENCH_RESULTS = Path("/mnt/data/sgsilva/results/benchmarks")  # moved here 2026-06-17 (old benchmarks/results back-compat-symlinked)
 BENCH_SUMMARY = BENCH_RESULTS / "summary.csv"
 BENCH_SUMMARY_JUDGE = BENCH_RESULTS / "summary_judge.csv"
-VO_RUNS = Path("/mnt/data/sgsilva/results/visual_obs_runs")
-MASTER_DIR = Path("/mnt/data/sgsilva/results/eval_master")
+VO_RUNS = Path("/mnt/data/sgsilva/results/visual_obs/runs")    # moved 2026-06-17 (old visual_obs_runs/ back-compat-symlinked)
+MASTER_DIR = Path("/mnt/data/sgsilva/results/master")          # renamed from eval_master/ (reorg 2026-06-17)
 MASTER_CSV = MASTER_DIR / "eval_master.csv"
 COPY_DIR = MASTER_DIR / "runs"
 
 # one row per (model_key, thinking); model_key = the served model basename / display name
 FIELDS = [
-    "model", "display", "thinking",
+    "model", "display", "thinking", "reasoning",
     # general benchmarks
     "MMMU_val", "Video_MME", "VSI_Bench",
-    # aux tasks (multimodal_reduced_testset)
-    "aux_video_acc", "aux_text_acc", "aux_image_composite", "aux_image_dense_oks", "aux_image_task4_acc",
+    # aux tasks (multimodal_reduced_testset) — headline + the rich eval_matrix columns
+    "aux_acc_weighted_3mod", "aux_video_acc", "aux_text_acc", "aux_image_composite",
+    "aux_image_dense_oks", "aux_image_task4_acc",
+    # training provenance (from eval_matrix)
+    "train_reasoning", "train_group_id", "train_sample_count", "best_step", "aux_run_ts",
     # visual-obs (1181-rep)
     "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
     # provenance
-    "aux_run_id", "aux_run_dir", "bench_source", "vo_source",
+    "aux_run_id", "aux_run_dir", "aux_source", "bench_source", "vo_source",
 ]
 
 
@@ -147,7 +158,49 @@ def _rows():
             r["display"] = display
         return r
 
-    # ---- AUX: aggregate multimodal_*.json; served path from the video leg's RUN_METADATA ----
+    # ---- AUX (PRIMARY): the rich eval_matrix.csv — keyed on the served `model` path, carries
+    # train_reasoning / train_sample_count / acc_weighted_3modalities / per-task breakdowns. We
+    # promote the scalars that matter into the master (full per-task detail stays in eval_matrix).
+    def _f(v):
+        v = (v or "").strip()
+        try:
+            return round(float(v), 2)
+        except (TypeError, ValueError):
+            return ""
+    aux_seen = set()
+    for matrix in (AUX_MATRIX_4B, AUX_MATRIX):  # per-4B first, then combined (fills 9b/27b)
+        if not matrix.exists():
+            continue
+        with matrix.open() as f:
+            for rec in csv.DictReader(f):
+                model_path = (rec.get("model") or "").strip()
+                if not model_path:
+                    continue  # distinct sentinel: skip empty-model rows, don't invent a key
+                thinking = "on" if "thinkon" in (rec.get("run_id", "").lower()) else (
+                    "off" if "thinkoff" in (rec.get("run_id", "").lower()) else "unknown")
+                k = (_norm_path(model_path), thinking)
+                if k in aux_seen:  # combined matrix shouldn't override the per-base-model one
+                    continue
+                aux_seen.add(k)
+                r = get(model_path, thinking, display=f"{rec.get('base_model','')}:{rec.get('run_id','')}")
+                r["reasoning"] = rec.get("reasoning", "")
+                r["aux_acc_weighted_3mod"] = _f(rec.get("acc_weighted_3modalities"))
+                r["aux_video_acc"] = _f(rec.get("acc_video"))
+                r["aux_text_acc"] = _f(rec.get("acc_text"))
+                r["aux_image_composite"] = _f(rec.get("acc_image"))
+                r["aux_image_dense_oks"] = _f(rec.get("oks_image"))
+                r["aux_image_task4_acc"] = _f(rec.get("acc_task4a")) or _f(rec.get("acc_task4b"))
+                r["train_reasoning"] = rec.get("train_reasoning", "")
+                r["train_group_id"] = rec.get("train_group_id", "")
+                r["train_sample_count"] = rec.get("train_sample_count", "")
+                r["best_step"] = rec.get("best_step", "")
+                r["aux_run_ts"] = rec.get("timestamp", "")
+                r["aux_run_id"] = rec.get("run_id", "")
+                r["aux_run_dir"] = rec.get("multimodal_run_dir", "")
+                r["aux_source"] = matrix.name
+
+    # ---- AUX (FALLBACK): per-run aggregate JSON for runs not yet in eval_matrix (matrix export
+    # is manual, so a fresh run can lag). Only fills modalities the matrix row didn't already set.
     if AUX_EVALS.is_dir():
         for agg in AUX_EVALS.glob("*/multimodal/*/*/*/*/results/multimodal_*.json"):
             try:
@@ -158,7 +211,6 @@ def _rows():
             tl = (run_id + " " + str(d.get("tag", ""))).lower()
             thinking = "on" if "thinkon" in tl else ("off" if "thinkoff" in tl else "unknown")
             mods = d.get("modalities", {}) or {}
-            # resolve served path: any leg's results_json -> its run dir -> RUN_METADATA.model
             model_path = ""
             for leg in ("video", "text", "image"):
                 rj = (mods.get(leg) or {}).get("results_json")
@@ -173,6 +225,8 @@ def _rows():
                         break
             if not model_path:
                 model_path = f"{d.get('base_model','')}/{run_id}"  # fallback sentinel key
+            if (_norm_path(model_path), thinking) in aux_seen:
+                continue  # eval_matrix already covered this run (richer) — skip the thin JSON
             r = get(model_path, thinking, display=str(d.get("base_model", "")) + ":" + run_id)
             def pct(mod):
                 v = (mods.get(mod) or {}).get("metric_value_pct")
@@ -184,6 +238,7 @@ def _rows():
             r["aux_image_task4_acc"] = pct("image_task4")
             r["aux_run_id"] = run_id
             r["aux_run_dir"] = str(d.get("run_dir", agg.parent.parent))
+            r["aux_source"] = "multimodal_json(fallback)"
 
     # ---- BENCHMARKS: read BOTH summary.csv (broad) then overlay summary_judge.csv
     # (judged preferred where present). NOT all-or-nothing: a judge CSV from an older
