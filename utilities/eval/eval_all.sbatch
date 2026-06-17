@@ -51,6 +51,7 @@ CMD=( /home/sgsilva/utilities/eval/eval_all.sh
   --serve --thinking "$THINKING" --base-url "$BASE_URL" --serve-wait "$SERVE_WAIT" )
 [[ -n "${TP:-}" ]]              && CMD+=( --tp "$TP" )
 [[ -n "${MAX_LEN:-}" ]]         && CMD+=( --max-len "$MAX_LEN" )
+[[ -n "${SERVE_VENV:-}" ]]      && CMD+=( --serve-venv "$SERVE_VENV" )  # pmartins -> vlm-post-training-home-venv
 [[ -n "${TRAIN_GROUP_ID:-}" ]]  && CMD+=( --train-group-id "$TRAIN_GROUP_ID" )
 [[ -n "${RUN_ID:-}" ]]          && CMD+=( --run-id "$RUN_ID" )
 [[ -n "${TAG:-}" ]]             && CMD+=( --tag "$TAG" )

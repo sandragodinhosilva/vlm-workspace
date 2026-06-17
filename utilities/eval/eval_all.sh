@@ -27,6 +27,8 @@
 
 set -uo pipefail
 
+# ---- logging (initialized after args so $TAG is available) ----
+source /home/sgsilva/utilities/logs-utils/log_run.sh
 # ---- paths (literal) ----
 VPT=/home/sgsilva/vlm-post-training
 VPT_PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
@@ -41,6 +43,8 @@ MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1
 THINKING=""; TRAIN_GROUP_ID=""; RUN_ID=""; TAG=""; TESTSET="1506"; MAX_SAMPLES=""
 BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""
 SERVE=0; TP=""; MAX_LEN=""; SERVE_WAIT=1800   # --serve: launch+teardown our own vLLM
+SERVE_VENV="/home/sgsilva/qwen3.5-serving-home-venv"   # --serve-venv override for ckpts needing another
+# stack (e.g. pmartins transformers-5.x 'TokenizersBackend' tokenizers -> vlm-post-training-home-venv)
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --judge-base-url) JUDGE_BASE_URL="$2"; shift 2;;
@@ -58,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --bench-extra) BENCH_EXTRA="$2"; shift 2;;
     --preflight) PREFLIGHT=1; shift;;   # validate everything + exit WITHOUT running any eval
     --serve) SERVE=1; shift;;           # launch our OWN vLLM, run, then kill it on exit (sbatch-friendly)
+    --serve-venv) SERVE_VENV="$2"; shift 2;;  # QWEN35_VENV for the serve (pmartins -> vlm-post-training-home-venv)
     --tp) TP="$2"; shift 2;;            # tensor-parallel size (default by base-model)
     --max-len) MAX_LEN="$2"; shift 2;;  # served max_model_len (default by base-model)
     --serve-wait) SERVE_WAIT="$2"; shift 2;;  # seconds to wait for server health (default 1800)
@@ -67,6 +72,8 @@ done
 
 [[ -z "$MODEL" || -z "$STAGES" ]] && { echo "ERROR: --model and --stages are required." >&2; exit 2; }
 [[ "$BASE_URL" != */v1 ]] && BASE_URL="${BASE_URL%/}/v1"
+LOG=$(log_start eval "eval_all_${TAG:-${RUN_ID:-notag}}")
+exec > >(tee -a "$LOG") 2>&1
 
 # ---- --serve: validate inputs that MUST be known before the server exists ----
 if [[ "$SERVE" == 1 ]]; then
@@ -137,11 +144,14 @@ if [[ "$SERVE" == 1 ]]; then
   [[ "$PREFLIGHT" == 1 ]] && { echo "ERROR: --serve and --preflight are mutually exclusive (preflight launches nothing)." >&2; exit 2; }
   trap teardown_server EXIT INT TERM
   ENABLE_BIT="$([[ "$THINKING" == on ]] && echo 1 || echo 0)"
-  SERVE_LOG="/mnt/data/sgsilva/logs/eval_all_serve_$(basename "$MODEL")_think${THINKING}.log"
+  # log name: prefer RUN_ID (unique) so pmartins '.../step_N/hf' paths don't all collide on 'hf'
+  SERVE_TAG="${RUN_ID:-$(basename "$MODEL")}"
+  SERVE_LOG="/mnt/data/sgsilva/logs/eval_all_serve_${SERVE_TAG}_think${THINKING}.log"
   echo "==> --serve: launching vLLM  model=$(basename "$MODEL")  TP=$TP  max_len=$MAX_LEN  port=$SERVE_PORT  thinking=$THINKING"
+  echo "    serve venv: $SERVE_VENV"
   echo "    serve log: $SERVE_LOG   (host $(hostname))"
   # own process group (setsid) so teardown can signal the whole vLLM tree, not just the launcher
-  setsid env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv \
+  setsid env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV="$SERVE_VENV" \
     /home/sgsilva/vlm-evaluation/start_vllm_server.sh "$MODEL" "$TP" "$MAX_LEN" "$SERVE_PORT" \
     >"$SERVE_LOG" 2>&1 &
   OUR_SERVER_PID=$!
