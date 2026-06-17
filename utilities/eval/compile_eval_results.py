@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""Compile eval results from all three pipelines into ONE master CSV — additive, read-only.
+
+Sources (NEVER modified):
+  1. aux        — aux_tasks/evals/<bm>/multimodal/<group>/<family>/<run_id>/<ts>/results/
+                  multimodal_*.json   (the aggregate JSON: modalities.{video,text,image,...})
+  2. benchmarks — /home/sgsilva/benchmarks/results/summary[_judge].csv
+                  (cols: Model, Reasoning, MMMU-val, Video-MME, VSI-Bench, Test set Acc)
+  3. visualobs  — /mnt/data/sgsilva/results/visual_obs_runs/*singlestage*.json | stage2_*.json
+                  (metrics.{error_detection_f1, sample_error_detection_f1, overall_severity_accuracy})
+
+Output (additive — originals stay the source of truth):
+  /mnt/data/sgsilva/results/eval_master/eval_master.csv      one row per (model, thinking)
+  /mnt/data/sgsilva/results/eval_master/runs/<run>/...       copies of each run's aggregate JSON + SUMMARY
+
+This script does NOT run evals, re-score, or touch the per-stage collectors/CSVs. It only reads
+their outputs and unifies them. Re-run anytime; it rebuilds the master CSV from scratch.
+
+Usage:
+  /home/sgsilva/vlm-post-training-home-venv/bin/python compile_eval_results.py [--no-copy]
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import shutil
+from pathlib import Path
+
+AUX_EVALS = Path("/home/sgsilva/vlm-post-training/aux_tasks/evals")
+BENCH_RESULTS = Path("/mnt/data/sgsilva/results/benchmarks")  # moved here 2026-06-17 (was benchmarks/results; old path back-compat-symlinked)
+BENCH_SUMMARY = BENCH_RESULTS / "summary.csv"
+BENCH_SUMMARY_JUDGE = BENCH_RESULTS / "summary_judge.csv"
+VO_RUNS = Path("/mnt/data/sgsilva/results/visual_obs_runs")
+MASTER_DIR = Path("/mnt/data/sgsilva/results/eval_master")
+MASTER_CSV = MASTER_DIR / "eval_master.csv"
+COPY_DIR = MASTER_DIR / "runs"
+
+# one row per (model_key, thinking); model_key = the served model basename / display name
+FIELDS = [
+    "model", "display", "thinking",
+    # general benchmarks
+    "MMMU_val", "Video_MME", "VSI_Bench",
+    # aux tasks (multimodal_reduced_testset)
+    "aux_video_acc", "aux_text_acc", "aux_image_composite", "aux_image_dense_oks", "aux_image_task4_acc",
+    # visual-obs (1181-rep)
+    "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
+    # provenance
+    "aux_run_id", "aux_run_dir", "bench_source", "vo_source",
+]
+
+
+def _base_model(model: str, display: str = "") -> str:
+    """Detect base model family from the served path/display. Returns '4b'|'9b'|'27b'|'other'.
+    Order matters: check 27b/9b before 4b so '...-27b-...' can't be misread. Distinct 'other'
+    sentinel (never default to a family) so an unrecognized model lands in its own file, not
+    silently in 4b."""
+    s = f"{model} {display}".lower()
+    for tag in ("35-27b", "-27b", "_27b", "3.5-27b", "qwen3.5-27b"):
+        if tag in s:
+            return "27b"
+    for tag in ("35-9b", "-9b", "_9b", "3.5-9b", "qwen3.5-9b"):
+        if tag in s:
+            return "9b"
+    for tag in ("35-4b", "-4b", "_4b", "3.5-4b", "qwen3.5-4b"):
+        if tag in s:
+            return "4b"
+    return "other"
+
+
+def _is_baseline(model: str, display: str = "") -> bool:
+    """A baseline = the raw, un-SFT'd Qwen3.5 model (the reference line to sort to the top).
+    Recognized by the shared-models path or a bare 'Qwen3.5-NB' id, OR a display/run_id whose
+    name marks it as a baseline. SFT/GRPO/merged checkpoints are NOT baselines."""
+    s = f"{model} {display}".lower()
+    if "/shared/models/qwen3.5" in s:
+        return True
+    leaf = model.rstrip("/").split("/")[-1].lower()
+    if leaf in ("qwen3.5-4b", "qwen3.5-9b", "qwen3.5-27b") or leaf.startswith("qwen3.5-") and leaf.count("-") == 1:
+        return True
+    if "baseline" in display.lower() or "baseline" in leaf:
+        return True
+    return False
+
+
+def _write_csv(path: Path, row_items, fields):
+    """Write rows with baselines pinned to the top, then the rest alphabetically by model."""
+    ordered = sorted(row_items, key=lambda kv: (0 if _is_baseline(kv[1].get("model", ""), kv[1].get("display", "")) else 1, kv[0]))
+    with path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        w.writeheader()
+        for _key, row in ordered:
+            w.writerow({k: row.get(k, "") for k in fields})
+    return len(ordered)
+
+
+def _norm_path(p: str) -> str:
+    """Canonical join key = the served checkpoint path, normalized (strip trailing slash,
+    resolve symlinks where possible). All three pipelines serve the SAME path, so this is the
+    one reliable key. Falls back to the raw string when not a real path (e.g. HF hub id)."""
+    if not p:
+        return ""
+    s = str(p).rstrip("/")
+    try:
+        rp = os.path.realpath(s)
+        if os.path.exists(rp):
+            return rp.rstrip("/")
+    except Exception:
+        pass
+    return s
+
+
+def _bench_display_to_path() -> dict[str, str]:
+    """Map a benchmark summary.csv display_name -> served model path WITHOUT needing config
+    files. The path is encoded in the result tree: results/<bench>/<display>/<model_slug>/,
+    where model_slug = the served path with '/' -> '--'. We decode it back. (Configs are NOT
+    required for the join — this works for any benchmark result, eval_all-driven or not.)"""
+    out: dict[str, str] = {}
+    bench_results = BENCH_RESULTS
+    for bench in ("mmmu_val", "video_mme", "vsibench",
+                  "mmmu_val_judged", "video_mme_judged", "vsibench_judged"):
+        bdir = bench_results / bench
+        if not bdir.is_dir():
+            continue
+        for disp_dir in bdir.iterdir():
+            if not disp_dir.is_dir():
+                continue
+            for slug_dir in disp_dir.iterdir():
+                name = slug_dir.name
+                if slug_dir.is_dir() and name.startswith("--"):
+                    # "--mnt--data--x" -> "/mnt/data/x"
+                    path = "/" + name.lstrip("-").replace("--", "/")
+                    out.setdefault(disp_dir.name, path)
+                    break
+    return out
+
+
+def _rows():
+    """Return {(model_path, thinking): {field: value}} JOINED on the served checkpoint path."""
+    rows: dict[tuple[str, str], dict] = {}
+
+    def get(model_path, thinking, display=""):
+        key = (_norm_path(model_path), thinking)
+        r = rows.setdefault(key, {"model": key[0], "thinking": thinking})
+        if display and not r.get("display"):
+            r["display"] = display
+        return r
+
+    # ---- AUX: aggregate multimodal_*.json; served path from the video leg's RUN_METADATA ----
+    if AUX_EVALS.is_dir():
+        for agg in AUX_EVALS.glob("*/multimodal/*/*/*/*/results/multimodal_*.json"):
+            try:
+                d = json.loads(agg.read_text())
+            except Exception:
+                continue
+            run_id = str(d.get("run_id", ""))
+            tl = (run_id + " " + str(d.get("tag", ""))).lower()
+            thinking = "on" if "thinkon" in tl else ("off" if "thinkoff" in tl else "unknown")
+            mods = d.get("modalities", {}) or {}
+            # resolve served path: any leg's results_json -> its run dir -> RUN_METADATA.model
+            model_path = ""
+            for leg in ("video", "text", "image"):
+                rj = (mods.get(leg) or {}).get("results_json")
+                if rj:
+                    rmeta = Path(rj).parent.parent / "RUN_METADATA.json"
+                    if rmeta.exists():
+                        try:
+                            model_path = json.loads(rmeta.read_text()).get("model", "")
+                        except Exception:
+                            pass
+                    if model_path:
+                        break
+            if not model_path:
+                model_path = f"{d.get('base_model','')}/{run_id}"  # fallback sentinel key
+            r = get(model_path, thinking, display=str(d.get("base_model", "")) + ":" + run_id)
+            def pct(mod):
+                v = (mods.get(mod) or {}).get("metric_value_pct")
+                return round(v, 2) if isinstance(v, (int, float)) else ""
+            r["aux_video_acc"] = pct("video")
+            r["aux_text_acc"] = pct("text")
+            r["aux_image_composite"] = pct("image")
+            r["aux_image_dense_oks"] = pct("image_dense")
+            r["aux_image_task4_acc"] = pct("image_task4")
+            r["aux_run_id"] = run_id
+            r["aux_run_dir"] = str(d.get("run_dir", agg.parent.parent))
+
+    # ---- BENCHMARKS: read BOTH summary.csv (broad) then overlay summary_judge.csv
+    # (judged preferred where present). NOT all-or-nothing: a judge CSV from an older
+    # run must not hide models that only have raw results in the current summary.csv. ----
+    disp2path = _bench_display_to_path()
+    def _load_bench(bench_csv):
+        if not bench_csv.exists():
+            return
+        with bench_csv.open() as f:
+            for rec in csv.DictReader(f):
+                disp = (rec.get("Model") or "").strip()
+                if not disp:
+                    continue
+                thinking = "on" if (rec.get("Reasoning", "").strip().lower() in ("yes", "true", "on")) else "off"
+                model_path = disp2path.get(disp, disp)  # path if config known, else display
+                r = get(model_path, thinking, display=disp)
+                def num(c):
+                    v = (rec.get(c) or "").strip()
+                    try:
+                        return round(float(v) * 100, 2) if v and float(v) <= 1.0 else (round(float(v), 2) if v else "")
+                    except ValueError:
+                        return ""
+                mmmu, vmme, vsi = num("MMMU-val"), num("Video-MME"), num("VSI-Bench")
+                # only overwrite a column when this file actually has a value for it
+                if mmmu != "": r["MMMU_val"] = mmmu
+                if vmme != "": r["Video_MME"] = vmme
+                if vsi != "": r["VSI_Bench"] = vsi
+                src = r.get("bench_source") or ""
+                r["bench_source"] = ",".join(dict.fromkeys(filter(None, [src, bench_csv.name])))
+    _load_bench(BENCH_SUMMARY)        # raw first (broad coverage)
+    _load_bench(BENCH_SUMMARY_JUDGE)  # judged overlays where present (preferred)
+
+    # ---- VISUAL-OBS: singlestage / stage2 JSONs; served path = metadata.model ----
+    if VO_RUNS.is_dir():
+        for vj in sorted(VO_RUNS.glob("*.json")):
+            name = vj.name.lower()
+            if "singlestage" not in name and not name.startswith("stage2_"):
+                continue
+            try:
+                d = json.loads(vj.read_text())
+            except Exception:
+                continue
+            m = d.get("metrics", {}) or {}
+            if not m:
+                continue
+            thinking = "on" if "thinkon" in name else ("off" if "thinkoff" in name else "unknown")
+            model_path = str((d.get("metadata") or {}).get("model", vj.stem))
+            r = get(model_path, thinking, display=vj.stem)
+            def vm(k):
+                v = m.get(k)
+                return round(v * 100, 2) if isinstance(v, (int, float)) else ""
+            r["vo_error_f1"] = vm("error_detection_f1")
+            r["vo_sample_f1"] = vm("sample_error_detection_f1")
+            r["vo_severity_acc"] = vm("overall_severity_accuracy")
+            r["vo_source"] = vj.name
+
+    return rows
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--no-copy", action="store_true", help="skip copying per-run summaries into eval_master/runs/")
+    args = ap.parse_args()
+
+    MASTER_DIR.mkdir(parents=True, exist_ok=True)
+    rows = _rows()
+
+    # combined master (all families), baselines pinned to top
+    n = _write_csv(MASTER_CSV, list(rows.items()), FIELDS)
+    print(f"[master] wrote {n} rows -> {MASTER_CSV}")
+
+    # per-base-model splits: eval_master_<family>.csv, baselines pinned to top of each
+    from collections import defaultdict
+    by_base = defaultdict(list)
+    for key, row in rows.items():
+        by_base[_base_model(row.get("model", ""), row.get("display", ""))].append((key, row))
+    for fam in sorted(by_base):
+        fam_csv = MASTER_DIR / f"eval_master_{fam}.csv"
+        nf = _write_csv(fam_csv, by_base[fam], FIELDS)
+        nbase = sum(_is_baseline(r.get("model", ""), r.get("display", "")) for _k, r in by_base[fam])
+        print(f"[master:{fam}] wrote {nf} rows ({nbase} baseline) -> {fam_csv}")
+
+    # copy per-run aux aggregate JSON + SUMMARY (small, human-readable) into eval_master/runs/
+    if not args.no_copy and AUX_EVALS.is_dir():
+        COPY_DIR.mkdir(parents=True, exist_ok=True)
+        n = 0
+        for agg in AUX_EVALS.glob("*/multimodal/*/*/*/*/results/multimodal_*.json"):
+            run_dir = agg.parent.parent  # .../<run_id>/<ts>/
+            label = f"{run_dir.parent.name}__{run_dir.name}"  # <run_id>__<ts>
+            dest = COPY_DIR / label
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(agg, dest / agg.name)
+            for s in run_dir.glob("SUMMARY_*"):
+                shutil.copy2(s, dest / s.name)
+            n += 1
+        print(f"[copy] synced {n} aux run summaries -> {COPY_DIR}")
+
+    print("\nNOTE: rows are JOINED on the served checkpoint PATH (canonical key). A model joins")
+    print("across stages only where it was actually evaluated on each; single-stage models stay")
+    print("single-stage rows. 'thinking=unknown' = a source file whose name lacked _thinkon/off.")
+    print("READ-ONLY union/join; the per-stage CSVs remain the source of truth.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

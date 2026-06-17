@@ -1,0 +1,95 @@
+# `~/utilities/apps` — Gradio inspection app tooling
+
+Everything needed to launch, browse, and build input datasets for Sandra's
+data-inspection Gradio apps.
+
+## Quick start
+
+```bash
+# On the login node:
+~/utilities/apps/launch_app.sh --list              # see all 15 apps + ports
+~/utilities/apps/launch_app.sh video-sft           # launch; prints browser URL
+
+# On your local Mac/PC (tunnel — remote port + 10000):
+ssh -N -L 17862:localhost:7862 new-login-1
+# Then open: http://localhost:17862/
+```
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| [`launch_app.sh`](launch_app.sh) | Launcher: `launch_app.sh <name> [KEY=VAL...] [--extra-arg...]` — kills existing process, launches correct venv + env, prints browser URL |
+| [`apps_registry.yaml`](apps_registry.yaml) | Registry of all 15 apps: name → repo, script, port, venv, env vars. **Edit here** to add or change an app. |
+| [`make_app_video_dataset.py`](make_app_video_dataset.py) | Convert an HF dataset to a `*_browse.jsonl` for the video-sft-vlm app. Output → `/mnt/data/sgsilva/datasets/app_video_datasets/`. |
+| [`claude-tracker.py`](claude-tracker.py) | Local HTTP dashboard for Claude Code token usage and cost (port 8080). |
+
+## Port table (all unique — all apps can run concurrently)
+
+| Port | App name | What it does |
+|:----:|----------|-------------|
+| 7860 | `reasoning-prompt` | Reasoning-trace prompt editor with live VLM calls |
+| 7861 | `monitoring` | Pipeline health dashboard (datasets / training / eval) |
+| 7862 | `video-sft` | **Main video browse app** — MCQA samples, exercise explorer |
+| 7863 | `browser` | Multi-tab dataset browser (image / video / text) |
+| 7864 | `vo-severity` | VO severity comparator — single-stage A vs B |
+| 7865 | `vo-compare` | VO stage-1 comparator — side-by-side observations |
+| 7866 | `sft-data` | Text SFT data browser (5 MCQA families) |
+| 7867 | `llm-fms` | LLM-FMS image+text SFT row viewer |
+| 7868 | `multimodal-compare` | Multimodal eval run comparer (keypoint overlay) |
+| 7869 | `reas-inspector` | Reas-mix inspector (reas2 merged mix) |
+| 7870 | `prejudge-viewer` | LLM prejudge smoke verdicts vs post-hoc labels |
+| 7871 | `mesh-viewer` | SAM-3D overlay videos — mesh + 3D skeleton |
+| 7872 | `sword-viewer` | SWORD SAM-3D pipeline output browser |
+| 7873 | `grpo-dashboard` | GRPO training run dashboard |
+| 8080 | `claude-tracker` | Claude Code token/cost tracker |
+
+Local tunnel URL = `http://localhost:1<PORT>/`  (e.g. port 7862 → `http://localhost:17862/`)
+
+## Creating browse datasets (for video-sft app)
+
+Browse datasets live in `/mnt/data/sgsilva/datasets/app_video_datasets/` as
+`<name>_browse.jsonl`. The video-sft app's **Quick-load dataset** dropdown
+picks them up automatically on startup.
+
+```bash
+# Convert an HF dataset:
+/home/sgsilva/vlm-post-training-home-venv/bin/python \
+  ~/utilities/apps/make_app_video_dataset.py \
+  --source /mnt/data/sgsilva/datasets/<hf_dataset> \
+  --name   <name>
+# → writes app_video_datasets/<name>_browse.jsonl
+
+# Optional flags:
+#   --old-reas-from <HF>        join source reasoning_trace onto metadata.old_reas_trace
+#   --echo-to-metadata <cols>   put provenance columns under metadata
+#   --stratify --per-stratum N  small representative subset
+#   --max-samples N             cap rows for a quick look
+```
+
+## Adding a new app to the registry
+
+Edit [`apps_registry.yaml`](apps_registry.yaml) — add a block under `apps:`:
+
+```yaml
+  my-new-app:
+    label: "My new app (short description)"
+    repo: /home/sgsilva/<repo>
+    script: <script.py>
+    port: <unique port 7860-7873>
+    venv: /home/sgsilva/<venv>/bin/python
+    env:                      # optional
+      MY_VAR: some_value
+    args:                     # optional fixed CLI args
+      - --flag
+      - value
+```
+
+Then `launch_app.sh --list` will show it immediately.
+
+## Full audit report
+
+[`GRADIO_APPS_REPORT.md`](GRADIO_APPS_REPORT.md) — per-app details,
+git history, input schemas, dataset creation index, all implemented changes,
+and remaining improvement proposals (§6b): tmux survival, login-node pinning,
+restart-on-crash, `--stop`/`--stop-all`, `--logs` flag.

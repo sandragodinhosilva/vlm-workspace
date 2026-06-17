@@ -1,0 +1,6 @@
+# Ignore everything by default
+/*
+
+# Track only utilities/ and this file
+!/.gitignore
+!/utilities
