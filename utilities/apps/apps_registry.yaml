@@ -18,6 +18,7 @@
 #   7871  mesh-viewer         video-sft-vlm/mesh_viewer.py
 #   7872  sword-viewer        sam3d_pilot/sword_viewer.py
 #   7873  grpo-dashboard      nemo-rl-vlm/tools/grpo_dashboard.py
+#   7874  vibe-test           utilities/apps/vibe_test.py
 #   8080  claude-tracker      utilities/apps/claude-tracker.py
 
 apps:
@@ -162,6 +163,14 @@ apps:
     script: tools/grpo_dashboard.py
     port: 7873
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+
+  vibe-test:
+    label: "VLM vibe tester (free-form text / image / video)"
+    goal: "Interactive inference playground: send any text, image, or video to a vLLM-served model and inspect the answer + thinking trace."
+    repo: /home/sgsilva/utilities/apps
+    script: vibe_test.py
+    port: 7874
+    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
 
   # ── Utilities ─────────────────────────────────────────────────────────────
 

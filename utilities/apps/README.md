@@ -42,6 +42,7 @@ ssh -N -L 17862:localhost:7862 new-login-1
 | 7871 | `mesh-viewer` | SAM-3D overlay videos — mesh + 3D skeleton |
 | 7872 | `sword-viewer` | SWORD SAM-3D pipeline output browser |
 | 7873 | `grpo-dashboard` | GRPO training run dashboard |
+| 7874 | `vibe-test` | Free-form VLM inference playground (text / image / video) |
 | 8080 | `claude-tracker` | Claude Code token/cost tracker |
 
 Local tunnel URL = `http://localhost:1<PORT>/`  (e.g. port 7862 → `http://localhost:17862/`)
