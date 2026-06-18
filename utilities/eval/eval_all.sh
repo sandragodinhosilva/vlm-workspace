@@ -174,9 +174,11 @@ if [[ "$SERVE" == 1 ]]; then
   trap on_exit EXIT
   trap teardown_server INT TERM
   ENABLE_BIT="$([[ "$THINKING" == on ]] && echo 1 || echo 0)"
-  # log name: prefer RUN_ID (unique) so pmartins '.../step_N/hf' paths don't all collide on 'hf'
+  # log name: prefer RUN_ID (unique) so pmartins '.../step_N/hf' paths don't all collide on 'hf'.
+  # Write under logs/eval/serve/ (NOT the logs root — strays there are flagged by the Stop hook).
   SERVE_TAG="${RUN_ID:-$(basename "$MODEL")}"
-  SERVE_LOG="/mnt/data/sgsilva/logs/eval_all_serve_${SERVE_TAG}_think${THINKING}.log"
+  mkdir -p /mnt/data/sgsilva/logs/eval/serve
+  SERVE_LOG="/mnt/data/sgsilva/logs/eval/serve/eval_all_serve_${SERVE_TAG}_think${THINKING}.log"
   echo "==> --serve: launching vLLM  model=$(basename "$SERVED_ID")  TP=$TP  max_len=$MAX_LEN  port=$SERVE_PORT  thinking=$THINKING"
   echo "    serve venv: $SERVE_VENV"
   echo "    serve log: $SERVE_LOG   (host $(hostname))"
