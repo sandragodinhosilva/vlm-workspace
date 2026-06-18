@@ -144,6 +144,36 @@ def _allowed(row: dict, patterns: list[str]) -> bool:
     return any(p in hay for p in patterns)
 
 
+# V2 ERA TESTSET POLICY: the aux axis MUST be the new testset_1506 for every board model (the
+# only exception is the standalone reduced3 comparison CSV, which is built separately to SHOW the
+# testset effect). The testset isn't a structured field anywhere — it's only inferable from the
+# run_id / tag / eval_family naming. So classify, and accept ONLY '1506'. Anything we can't
+# confidently classify is 'unknown' and is EXCLUDED (never silently passed as 1506).
+# V2 era boundary: the eval_all.sh pipeline (TESTSET=1506 by default) became the standard on
+# 2026-06-17. An aux run STAMPED on/after this whose naming carries no OLD-testset marker is a
+# V2 (1506) run — this is how we accept new-pipeline runs (B grpo492, A sft2812, the fresh
+# baselines) that don't spell '1506' in their run_id.
+_V2_TS_BOUNDARY = "2026-06-17"
+_OLD_TESTSET_MARKERS = ("reduced3", "reduced2", "test_reduced", "1405", "2605", "2403",
+                        "20260331", "20260401", "20260406", "20260407", "20260408",
+                        "indomain", "skeleton")
+def _aux_testset(run_id: str, eval_family: str = "", tag: str = "", timestamp: str = "") -> str:
+    """Classify an aux run's testset. Returns '1506' | 'old' | 'unknown'.
+    Rules (in order): explicit '1506' token -> 1506; explicit OLD marker / legacy 'baseline'
+    family -> old; otherwise a run stamped on/after the V2 boundary -> 1506 (new-pipeline default);
+    else unknown (EXCLUDED — never silently treated as 1506)."""
+    s = f"{run_id} {eval_family} {tag}".lower()
+    if "1506" in s:
+        return "1506"
+    if any(t in s for t in _OLD_TESTSET_MARKERS):
+        return "old"
+    if eval_family.strip().lower() == "baseline":
+        return "old"
+    if timestamp and timestamp[:10] >= _V2_TS_BOUNDARY:  # new-pipeline run (eval_all -> 1506)
+        return "1506"
+    return "unknown"
+
+
 def _write_csv(path: Path, row_items, fields):
     """Write rows with baselines pinned to the top, then the rest alphabetically by model."""
     ordered = sorted(row_items, key=lambda kv: (0 if _is_baseline(kv[1].get("model", ""), kv[1].get("display", "")) else 1, kv[0]))
@@ -330,6 +360,10 @@ def _rows():
                 model_path = (rec.get("model") or "").strip()
                 if not model_path:
                     continue  # distinct sentinel: skip empty-model rows, don't invent a key
+                # V2 aux MUST be testset_1506 — exclude old/unknown-testset aux runs so the board's
+                # aux axis is internally comparable (the reduced3 comparison lives in its own CSV).
+                if _aux_testset(rec.get("run_id", ""), rec.get("eval_family", ""), rec.get("tag", ""), rec.get("timestamp", "")) != "1506":
+                    continue
                 thinking = "on" if "thinkon" in (rec.get("run_id", "").lower()) else (
                     "off" if "thinkoff" in (rec.get("run_id", "").lower()) else "unknown")
                 k = (_norm_path(model_path), thinking)
@@ -364,6 +398,9 @@ def _rows():
             except Exception:
                 continue
             run_id = str(d.get("run_id", ""))
+            # V2 aux MUST be testset_1506 (same gate as the matrix source).
+            if _aux_testset(run_id, str(d.get("eval_family", "")), str(d.get("tag", "")), str(d.get("created_at", ""))) != "1506":
+                continue
             tl = (run_id + " " + str(d.get("tag", ""))).lower()
             thinking = "on" if "thinkon" in tl else ("off" if "thinkoff" in tl else "unknown")
             mods = d.get("modalities", {}) or {}
@@ -464,6 +501,10 @@ def _rows():
         ("oracle_obs_cat_step357",         "/mnt/data/sgsilva/models/qwen35-4b-oracle-obs-cat-1105-step357"),
         ("reasoning_oracleobs_cat_ep3",    "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-reasoning-step330"),
         ("oracle_397b_categorical",        "/mnt/data/shared/models/Qwen3.5-397B-A17B"),
+        # bare baselines (two-stage cat preferred; canonical path collapses via _BASELINE_ALIASES)
+        ("baseline_qwen35_27b_cat",        "/mnt/data/shared/models/Qwen3.5-27B"),
+        ("baseline_qwen35_27b",            "/mnt/data/shared/models/Qwen3.5-27B"),
+        ("baseline_qwen35_4b",             "/mnt/data/shared/models/Qwen3.5-4B"),
     ]
     # files whose token matches but are a DIFFERENT model / non-deployable probe — never join.
     VO_EXCLUDE = ("obsguide", "textonly", "plus_mix12k", "_a_ep3", "_b_ep3", "_c_ep3", "_d_ep3",
