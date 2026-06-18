@@ -41,7 +41,7 @@ VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visua
 # ---- args ----
 MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1"
 THINKING=""; TRAIN_GROUP_ID=""; RUN_ID=""; TAG=""; TESTSET="1506"; MAX_SAMPLES=""
-BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""
+BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""; BENCH_MAX_TOKENS=32768
 SERVE=0; TP=""; MAX_LEN=""; SERVE_WAIT=1800; KEEP_SERVER=0   # --serve: launch+teardown our own vLLM
 SERVE_VENV="/home/sgsilva/qwen3.5-serving-home-venv"   # --serve-venv override for ckpts needing another
 # stack (e.g. pmartins transformers-5.x 'TokenizersBackend' tokenizers -> vlm-post-training-home-venv)
@@ -60,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --testset) TESTSET="$2"; shift 2;;
     --max-samples) MAX_SAMPLES="$2"; shift 2;;
     --bench-extra) BENCH_EXTRA="$2"; shift 2;;
+    --bench-max-tokens) BENCH_MAX_TOKENS="$2"; shift 2;;  # cap ALL benchmarks (VSI config + MMMU/VideoMME run_eval); thinkon runaway -> fail fast
     --preflight) PREFLIGHT=1; shift;;   # validate everything + exit WITHOUT running any eval
     --serve) SERVE=1; shift;;           # launch our OWN vLLM, run, then kill it on exit (sbatch-friendly)
     --serve-venv) SERVE_VENV="$2"; shift 2;;  # QWEN35_VENV for the serve (pmartins -> vlm-post-training-home-venv)
@@ -318,21 +319,21 @@ if have_stage benchmarks; then
   # recovers display_name -> served path by decoding the result-tree model_slug, NOT from configs.
   cfg="/mnt/data/sgsilva/tmp/_eval_all_bench_${disp}.json"
   mkdir -p /mnt/data/sgsilva/tmp
-  "$VPT_PY" - "$cfg" "$SERVED_ID" "$disp" "$reason_bool" "$BASE_URL" <<'PY'
+  "$VPT_PY" - "$cfg" "$SERVED_ID" "$disp" "$reason_bool" "$BASE_URL" "$BENCH_MAX_TOKENS" <<'PY'
 import json,sys
-cfg,model,disp,reason,base=sys.argv[1:6]
+cfg,model,disp,reason,base,maxtok=sys.argv[1:7]
 short="bench-"+disp
 out={"display_name":disp,"reasoning":(reason=="true"),
  "model":{short:{"class":"OpenAIWrapper","model":model,
    "api_base":base.rstrip("/")+"/chat/completions","key":"sk-dummy",
-   "temperature":0,"max_tokens":32768,"img_detail":"high",
+   "temperature":0,"max_tokens":int(maxtok),"img_detail":"high",
    "system_prompt":"End your response with \\boxed{X} on the last line where X is the option letter."}},
  "data":{t:{"class":"SIBench","dataset":t} for t in
    ["Counting","Height","Existence","Object_Localization","Spatial_Relation"]}}
 json.dump(out,open(cfg,"w"),indent=4)
 print("wrote",cfg)
 PY
-  bargs=( "$BENCH_PY" "$BENCH_RUN" --config "$cfg" --base-url "$BASE_URL" )
+  bargs=( "$BENCH_PY" "$BENCH_RUN" --config "$cfg" --base-url "$BASE_URL" --max-tokens "$BENCH_MAX_TOKENS" )
   # Optional judge rescore (parsing-rescue): catches right-but-unparsed \boxed{} / prose answers,
   # writes *_judged + summary_judge.csv. Needs a SEPARATE judge server (NOT the model-under-test).
   # compile_eval_results.py prefers summary_judge.csv when present.
