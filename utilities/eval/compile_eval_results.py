@@ -136,6 +136,44 @@ def _norm_path(p: str) -> str:
     return s
 
 
+# a prediction VLMEvalKit couldn't get a real answer for (runaway thinkon generation that
+# timed out / hit max_tokens). These are NON-RESPONSES, not wrong answers — exclude from the
+# denominator so accuracy reflects only parsable answers.
+_UNPARSED_MARKERS = ("failed to obtain answer", "api error", "")
+
+
+def _parsable_bench_acc(disp: str, bench: str):
+    """Recompute a benchmark's accuracy over PARSABLE answers only, from the per-sample
+    *_result.xlsx VLMEvalKit writes (cols: hit, prediction). Excludes 'Failed to obtain answer'
+    non-responses from BOTH numerator and denominator. Returns (pct, n_used, n_dropped) or None
+    if no result file / no pandas. The raw summary.csv value remains the fallback."""
+    try:
+        import pandas as pd
+    except Exception:
+        return None
+    bdir = BENCH_RESULTS / bench / disp
+    if not bdir.is_dir():
+        return None
+    # newest *_result.xlsx under the display dir (skip the T-timestamp subdirs' dupes by mtime)
+    cands = sorted(bdir.rglob("*_result.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not cands:
+        cands = sorted(bdir.rglob("*_acc.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not cands:
+        return None
+    try:
+        df = pd.read_excel(cands[0])
+    except Exception:
+        return None
+    if "hit" not in df.columns or "prediction" not in df.columns:
+        return None
+    pred = df["prediction"].astype(str).str.strip().str.lower()
+    bad = pred.eq("") | pred.str.contains("failed to obtain answer", na=False) | pred.str.contains("api error", na=False)
+    keep = df[~bad]
+    if len(keep) == 0:
+        return None
+    return round(keep["hit"].mean() * 100, 2), len(keep), int(bad.sum())
+
+
 def _bench_display_to_path() -> dict[str, str]:
     """Map a benchmark summary.csv display_name -> served model path WITHOUT needing config
     files. The path is encoded in the result tree: results/<bench>/<display>/<model_slug>/,
@@ -288,7 +326,15 @@ def _rows():
                 if vmme != "": r["Video_MME"] = vmme
                 if vsi != "": r["VSI_Bench"] = vsi
                 src = r.get("bench_source") or ""
-                r["bench_source"] = ",".join(dict.fromkeys(filter(None, [src, bench_csv.name])))
+                srcs = [src, bench_csv.name]
+                # OVERRIDE with parsable-only accuracy (exclude 'Failed to obtain answer' non-
+                # responses from the denominator). raw summary value stays the fallback.
+                for col, bench in (("MMMU_val", "mmmu_val"), ("Video_MME", "video_mme"), ("VSI_Bench", "vsibench")):
+                    pa = _parsable_bench_acc(disp, bench)
+                    if pa is not None and pa[2] > 0:  # only when some were actually dropped
+                        r[col] = pa[0]
+                        srcs.append(f"{bench}:parsable({pa[1]},-{pa[2]})")
+                r["bench_source"] = ",".join(dict.fromkeys(filter(None, srcs)))
     _load_bench(BENCH_SUMMARY)        # raw first (broad coverage)
     _load_bench(BENCH_SUMMARY_JUDGE)  # judged overlays where present (preferred)
 
