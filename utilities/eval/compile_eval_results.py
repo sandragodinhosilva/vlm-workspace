@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import glob
 import json
 import os
 import shutil
@@ -69,8 +70,9 @@ FIELDS = [
     "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
     #   aux 3-modality headline (after visual-obs)
     "aux_acc_weighted_3mod",
-    # --- aux per-modality / per-task detail ---
-    "aux_video_acc", "aux_text_acc", "aux_image_composite",
+    # --- aux per-modality / per-task detail (video split by source: 3D=mcqa_video_3d_2705,
+    #     non-3D=mcqa_video_1505) ---
+    "aux_video_acc", "aux_video_3d", "aux_video_non3d", "aux_text_acc", "aux_image_composite",
     "aux_image_dense_oks", "aux_image_task4_acc",
     # --- training provenance (from eval_matrix; train_reasoning moved up to identity) ---
     "train_group_id", "train_sample_count", "best_step",
@@ -310,6 +312,23 @@ def _parsable_bench_acc(disp: str, bench: str):
     return round(keep["hit"].mean() * 100, 2), len(keep), int(bad.sum())
 
 
+def _video_by_source(video_results_json: str):
+    """From a video MCQA results_json, return (acc_3d, acc_non3d) where 3D=mcqa_video_3d_2705,
+    non-3D=mcqa_video_1505. ('','') if the file/by_source is absent or sources are unlabeled
+    ('unknown' — older runs don't carry per-source tags; we DON'T guess a split)."""
+    if not video_results_json or not os.path.exists(video_results_json):
+        return "", ""
+    try:
+        bs = (json.loads(Path(video_results_json).read_text()).get("by_source") or {})
+    except Exception:
+        return "", ""
+    def acc(src):
+        v = bs.get(src)
+        a = v.get("accuracy") if isinstance(v, dict) else v
+        return round(a, 2) if isinstance(a, (int, float)) else ""
+    return acc("mcqa_video_3d_2705"), acc("mcqa_video_1505")
+
+
 def _bench_display_to_path() -> dict[str, str]:
     """Map a benchmark summary.csv display_name -> served model path WITHOUT needing config
     files. The path is encoded in the result tree: results/<bench>/<display>/<model_slug>/,
@@ -384,6 +403,11 @@ def _rows():
                 r = get(model_path, thinking, display=f"{rec.get('base_model','')}:{rec.get('run_id','')}")
                 r["aux_acc_weighted_3mod"] = _f(rec.get("acc_weighted_3modalities"))
                 r["aux_video_acc"] = _f(rec.get("acc_video"))
+                # video 3D/non-3D split from the video run dir's results json (matrix has no by_source)
+                _vdir = (rec.get("video_run_dir") or "").strip()
+                _vjson = next(iter(sorted(glob.glob(f"{_vdir}/results/*.json"))), "") if _vdir else ""
+                v3d, vn3d = _video_by_source(_vjson)
+                r["aux_video_3d"], r["aux_video_non3d"] = v3d, vn3d
                 r["aux_text_acc"] = _f(rec.get("acc_text"))
                 r["aux_image_composite"] = _f(rec.get("acc_image"))
                 r["aux_image_dense_oks"] = _f(rec.get("oks_image"))
@@ -436,6 +460,8 @@ def _rows():
                 v = (mods.get(mod) or {}).get("metric_value_pct")
                 return round(v, 2) if isinstance(v, (int, float)) else ""
             r["aux_video_acc"] = pct("video")
+            v3d, vn3d = _video_by_source((mods.get("video") or {}).get("results_json", ""))
+            r["aux_video_3d"], r["aux_video_non3d"] = v3d, vn3d
             r["aux_text_acc"] = pct("text")
             r["aux_image_composite"] = pct("image")
             r["aux_image_dense_oks"] = pct("image_dense")
