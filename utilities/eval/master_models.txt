@@ -23,10 +23,20 @@ sft_step2812
 # B: GRPO step_492 (same mix + aux_12k) — pmartins external
 grpo_step492
 
-# ---- historic models re-evaluated into the new era ----
-# oracle_obs_merged_1805 ep1 (non-reasoning, thinkoff) = step2558
-oracle-obs-merged-1805-step2558
-# oracle_obs_cat union5 ep? (non-reasoning, thinkoff) = step339
+# ---- VO champions carried into the new era (decided 2026-06-18 from the 1105 VO results) ----
+# Goal: keep improving VO error-detection F1 while holding aux + benchmark axes. The VO CSV
+# only ever measured the VO axis; these get the full 3-axis treatment via eval_all.sh --serve.
+#
+# union5 cat ep3 = BEST DEPLOYABLE (err-F1 0.504, sample-F1 0.751); thinkoff
 oracle-obs-cat-union5-step339
-# oracle_obs_cat + llm_fms (non-reasoning, thinkoff) = step1785
+# +LLM-FMS cat ep3 (err-F1 0.485); thinkoff — FMS data additive
 oracle-obs-cat-plus-llm-fms-step1785
+# merged_1805 ep1 = next data scale-up (86k), UNTESTED on every axis; thinkoff
+oracle-obs-merged-1805-step2558
+# 4b oracle_obs_cat (step357) = small-model contender, err-F1 0.473 ~ matches 27b; thinkoff
+oracle-obs-cat-1105-step357
+# reasoning ref (step330) = contrast line; reasoning UNDER-performs answer-only on F1 (0.428); thinkon
+oracle-obs-cat-reasoning-step330
+# 397B oracle = upper-bound / distillation target (oracle setting F1 0.788); served as a baseline.
+# NOTE: 397B MoE is a HEAVY serve (TP8, slow benchmarks) — eval its VO/aux axes deliberately.
+shared/models/qwen3.5-397b
