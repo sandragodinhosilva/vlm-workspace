@@ -153,17 +153,10 @@ def _bench_display_to_path() -> dict[str, str]:
                 continue
             for slug_dir in disp_dir.iterdir():
                 name = slug_dir.name
-                if not slug_dir.is_dir():
-                    continue
-                if name.startswith("--"):
-                    # "--mnt--data--x" -> "/mnt/data/x" (slug IS the served path)
+                if slug_dir.is_dir() and name.startswith("--"):
+                    # "--mnt--data--x" -> "/mnt/data/x" (slug IS the served path; for long external
+                    # ckpts this is a models/_ext/ symlink, which _norm_path resolves to the real path)
                     out.setdefault(disp_dir.name, "/" + name.lstrip("-").replace("--", "/"))
-                    break
-                # otherwise the slug is a SHORT ALIAS (long-path models served via
-                # --served-model-name) -> recover the real path from the sidecar map.
-                sidecar = BENCH_RESULTS / "_alias_map" / f"{name}.path"
-                if sidecar.exists():
-                    out.setdefault(disp_dir.name, sidecar.read_text().strip())
                     break
     return out
 

@@ -93,16 +93,20 @@ if [[ "$SERVE" == 1 ]]; then
   [[ ! -d "$MODEL" ]] && { echo "ERROR: --serve needs a model PATH on disk (got: $MODEL)" >&2; exit 2; }
 fi
 
-# ---- served id: short alias for LONG paths (>120 chars) so VLMEvalKit's filename slug stays
-# under the 255-char limit (Errno 36 on external pmartins-style 225-char paths). For normal paths
-# SERVED_ID == $MODEL (unchanged). The alias is registered via --served-model-name (--serve only);
-# a sidecar maps it back to the real path for the compiler join. ----
-SERVED_ID="$MODEL"; SERVE_ALIAS=""
-if [[ "$SERVE" == 1 && ${#MODEL} -gt 120 ]]; then
-  SERVE_ALIAS="${RUN_ID:-$(basename "$(dirname "$MODEL")")_$(basename "$MODEL")}"
-  SERVE_ALIAS="$(printf '%s' "$SERVE_ALIAS" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-80)"
-  SERVED_ID="$SERVE_ALIAS"
-  echo "==> long model path (${#MODEL} chars) -> serving under short alias '$SERVE_ALIAS'"
+# ---- LONG paths (>120 chars, e.g. external 225-char pmartins ckpts): serve+eval via a SHORT
+# SYMLINK under models/_ext/. Every downstream script (serve, aux per-task log, VLMEvalKit result
+# slug, the request model field) then sees a short path automatically — one fix instead of patching
+# each script's filename builder. The compiler's _norm_path resolves the symlink back to the real
+# path, so the join is unchanged. SERVED_ID == the path actually used everywhere below. ----
+SERVED_ID="$MODEL"
+if [[ ${#MODEL} -gt 120 ]]; then
+  short_name="${RUN_ID:-$(basename "$(dirname "$MODEL")")_$(basename "$MODEL")}"
+  short_name="$(printf '%s' "$short_name" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-60)"
+  SERVED_ID="/mnt/data/sgsilva/models/_ext/${short_name}"
+  mkdir -p /mnt/data/sgsilva/models/_ext
+  ln -sfn "$MODEL" "$SERVED_ID"
+  [[ -f "$SERVED_ID/config.json" ]] || { echo "ERROR: short symlink $SERVED_ID does not resolve to a model (config.json missing)" >&2; exit 1; }
+  echo "==> long model path (${#MODEL} chars) -> short symlink: $SERVED_ID -> $MODEL"
 fi
 
 # ---- autodetect thinking mode (reuses the run_eval.py probe shape) ----
@@ -159,21 +163,14 @@ if [[ "$SERVE" == 1 ]]; then
   # log name: prefer RUN_ID (unique) so pmartins '.../step_N/hf' paths don't all collide on 'hf'
   SERVE_TAG="${RUN_ID:-$(basename "$MODEL")}"
   SERVE_LOG="/mnt/data/sgsilva/logs/eval_all_serve_${SERVE_TAG}_think${THINKING}.log"
-  echo "==> --serve: launching vLLM  model=$(basename "$MODEL")  TP=$TP  max_len=$MAX_LEN  port=$SERVE_PORT  thinking=$THINKING"
+  echo "==> --serve: launching vLLM  model=$(basename "$SERVED_ID")  TP=$TP  max_len=$MAX_LEN  port=$SERVE_PORT  thinking=$THINKING"
   echo "    serve venv: $SERVE_VENV"
   echo "    serve log: $SERVE_LOG   (host $(hostname))"
-  # if using a short alias, register the server under it + write a sidecar (alias -> real path)
-  # so the compiler can recover the path the benchmark slug no longer encodes.
-  SERVE_NAME_ENV=()
-  if [[ -n "$SERVE_ALIAS" ]]; then
-    SERVE_NAME_ENV=(SERVED_MODEL_NAME="$SERVE_ALIAS")
-    mkdir -p /mnt/data/sgsilva/results/benchmarks/_alias_map
-    printf '%s\n' "$MODEL" > "/mnt/data/sgsilva/results/benchmarks/_alias_map/${SERVE_ALIAS}.path"
-    echo "    alias sidecar: /mnt/data/sgsilva/results/benchmarks/_alias_map/${SERVE_ALIAS}.path -> $MODEL"
-  fi
+  # serve the SHORT path ($SERVED_ID; == $MODEL for normal paths, the _ext symlink for long ones)
+  # so the server registers a short id and every downstream filename stays under the 255-char limit.
   # own process group (setsid) so teardown can signal the whole vLLM tree, not just the launcher
-  setsid env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV="$SERVE_VENV" "${SERVE_NAME_ENV[@]}" \
-    /home/sgsilva/vlm-evaluation/start_vllm_server.sh "$MODEL" "$TP" "$MAX_LEN" "$SERVE_PORT" \
+  setsid env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV="$SERVE_VENV" \
+    /home/sgsilva/vlm-evaluation/start_vllm_server.sh "$SERVED_ID" "$TP" "$MAX_LEN" "$SERVE_PORT" \
     >"$SERVE_LOG" 2>&1 &
   OUR_SERVER_PID=$!
   echo "    server PID (process group): $OUR_SERVER_PID  — monitor: tail -f $SERVE_LOG"
