@@ -53,8 +53,29 @@ Fully unattended.
 - Serve params default by base-model (`4b/9b`→ TP 8 / max-len 32768; `27b`→ TP 8 / 65536);
   override with `--tp` / `--max-len`. Port is parsed from `--base-url`.
 - `--serve-wait <secs>` health-wait budget (default 1800). Serve log →
-  `/mnt/data/sgsilva/logs/eval_all_serve_<model>_think<mode>.log`.
+  `/mnt/data/sgsilva/logs/eval/serve/eval_all_serve_<run_id>_think<mode>.log`.
 - `--serve` and `--preflight` are mutually exclusive (preflight launches nothing).
+- `--keep-server` leaves the vLLM up after a NORMAL eval exit (reuse within the job's walltime;
+  INT/TERM still tear down). NOTE: in sbatch the node frees at job end regardless — for a server
+  that outlives the job (reuse across evals), use `serve_only.sbatch` instead.
+
+## External / long-path checkpoints (e.g. pmartins) + thinkon-27B runaways
+- **Long paths (>120 chars) auto-resolve to a short symlink** `models/_ext/<run_id>` for
+  serve+eval, so no script hits the 255-char filename limit (`Errno 36`). Transparent; compiler
+  resolves it back. No action needed beyond `--serve`.
+- **pmartins `TokenizersBackend` tokenizer** → `--serve-venv /home/sgsilva/vlm-post-training-home-venv`
+  (the default serving venv's transformers is too old). See `/serve-vllm`.
+- **`--bench-max-tokens 16384`** for thinkon-27B: caps ALL 3 benchmarks (VSI config + MMMU/Video-MME)
+  so runaway reasoning fails in ~2-4min instead of ~30min/sample (else Video-MME ≈ days, ~27%
+  non-responses). Real answers untouched (well under 16384). The compiler scores benchmarks over
+  PARSABLE answers only — non-responses excluded from the denominator, drop count shown in
+  `bench_source` (e.g. `mmmu_val:parsable(980,-70)`).
+
+## serve_only.sbatch — long-lived server for attach-reuse
+A per-job `--serve` server dies at job end (SLURM-killed) → can't be reused across evals.
+`serve_only.sbatch` serves ONE model for its full walltime (12h) so many eval drivers attach via
+`--base-url` (NO `--serve`) without re-reserving. Submit with `MODEL/BASE_MODEL/THINKING/SERVE_VENV`
+env, find the node (`squeue`), then `eval_all.sh ... --base-url http://<node>:8000/v1 --stages ...`.
 
 **ALWAYS preflight first** (5s, no eval launched) — add `--preflight` to the exact command you
 plan to run. It validates: server reachable + served id matches `--model`; `max_model_len` >
