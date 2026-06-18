@@ -52,6 +52,7 @@ CMD=( /home/sgsilva/utilities/eval/eval_all.sh
 [[ -n "${TP:-}" ]]              && CMD+=( --tp "$TP" )
 [[ -n "${MAX_LEN:-}" ]]         && CMD+=( --max-len "$MAX_LEN" )
 [[ -n "${SERVE_VENV:-}" ]]      && CMD+=( --serve-venv "$SERVE_VENV" )  # pmartins -> vlm-post-training-home-venv
+[[ "${KEEP_SERVER:-0}" == 1 ]]  && CMD+=( --keep-server )  # leave vLLM up after eval (reuse; rarely useful in sbatch since node frees at job end)
 [[ -n "${TRAIN_GROUP_ID:-}" ]]  && CMD+=( --train-group-id "$TRAIN_GROUP_ID" )
 [[ -n "${RUN_ID:-}" ]]          && CMD+=( --run-id "$RUN_ID" )
 [[ -n "${TAG:-}" ]]             && CMD+=( --tag "$TAG" )

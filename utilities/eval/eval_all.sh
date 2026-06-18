@@ -42,7 +42,7 @@ VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visua
 MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1"
 THINKING=""; TRAIN_GROUP_ID=""; RUN_ID=""; TAG=""; TESTSET="1506"; MAX_SAMPLES=""
 BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""
-SERVE=0; TP=""; MAX_LEN=""; SERVE_WAIT=1800   # --serve: launch+teardown our own vLLM
+SERVE=0; TP=""; MAX_LEN=""; SERVE_WAIT=1800; KEEP_SERVER=0   # --serve: launch+teardown our own vLLM
 SERVE_VENV="/home/sgsilva/qwen3.5-serving-home-venv"   # --serve-venv override for ckpts needing another
 # stack (e.g. pmartins transformers-5.x 'TokenizersBackend' tokenizers -> vlm-post-training-home-venv)
 while [[ $# -gt 0 ]]; do
@@ -66,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --tp) TP="$2"; shift 2;;            # tensor-parallel size (default by base-model)
     --max-len) MAX_LEN="$2"; shift 2;;  # served max_model_len (default by base-model)
     --serve-wait) SERVE_WAIT="$2"; shift 2;;  # seconds to wait for server health (default 1800)
+    --keep-server) KEEP_SERVER=1; shift;;  # leave OUR vLLM running after eval (reuse it; node frees only at job end)
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -104,6 +105,7 @@ if [[ ${#MODEL} -gt 120 ]]; then
   short_name="$(printf '%s' "$short_name" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-60)"
   SERVED_ID="/mnt/data/sgsilva/models/_ext/${short_name}"
   mkdir -p /mnt/data/sgsilva/models/_ext
+  find /mnt/data/sgsilva/models/_ext -maxdepth 1 -xtype l -delete 2>/dev/null  # prune dangling (deleted-ckpt) symlinks
   ln -sfn "$MODEL" "$SERVED_ID"
   [[ -f "$SERVED_ID/config.json" ]] || { echo "ERROR: short symlink $SERVED_ID does not resolve to a model (config.json missing)" >&2; exit 1; }
   echo "==> long model path (${#MODEL} chars) -> short symlink: $SERVED_ID -> $MODEL"
@@ -156,9 +158,20 @@ teardown_server() {
     kill -KILL "-$OUR_SERVER_PID" 2>/dev/null || true
   fi
 }
+# EXIT handler: respect --keep-server on a NORMAL exit (reuse the server); INT/TERM (crash/cancel)
+# ALWAYS tear down so a killed job frees the node — never leave a stray 8-GPU server behind.
+on_exit() {
+  if [[ "$KEEP_SERVER" == 1 ]]; then
+    echo ">>> --keep-server: leaving vLLM (PID $OUR_SERVER_PID) running at $BASE_URL"
+    echo "    served id: $SERVED_ID   kill it: kill -INT -$OUR_SERVER_PID   (node frees at job end regardless)"
+  else
+    teardown_server
+  fi
+}
 if [[ "$SERVE" == 1 ]]; then
   [[ "$PREFLIGHT" == 1 ]] && { echo "ERROR: --serve and --preflight are mutually exclusive (preflight launches nothing)." >&2; exit 2; }
-  trap teardown_server EXIT INT TERM
+  trap on_exit EXIT
+  trap teardown_server INT TERM
   ENABLE_BIT="$([[ "$THINKING" == on ]] && echo 1 || echo 0)"
   # log name: prefer RUN_ID (unique) so pmartins '.../step_N/hf' paths don't all collide on 'hf'
   SERVE_TAG="${RUN_ID:-$(basename "$MODEL")}"
@@ -297,7 +310,10 @@ fi
 if have_stage benchmarks; then
   echo ""; echo ">>> STAGE: benchmarks (VSI-Bench / MMMU-val / Video-MME)"
   reason_bool="$([[ "$THINKING" == on ]] && echo true || echo false)"
-  disp="$(basename "$MODEL")-think${THINKING}"
+  # display = basename of SERVED_ID (the short symlink for long paths) — UNIQUE per run. Using the
+  # raw $MODEL basename would be 'hf' for every pmartins '.../step_N/hf', colliding all their
+  # benchmark result dirs + the master display. SERVED_ID basename = e.g. grpo_step492_thinkon.
+  disp="$(basename "$SERVED_ID")-think${THINKING}"
   # TEMP config (deleted after the run) — no configs/ accumulation needed. compile_eval_results.py
   # recovers display_name -> served path by decoding the result-tree model_slug, NOT from configs.
   cfg="/mnt/data/sgsilva/tmp/_eval_all_bench_${disp}.json"
