@@ -46,19 +46,20 @@ MASTER_CSV = MASTER_DIR / "eval_master.csv"
 COPY_DIR = MASTER_DIR / "runs"
 
 # New-era curation: the LIVE eval_master* files hold a CURATED allowlist of models (the new-era
-# board). The full historical dump is frozen under results/master/v1/. Each non-comment line is a
-# substring matched (case-insensitive) against a row's served `model` path OR `display`; a row is
-# kept iff it matches any pattern. Edit this file to add a model; re-run the compiler.
+# board). The full historical dump is frozen under results/master/v1/. The allowlist is
+# master_models.json — a list of {pattern, display?, train_reasoning?, note?}; a row is kept iff
+# its served path/display matches any pattern's substring (first match supplies the curated
+# display + train_reasoning). Edit that JSON to add a model; re-run the compiler.
 # If the allowlist file is ABSENT, the compiler falls back to writing ALL rows (legacy behavior).
-MODEL_ALLOWLIST = Path("/home/sgsilva/utilities/eval/master_models.txt")
+MODEL_ALLOWLIST = Path("/home/sgsilva/utilities/eval/master_models.json")
 ERA_FAMILIES = ("4b", "27b")  # only these families get split files in the new era (2026-06-18)
 
 # one row per (model_key, thinking); model_key = the served model basename / display name.
 # Column order = logical reading order: IDENTITY -> WHEN -> HEADLINE SCORES (benchmarks +
 # aux + visual-obs) -> AUX DETAIL -> TRAINING PROVENANCE -> SOURCE PROVENANCE (bookkeeping).
 FIELDS = [
-    # --- identity: who/what this row is ---
-    "display", "model", "model_created", "owner", "is_baseline", "eval_thinking",
+    # --- identity: who/what this row is (train_reasoning sits right before eval_thinking) ---
+    "display", "model", "model_created", "owner", "is_baseline", "train_reasoning", "eval_thinking",
     # --- when: most-recent eval (model_created is up with identity) ---
     "last_eval_ts",
     # --- headline scores: the numbers you scan first ---
@@ -71,8 +72,8 @@ FIELDS = [
     # --- aux per-modality / per-task detail ---
     "aux_video_acc", "aux_text_acc", "aux_image_composite",
     "aux_image_dense_oks", "aux_image_task4_acc",
-    # --- training provenance (from eval_matrix) ---
-    "train_reasoning", "train_group_id", "train_sample_count", "best_step",
+    # --- training provenance (from eval_matrix; train_reasoning moved up to identity) ---
+    "train_group_id", "train_sample_count", "best_step",
     # --- source provenance / bookkeeping (last) ---
     "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source", "bench_source", "vo_source",
 ]
@@ -125,23 +126,30 @@ def _is_baseline(model: str, display: str = "") -> bool:
     return False
 
 
-def _load_allowlist() -> list[str] | None:
-    """Read the curated allowlist (substring patterns, lowercased). Returns None if the file is
-    ABSENT (→ keep ALL rows, legacy). Returns the (possibly empty) list when the file exists."""
+def _load_allowlist():
+    """Read the curated allowlist JSON ({models: [{pattern, display?, train_reasoning?, note?}]}).
+    Returns a list of (pattern_lc, display, train_reasoning) tuples, or None if the file is ABSENT
+    (→ keep ALL rows, legacy). A malformed file is a hard error (distinct from absent — don't
+    silently fall back to keeping everything)."""
     if not MODEL_ALLOWLIST.exists():
         return None
+    data = json.loads(MODEL_ALLOWLIST.read_text())
     out = []
-    for line in MODEL_ALLOWLIST.read_text().splitlines():
-        s = line.split("#", 1)[0].strip().lower()
-        if s:
-            out.append(s)
+    for e in data.get("models", []):
+        pat = (e.get("pattern") or "").strip().lower()
+        if pat:
+            out.append((pat, (e.get("display") or "").strip(), (e.get("train_reasoning") or "").strip()))
     return out
 
 
-def _allowed(row: dict, patterns: list[str]) -> bool:
-    """A row is kept iff its model path OR display matches any allowlist pattern."""
+def _match_allow(row: dict, allow):
+    """Return the FIRST matching (pattern, display, train_reasoning) tuple for a row, or None.
+    Match is a substring of the row's model path OR display."""
     hay = f"{row.get('model','')} {row.get('display','')}".lower()
-    return any(p in hay for p in patterns)
+    for entry in allow:
+        if entry[0] in hay:
+            return entry
+    return None
 
 
 # V2 ERA TESTSET POLICY: the aux axis MUST be the new testset_1506 for every board model (the
@@ -582,8 +590,11 @@ def _rows():
     #  last_eval_ts  = newest mtime across the eval artifacts that fed THIS row (aux run dir,
     #                  the benchmark result dirs, the visual-obs JSON) — the last eval performed.
     for (model_path, _think), r in rows.items():
-        r["model_created"] = _model_created(model_path)
         r["is_baseline"] = "yes" if _is_baseline(model_path, r.get("display", "")) else "no"
+        # model_created = ckpt export mtime. Meaningless for a BASELINE (bare upstream Qwen3.5 —
+        # the dir mtime is just when the shared files synced to disk, not a real creation date) ->
+        # leave blank for baselines.
+        r["model_created"] = "" if r["is_baseline"] == "yes" else _model_created(model_path)
         disp = r.get("display", "")
         ev_paths = [r.get("aux_run_dir", "")]
         for bench in ("mmmu_val", "video_mme", "vsibench"):
@@ -617,12 +628,22 @@ def main() -> int:
     # New-era curation: keep only allowlisted models in the LIVE master files (the full
     # historical dump is frozen under results/master/v1/). If the allowlist file is absent,
     # keep ALL rows (legacy behavior) so nothing silently vanishes.
-    patterns = _load_allowlist()
+    allow = _load_allowlist()
     items = list(rows.items())
-    if patterns is not None:
-        kept = [(k, r) for (k, r) in items if _allowed(r, patterns)]
+    if allow is not None:
+        kept = []
+        for k, r in items:
+            entry = _match_allow(r, allow)
+            if entry is None:
+                continue
+            _pat, disp, treas = entry
+            if disp:                      # curated clean display name overrides the raw one
+                r["display"] = disp
+            if treas and not r.get("train_reasoning"):  # curated train_reasoning fills the gap
+                r["train_reasoning"] = treas
+            kept.append((k, r))
         dropped = len(items) - len(kept)
-        print(f"[allowlist] {MODEL_ALLOWLIST.name}: {len(patterns)} patterns -> kept {len(kept)}/{len(items)} rows ({dropped} off-board)")
+        print(f"[allowlist] {MODEL_ALLOWLIST.name}: {len(allow)} patterns -> kept {len(kept)}/{len(items)} rows ({dropped} off-board)")
         items = kept
     else:
         print(f"[allowlist] {MODEL_ALLOWLIST.name} absent -> keeping ALL {len(items)} rows (legacy)")

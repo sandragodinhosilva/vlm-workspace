@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "Curated model allowlist + display/provenance for the LIVE eval_master* files (new-era board).",
+    "Full historical dump frozen under /mnt/data/sgsilva/results/master/v1/.",
+    "Each entry: {pattern, display?, train_reasoning?, note?}.",
+    "  pattern        = case-insensitive SUBSTRING matched vs a row's served PATH or display;",
+    "                   a row is KEPT iff it matches any pattern (first match wins for display/treas).",
+    "  display        = clean name shown in the board's `display` column.",
+    "  train_reasoning= yes|no|NA — TRAINED on reasoning data (curated; not in eval_matrix).",
+    "  note           = free-text rationale (not shown on the board).",
+    "Edit + re-run:  vlm-post-training-home-venv/bin/python compile_eval_results.py"
+  ],
+  "models": [
+    { "pattern": "/mnt/data/shared/models/qwen3.5-4b",  "display": "Qwen3.5-4B (baseline)",  "train_reasoning": "NA",
+      "note": "bare upstream; benchmarks+VO REUSED, only 1506 aux re-run" },
+    { "pattern": "/mnt/data/shared/models/qwen3.5-27b", "display": "Qwen3.5-27B (baseline)", "train_reasoning": "NA",
+      "note": "bare upstream; benchmarks+VO REUSED, only 1506 aux re-run" },
+    { "pattern": "baseline_4b_newpipeline",  "display": "Qwen3.5-4B (baseline)",  "train_reasoning": "NA",
+      "note": "fresh 1506 aux run-id (job 93607)" },
+    { "pattern": "baseline_27b_newpipeline", "display": "Qwen3.5-27B (baseline)", "train_reasoning": "NA",
+      "note": "fresh 1506 aux run-id (when nodes free)" },
+    { "pattern": "shared/models/qwen3.5-397b", "display": "Qwen3.5-397B (oracle/upper-bound)", "train_reasoning": "NA",
+      "note": "distillation target; oracle-setting VO F1 0.788; HEAVY serve (TP8)" },
+
+    { "pattern": "sft_step2812", "display": "27B SFT fe-cmp3-mix2005 step2812 (pmartins)", "train_reasoning": "yes",
+      "note": "new-pipeline; fe_comparison_3_mix_reas_12k_full_2005" },
+    { "pattern": "grpo_step492", "display": "27B GRPO fe-cmp3-mix2005 step492 (pmartins)", "train_reasoning": "yes",
+      "note": "new-pipeline; same mix + aux_12k" },
+
+    { "pattern": "oracle-obs-cat-union5-step339",        "display": "27B union5-cat ep3",           "train_reasoning": "no",
+      "note": "BEST DEPLOYABLE VO (err-F1 0.504); answer-only" },
+    { "pattern": "oracle-obs-cat-plus-llm-fms-step1785", "display": "27B oracle-cat+LLM-FMS ep3",    "train_reasoning": "no",
+      "note": "+LLM-FMS additive (err-F1 0.485); answer-only" },
+    { "pattern": "oracle-obs-merged-1805-step2558",      "display": "27B merged-1805 ep1",           "train_reasoning": "no",
+      "note": "next data scale-up (86k), UNTESTED; answer-only" },
+    { "pattern": "oracle-obs-cat-1105-step357",          "display": "4B oracle-cat ep3",             "train_reasoning": "no",
+      "note": "small-model contender (err-F1 0.473); answer-only" },
+    { "pattern": "oracle-obs-cat-reasoning-step330",     "display": "27B oracle-cat reasoning ep3",  "train_reasoning": "yes",
+      "note": "reasoning CONTRAST line; UNDER-performs answer-only on F1 (0.428)" }
+  ]
+}
