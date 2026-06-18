@@ -47,7 +47,7 @@ COPY_DIR = MASTER_DIR / "runs"
 
 # one row per (model_key, thinking); model_key = the served model basename / display name
 FIELDS = [
-    "model", "display", "thinking", "reasoning",
+    "model", "owner", "display", "thinking", "reasoning",
     # general benchmarks
     "MMMU_val", "Video_MME", "VSI_Bench",
     # aux tasks (multimodal_reduced_testset) — headline + the rich eval_matrix columns
@@ -78,6 +78,20 @@ def _base_model(model: str, display: str = "") -> str:
         if tag in s:
             return "4b"
     return "other"
+
+
+def _owner(model: str) -> str:
+    """Derive who owns the checkpoint from its path, so EXTERNAL (colleague) models are
+    trackable without naming discipline. /sgsilva/ -> sgsilva (mine); any other /<user>/ under
+    /mnt/data/ -> '<user> (external)'; HF hub ids / shared models -> '' (unknown)."""
+    m = (model or "").lower()
+    if "/sgsilva/" in m or "/merged_models/" in m:
+        return "sgsilva"
+    import re as _re
+    hit = _re.search(r"/mnt/data/([a-z0-9_]+)/", m)
+    if hit and hit.group(1) not in ("shared",):
+        return f"{hit.group(1)} (external)"
+    return ""
 
 
 def _is_baseline(model: str, display: str = "") -> bool:
@@ -139,10 +153,17 @@ def _bench_display_to_path() -> dict[str, str]:
                 continue
             for slug_dir in disp_dir.iterdir():
                 name = slug_dir.name
-                if slug_dir.is_dir() and name.startswith("--"):
-                    # "--mnt--data--x" -> "/mnt/data/x"
-                    path = "/" + name.lstrip("-").replace("--", "/")
-                    out.setdefault(disp_dir.name, path)
+                if not slug_dir.is_dir():
+                    continue
+                if name.startswith("--"):
+                    # "--mnt--data--x" -> "/mnt/data/x" (slug IS the served path)
+                    out.setdefault(disp_dir.name, "/" + name.lstrip("-").replace("--", "/"))
+                    break
+                # otherwise the slug is a SHORT ALIAS (long-path models served via
+                # --served-model-name) -> recover the real path from the sidecar map.
+                sidecar = BENCH_RESULTS / "_alias_map" / f"{name}.path"
+                if sidecar.exists():
+                    out.setdefault(disp_dir.name, sidecar.read_text().strip())
                     break
     return out
 
@@ -153,7 +174,7 @@ def _rows():
 
     def get(model_path, thinking, display=""):
         key = (_norm_path(model_path), thinking)
-        r = rows.setdefault(key, {"model": key[0], "thinking": thinking})
+        r = rows.setdefault(key, {"model": key[0], "thinking": thinking, "owner": _owner(key[0])})
         if display and not r.get("display"):
             r["display"] = display
         return r
@@ -252,7 +273,14 @@ def _rows():
                 disp = (rec.get("Model") or "").strip()
                 if not disp:
                     continue
-                thinking = "on" if (rec.get("Reasoning", "").strip().lower() in ("yes", "true", "on")) else "off"
+                # prefer an explicit thinkon/thinkoff token in the display; else the Reasoning col
+                dl = disp.lower()
+                if "thinkon" in dl:
+                    thinking = "on"
+                elif "thinkoff" in dl:
+                    thinking = "off"
+                else:
+                    thinking = "on" if (rec.get("Reasoning", "").strip().lower() in ("yes", "true", "on")) else "off"
                 model_path = disp2path.get(disp, disp)  # path if config known, else display
                 r = get(model_path, thinking, display=disp)
                 def num(c):

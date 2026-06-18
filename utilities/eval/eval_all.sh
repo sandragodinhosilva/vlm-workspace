@@ -93,10 +93,22 @@ if [[ "$SERVE" == 1 ]]; then
   [[ ! -d "$MODEL" ]] && { echo "ERROR: --serve needs a model PATH on disk (got: $MODEL)" >&2; exit 2; }
 fi
 
+# ---- served id: short alias for LONG paths (>120 chars) so VLMEvalKit's filename slug stays
+# under the 255-char limit (Errno 36 on external pmartins-style 225-char paths). For normal paths
+# SERVED_ID == $MODEL (unchanged). The alias is registered via --served-model-name (--serve only);
+# a sidecar maps it back to the real path for the compiler join. ----
+SERVED_ID="$MODEL"; SERVE_ALIAS=""
+if [[ "$SERVE" == 1 && ${#MODEL} -gt 120 ]]; then
+  SERVE_ALIAS="${RUN_ID:-$(basename "$(dirname "$MODEL")")_$(basename "$MODEL")}"
+  SERVE_ALIAS="$(printf '%s' "$SERVE_ALIAS" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-80)"
+  SERVED_ID="$SERVE_ALIAS"
+  echo "==> long model path (${#MODEL} chars) -> serving under short alias '$SERVE_ALIAS'"
+fi
+
 # ---- autodetect thinking mode (reuses the run_eval.py probe shape) ----
 if [[ -z "$THINKING" ]]; then
   echo "==> Autodetecting thinking mode at $BASE_URL ..."
-  detected="$("$VPT_PY" - "$BASE_URL" "$MODEL" <<'PY'
+  detected="$("$VPT_PY" - "$BASE_URL" "$SERVED_ID" <<'PY'
 import json,sys,urllib.request
 base,model=sys.argv[1],sys.argv[2]
 url=base.rstrip("/")+"/chat/completions"
@@ -150,8 +162,17 @@ if [[ "$SERVE" == 1 ]]; then
   echo "==> --serve: launching vLLM  model=$(basename "$MODEL")  TP=$TP  max_len=$MAX_LEN  port=$SERVE_PORT  thinking=$THINKING"
   echo "    serve venv: $SERVE_VENV"
   echo "    serve log: $SERVE_LOG   (host $(hostname))"
+  # if using a short alias, register the server under it + write a sidecar (alias -> real path)
+  # so the compiler can recover the path the benchmark slug no longer encodes.
+  SERVE_NAME_ENV=()
+  if [[ -n "$SERVE_ALIAS" ]]; then
+    SERVE_NAME_ENV=(SERVED_MODEL_NAME="$SERVE_ALIAS")
+    mkdir -p /mnt/data/sgsilva/results/benchmarks/_alias_map
+    printf '%s\n' "$MODEL" > "/mnt/data/sgsilva/results/benchmarks/_alias_map/${SERVE_ALIAS}.path"
+    echo "    alias sidecar: /mnt/data/sgsilva/results/benchmarks/_alias_map/${SERVE_ALIAS}.path -> $MODEL"
+  fi
   # own process group (setsid) so teardown can signal the whole vLLM tree, not just the launcher
-  setsid env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV="$SERVE_VENV" \
+  setsid env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV="$SERVE_VENV" "${SERVE_NAME_ENV[@]}" \
     /home/sgsilva/vlm-evaluation/start_vllm_server.sh "$MODEL" "$TP" "$MAX_LEN" "$SERVE_PORT" \
     >"$SERVE_LOG" 2>&1 &
   OUR_SERVER_PID=$!
@@ -182,7 +203,7 @@ run_preflight() {
   local ok=1
   echo ""; echo "===== PREFLIGHT ====="
   # 1. server reachable + does the served id match --model?
-  local served; served="$("$VPT_PY" - "$BASE_URL" "$MODEL" <<'PY'
+  local served; served="$("$VPT_PY" - "$BASE_URL" "$SERVED_ID" <<'PY'
 import json,sys,urllib.request
 base,model=sys.argv[1],sys.argv[2]
 try:
@@ -198,7 +219,7 @@ PY
   else
     local sid="${served%%|*}" smax="${served##*|}"
     echo "  [ok]   server up: id=$sid  max_model_len=$smax"
-    [[ "$sid" == "$MODEL" ]] || echo "  [WARN] served id != --model ('$sid' vs '$MODEL') — eval --model must equal the served id or requests 404"
+    [[ "$sid" == "$SERVED_ID" ]] || echo "  [WARN] served id != expected ('$sid' vs '$SERVED_ID') — eval model must equal the served id or requests 404"
     # 2. served max_model_len > planned eval max-tokens (aux 16384/8192, VO 32768/4096, bench 32768)
     local emax; emax="$([[ "$THINKING" == on ]] && echo 32768 || echo 16384)"
     if [[ "$smax" =~ ^[0-9]+$ ]]; then
@@ -261,9 +282,9 @@ if have_stage aux; then
     aux_tag="${base_tag}_think${THINKING}"
     aux_run="${base_run}_think${THINKING}"
     args=( "$VPT/aux_tasks/sft/eval_multimodal_post_sft.sh"
-      --model "$MODEL" --base-model "$BASE_MODEL"
+      --model "$SERVED_ID" --base-model "$BASE_MODEL"
       --train-group-id "$TRAIN_GROUP_ID" --eval-family final_sft
-      --server-url "$BASE_URL" --api-base "$BASE_URL"
+      --server-url "${BASE_URL%/v1}" --api-base "${BASE_URL%/v1}"
       --enable-thinking "$et"
       --max-tokens "$vmax" --video-max-tokens "$vmax"
       --tag "$aux_tag" --run-id "$aux_run" )
@@ -284,7 +305,7 @@ if have_stage benchmarks; then
   # recovers display_name -> served path by decoding the result-tree model_slug, NOT from configs.
   cfg="/mnt/data/sgsilva/tmp/_eval_all_bench_${disp}.json"
   mkdir -p /mnt/data/sgsilva/tmp
-  "$VPT_PY" - "$cfg" "$MODEL" "$disp" "$reason_bool" "$BASE_URL" <<'PY'
+  "$VPT_PY" - "$cfg" "$SERVED_ID" "$disp" "$reason_bool" "$BASE_URL" <<'PY'
 import json,sys
 cfg,model,disp,reason,base=sys.argv[1:6]
 short="bench-"+disp
@@ -329,7 +350,7 @@ if have_stage visualobs; then
   mkdir -p "$VO_OUT"
   vargs=( "$VPT_PY" "$VPT/data_preparation/evaluate.py"
     --test-dataset-dir "$VO_TEST"
-    --model "$MODEL" --server-url "$BASE_URL"
+    --model "$SERVED_ID" --server-url "$BASE_URL"
     --max-tokens "$vmax"
     --output-file "$VO_OUT/${stem}_singlestage_think${THINKING}.json" --resume )
   [[ "$THINKING" == off ]] && vargs+=( --disable-thinking )
