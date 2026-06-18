@@ -1,0 +1,32 @@
+# ============================================================================
+# Curated model allowlist for the LIVE eval_master* files (the new-era board).
+# The full historical dump is frozen under /mnt/data/sgsilva/results/master/v1/.
+#
+# Each non-comment line is a case-insensitive SUBSTRING matched against a row's
+# served model PATH or DISPLAY name. A row is kept iff it matches ANY line.
+# Keep patterns specific enough not to over-match (they OR together).
+# Edit + re-run:  vlm-post-training-home-venv/bin/python compile_eval_results.py
+# ============================================================================
+
+# ---- baselines ----
+# NOTE: the OLD baseline rows are served from the bare shared path
+# (/mnt/data/shared/models/Qwen3.5-{4B,27B}) which COLLIDES with other runs served from the
+# same path (e.g. step1537) AND only has scattered single-axis scores. So we do NOT allowlist
+# them here. Instead they are being RE-RUN fresh through eval_all.sh --serve (aux+benchmarks+
+# visualobs) under distinct run-ids; add those run-ids below once the jobs land.
+# baseline_27b_newpipeline   # <- uncomment/replace with the fresh run-id
+# baseline_4b_newpipeline    # <- uncomment/replace with the fresh run-id
+
+# ---- new-pipeline models (eval_all.sh --serve era) ----
+# A: SFT step_2812 (fe_comparison_3_mix_reas_12k_full_2005) — pmartins external
+sft_step2812
+# B: GRPO step_492 (same mix + aux_12k) — pmartins external
+grpo_step492
+
+# ---- historic models re-evaluated into the new era ----
+# oracle_obs_merged_1805 ep1 (non-reasoning, thinkoff) = step2558
+oracle-obs-merged-1805-step2558
+# oracle_obs_cat union5 ep? (non-reasoning, thinkoff) = step339
+oracle-obs-cat-union5-step339
+# oracle_obs_cat + llm_fms (non-reasoning, thinkoff) = step1785
+oracle-obs-cat-plus-llm-fms-step1785

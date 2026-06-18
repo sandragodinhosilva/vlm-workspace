@@ -45,12 +45,20 @@ MASTER_DIR = Path("/mnt/data/sgsilva/results/master")          # renamed from ev
 MASTER_CSV = MASTER_DIR / "eval_master.csv"
 COPY_DIR = MASTER_DIR / "runs"
 
+# New-era curation: the LIVE eval_master* files hold a CURATED allowlist of models (the new-era
+# board). The full historical dump is frozen under results/master/v1/. Each non-comment line is a
+# substring matched (case-insensitive) against a row's served `model` path OR `display`; a row is
+# kept iff it matches any pattern. Edit this file to add a model; re-run the compiler.
+# If the allowlist file is ABSENT, the compiler falls back to writing ALL rows (legacy behavior).
+MODEL_ALLOWLIST = Path("/home/sgsilva/utilities/eval/master_models.txt")
+ERA_FAMILIES = ("4b", "27b")  # only these families get split files in the new era (2026-06-18)
+
 # one row per (model_key, thinking); model_key = the served model basename / display name.
 # Column order = logical reading order: IDENTITY -> WHEN -> HEADLINE SCORES (benchmarks +
 # aux + visual-obs) -> AUX DETAIL -> TRAINING PROVENANCE -> SOURCE PROVENANCE (bookkeeping).
 FIELDS = [
     # --- identity: who/what this row is ---
-    "display", "model", "model_created", "owner", "eval_thinking",
+    "display", "model", "model_created", "owner", "is_baseline", "eval_thinking",
     # --- when: most-recent eval (model_created is up with identity) ---
     "last_eval_ts",
     # --- headline scores: the numbers you scan first ---
@@ -115,6 +123,25 @@ def _is_baseline(model: str, display: str = "") -> bool:
     if "baseline" in display.lower() or "baseline" in leaf:
         return True
     return False
+
+
+def _load_allowlist() -> list[str] | None:
+    """Read the curated allowlist (substring patterns, lowercased). Returns None if the file is
+    ABSENT (→ keep ALL rows, legacy). Returns the (possibly empty) list when the file exists."""
+    if not MODEL_ALLOWLIST.exists():
+        return None
+    out = []
+    for line in MODEL_ALLOWLIST.read_text().splitlines():
+        s = line.split("#", 1)[0].strip().lower()
+        if s:
+            out.append(s)
+    return out
+
+
+def _allowed(row: dict, patterns: list[str]) -> bool:
+    """A row is kept iff its model path OR display matches any allowlist pattern."""
+    hay = f"{row.get('model','')} {row.get('display','')}".lower()
+    return any(p in hay for p in patterns)
 
 
 def _write_csv(path: Path, row_items, fields):
@@ -428,6 +455,7 @@ def _rows():
     #                  the benchmark result dirs, the visual-obs JSON) — the last eval performed.
     for (model_path, _think), r in rows.items():
         r["model_created"] = _model_created(model_path)
+        r["is_baseline"] = "yes" if _is_baseline(model_path, r.get("display", "")) else "no"
         disp = r.get("display", "")
         ev_paths = [r.get("aux_run_dir", "")]
         for bench in ("mmmu_val", "video_mme", "vsibench"):
@@ -448,20 +476,37 @@ def main() -> int:
     MASTER_DIR.mkdir(parents=True, exist_ok=True)
     rows = _rows()
 
-    # combined master (all families), baselines pinned to top
-    n = _write_csv(MASTER_CSV, list(rows.items()), FIELDS)
+    # New-era curation: keep only allowlisted models in the LIVE master files (the full
+    # historical dump is frozen under results/master/v1/). If the allowlist file is absent,
+    # keep ALL rows (legacy behavior) so nothing silently vanishes.
+    patterns = _load_allowlist()
+    items = list(rows.items())
+    if patterns is not None:
+        kept = [(k, r) for (k, r) in items if _allowed(r, patterns)]
+        dropped = len(items) - len(kept)
+        print(f"[allowlist] {MODEL_ALLOWLIST.name}: {len(patterns)} patterns -> kept {len(kept)}/{len(items)} rows ({dropped} off-board)")
+        items = kept
+    else:
+        print(f"[allowlist] {MODEL_ALLOWLIST.name} absent -> keeping ALL {len(items)} rows (legacy)")
+
+    # combined master (all curated families), baselines pinned to top
+    n = _write_csv(MASTER_CSV, items, FIELDS)
     print(f"[master] wrote {n} rows -> {MASTER_CSV}")
 
-    # per-base-model splits: eval_master_<family>.csv, baselines pinned to top of each
+    # per-base-model splits — only the active-era families (4b, 27b); baselines pinned to top
     from collections import defaultdict
     by_base = defaultdict(list)
-    for key, row in rows.items():
+    for key, row in items:
         by_base[_base_model(row.get("model", ""), row.get("display", ""))].append((key, row))
-    for fam in sorted(by_base):
+    for fam in ERA_FAMILIES:
         fam_csv = MASTER_DIR / f"eval_master_{fam}.csv"
-        nf = _write_csv(fam_csv, by_base[fam], FIELDS)
-        nbase = sum(_is_baseline(r.get("model", ""), r.get("display", "")) for _k, r in by_base[fam])
+        nf = _write_csv(fam_csv, by_base.get(fam, []), FIELDS)
+        nbase = sum(_is_baseline(r.get("model", ""), r.get("display", "")) for _k, r in by_base.get(fam, []))
         print(f"[master:{fam}] wrote {nf} rows ({nbase} baseline) -> {fam_csv}")
+    other = sorted(set(by_base) - set(ERA_FAMILIES))
+    if other:
+        n_other = sum(len(by_base[f]) for f in other)
+        print(f"[master] note: {n_other} curated rows in non-era families {other} are in the combined CSV but have no split file")
 
     # copy per-run aux aggregate JSON + SUMMARY (small, human-readable) into eval_master/runs/
     if not args.no_copy and AUX_EVALS.is_dir():
