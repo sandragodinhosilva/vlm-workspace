@@ -271,6 +271,10 @@ def _rows():
         except (TypeError, ValueError):
             return ""
     aux_seen = set()
+    aux_seen_runids = set()  # (run_id, thinking) the matrix already covers — so the fallback
+                             # JSON can't re-add the SAME run under a different path-string
+                             # (e.g. baseline scored as 'Qwen3.5-27b' in matrix vs
+                             # 'qwen3.5-27b/baseline_20260401' in the JSON) → spurious dup rows.
     for matrix in (AUX_MATRIX_4B, AUX_MATRIX):  # per-4B first, then combined (fills 9b/27b)
         if not matrix.exists():
             continue
@@ -285,6 +289,9 @@ def _rows():
                 if k in aux_seen:  # combined matrix shouldn't override the per-base-model one
                     continue
                 aux_seen.add(k)
+                rid = (rec.get("run_id", "").strip().lower(), thinking)
+                if rid[0]:
+                    aux_seen_runids.add(rid)
                 r = get(model_path, thinking, display=f"{rec.get('base_model','')}:{rec.get('run_id','')}")
                 r["aux_acc_weighted_3mod"] = _f(rec.get("acc_weighted_3modalities"))
                 r["aux_video_acc"] = _f(rec.get("acc_video"))
@@ -329,6 +336,9 @@ def _rows():
                 model_path = f"{d.get('base_model','')}/{run_id}"  # fallback sentinel key
             if (_norm_path(model_path), thinking) in aux_seen:
                 continue  # eval_matrix already covered this run (richer) — skip the thin JSON
+            if (run_id.strip().lower(), thinking) in aux_seen_runids:
+                continue  # SAME run_id as a matrix row but a different path-string → it's the
+                          # same eval; the matrix row is authoritative, don't add a dup row
             r = get(model_path, thinking, display=str(d.get("base_model", "")) + ":" + run_id)
             def pct(mod):
                 v = (mods.get(mod) or {}).get("metric_value_pct")
