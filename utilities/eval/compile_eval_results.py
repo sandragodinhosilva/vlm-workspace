@@ -62,8 +62,8 @@ FIELDS = [
     # --- when: most-recent eval (model_created is up with identity) ---
     "last_eval_ts",
     # --- headline scores: the numbers you scan first ---
-    #   general benchmarks
-    "MMMU_val", "Video_MME", "VSI_Bench",
+    #   general benchmarks (+ per-cell scoring method: parsable / judged / raw)
+    "MMMU_val", "Video_MME", "VSI_Bench", "bench_method",
     #   visual-obs headline
     "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
     #   aux 3-modality headline (after visual-obs)
@@ -465,20 +465,28 @@ def _rows():
                     except ValueError:
                         return ""
                 mmmu, vmme, vsi = num("MMMU-val"), num("Video-MME"), num("VSI-Bench")
+                # which summary file is this? raw=non-responses counted wrong; judged=LLM-judged
+                method = "judged" if "judge" in bench_csv.name.lower() else "raw"
+                meth = dict(_kv.split("=", 1) for _kv in (r.get("bench_method") or "").split(";") if "=" in _kv)
                 # only overwrite a column when this file actually has a value for it
-                if mmmu != "": r["MMMU_val"] = mmmu
-                if vmme != "": r["Video_MME"] = vmme
-                if vsi != "": r["VSI_Bench"] = vsi
+                if mmmu != "": r["MMMU_val"] = mmmu; meth["MMMU"] = method
+                if vmme != "": r["Video_MME"] = vmme; meth["VMME"] = method
+                if vsi != "": r["VSI_Bench"] = vsi; meth["VSI"] = method
                 src = r.get("bench_source") or ""
                 srcs = [src, bench_csv.name]
                 # OVERRIDE with parsable-only accuracy (exclude 'Failed to obtain answer' non-
                 # responses from the denominator). raw summary value stays the fallback.
-                for col, bench in (("MMMU_val", "mmmu_val"), ("Video_MME", "video_mme"), ("VSI_Bench", "vsibench")):
+                # NOTE: parsable only fires where a per-sample _result.xlsx exists, so within one
+                # row some benchmarks may be 'parsable' and others 'raw'/'judged' — bench_method
+                # records the method PER cell so the mix is visible, not silently conflated.
+                for col, bench, mlabel in (("MMMU_val", "mmmu_val", "MMMU"), ("Video_MME", "video_mme", "VMME"), ("VSI_Bench", "vsibench", "VSI")):
                     pa = _parsable_bench_acc(disp, bench)
                     if pa is not None and pa[2] > 0:  # only when some were actually dropped
                         r[col] = pa[0]
+                        meth[mlabel] = f"parsable(-{pa[2]})"
                         srcs.append(f"{bench}:parsable({pa[1]},-{pa[2]})")
                 r["bench_source"] = ",".join(dict.fromkeys(filter(None, srcs)))
+                r["bench_method"] = ";".join(f"{k}={v}" for k, v in meth.items())
     _load_bench(BENCH_SUMMARY)        # raw first (broad coverage)
     _load_bench(BENCH_SUMMARY_JUDGE)  # judged overlays where present (preferred)
 
