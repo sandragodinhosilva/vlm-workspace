@@ -10,6 +10,7 @@
 #   --delete     Delete original result directories after successful exports
 
 set -euo pipefail
+source /home/sgsilva/utilities/logs-utils/log_run.sh
 
 DRY_RUN=false
 DELETE_ORIGINALS=false
@@ -25,6 +26,10 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+_DRY_TAG=$( [[ "$DRY_RUN" == true ]] && echo "_dryrun" || echo "" )
+_EXPORT_LOG=$(log_start export "export_and_cleanup_nvidia_rl${_DRY_TAG}")
+exec > >(tee -a "$_EXPORT_LOG") 2>&1
 
 if [[ "$DRY_RUN" == true ]]; then
     echo "🔍 Running in DRY-RUN mode (no changes will be made)"

@@ -21,14 +21,18 @@ set -uo pipefail
 JOBID="${1:-}"
 [[ -z "$JOBID" ]] && { echo "Usage: bash chain_thinkoff_export_eval.sh <thinkoff_jobid>" >&2; exit 2; }
 
+# ---- logging ----
+source /home/sgsilva/utilities/logs-utils/log_run.sh
+LOGDIR=$(log_start --dir export "chain_thinkoff_export_eval_j${JOBID}")
+exec > >(tee -a "$LOGDIR/run.log") 2>&1
+# ---- end logging ----
+
 CKPT_DIR=/mnt/data/sgsilva/checkpoints/grpo_visual_obs_cat_1105_4b
 MODELS=/mnt/data/sgsilva/models
 PREFIX=qwen35-4b-oracle-obs-cat-sft-grpo-1105
 GRPO_VENV=/home/sgsilva/nemo-rl-vlm-grpo-home-venv/bin/python
 EXPORT_SCRIPT=/home/sgsilva/nemo-rl-vlm/scripts/export_all_checkpoints.sh
 EVAL_SCRIPT=/home/sgsilva/utilities/eval/eval_grpo_steps.sh
-LOGDIR=/mnt/data/sgsilva/logs/export_logs/20260604
-mkdir -p "$LOGDIR"
 
 echo "=== chain_thinkoff: waiting for thinkoff job $JOBID to finish ==="
 # 1. wait for the training job to leave the queue (covers clean finish AND crash)

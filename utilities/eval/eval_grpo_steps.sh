@@ -21,6 +21,12 @@
 # ──────────────────────────────────────────────────────────────────────────────
 set -uo pipefail   # NOT -e: a single bad step must not abort the whole sweep
 
+# ---- logging ----
+source /home/sgsilva/utilities/logs-utils/log_run.sh
+_GRPO_LOG=$(log_start eval "eval_grpo_steps_${1:-unknown}")
+exec > >(tee -a "$_GRPO_LOG") 2>&1
+# ---- end logging ----
+
 MODE="${1:-}"
 if [[ "$MODE" != "thinkoff" && "$MODE" != "thinkon" ]]; then
   echo "Usage: bash eval_grpo_steps.sh <thinkoff|thinkon>" >&2

@@ -19,6 +19,7 @@
 #   ./prune_sweep_checkpoints.sh --run --variant A
 #
 set -euo pipefail
+source /home/sgsilva/utilities/logs-utils/log_run.sh
 
 CKROOT="/mnt/data/sgsilva/checkpoints"
 PREFIX="sft_qwen35_27b_oracle_obs_cat_reasoning"
@@ -42,6 +43,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$ONLY_VARIANT" ]] && VARIANTS=("$ONLY_VARIANT")
+if [[ $DRY_RUN -eq 0 ]]; then
+    _PRUNE_LOG=$(log_start misc "prune_sweep_checkpoints")
+    exec > >(tee -a "$_PRUNE_LOG") 2>&1
+fi
 echo "mode: $([[ $DRY_RUN -eq 1 ]] && echo DRY-RUN || echo RUN)  keep-ep1=$KEEP_EP1  min-age=${MIN_AGE_MIN}min"
 echo
 

@@ -16,6 +16,9 @@
 # Usage:  bash eval_grpo_stage2.sh
 # ──────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
+source /home/sgsilva/utilities/logs-utils/log_run.sh
+_STAGE2_LOG=$(log_start eval "eval_grpo_stage2")
+exec > >(tee -a "$_STAGE2_LOG") 2>&1
 
 PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
 VLM=/home/sgsilva/vlm-post-training

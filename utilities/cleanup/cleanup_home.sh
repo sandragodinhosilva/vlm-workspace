@@ -15,6 +15,7 @@
 #   VLLM_KEEP_DAYS=14 ./cleanup_home.sh --run   # keep vllm compiles newer than N days (default 21)
 #
 set -euo pipefail
+source /home/sgsilva/utilities/logs-utils/log_run.sh
 
 HOME_DIR="/home/sgsilva"
 MNT_DIR="/mnt/data/sgsilva"
@@ -32,6 +33,10 @@ for arg in "$@"; do
   esac
 done
 
+if [ "$DRY_RUN" -eq 0 ]; then
+    _CLEANUP_LOG=$(log_start misc "cleanup_home")
+    exec > >(tee -a "$_CLEANUP_LOG") 2>&1
+fi
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "=== DRY RUN — nothing will be changed. Re-run with --run to apply. ==="
 else

@@ -14,6 +14,12 @@ set -uo pipefail
 JOBID="${1:-}"
 [[ -z "$JOBID" ]] && { echo "Usage: bash chain_sft_export_1805_merged_reasoning.sh <slurm_job_id>" >&2; exit 2; }
 
+# ---- logging ----
+source /home/sgsilva/utilities/logs-utils/log_run.sh
+_CHAIN_LOGDIR=$(log_start --dir sft "chain_sft_export_1805_merged_reasoning_j${JOBID}")
+exec > >(tee -a "$_CHAIN_LOGDIR/run.log") 2>&1
+# ---- end logging ----
+
 CKPT_DIR=/mnt/data/sgsilva/checkpoints/sft_qwen35_27b_oracle_obs_merged_reasoning_1805
 MODELS=/mnt/data/sgsilva/models
 PREFIX=qwen35-27b-oracle-obs-merged-reasoning-1805-sft
