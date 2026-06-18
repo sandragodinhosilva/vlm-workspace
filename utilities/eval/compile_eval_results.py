@@ -425,12 +425,54 @@ def _rows():
     _load_bench(BENCH_SUMMARY)        # raw first (broad coverage)
     _load_bench(BENCH_SUMMARY_JUDGE)  # judged overlays where present (preferred)
 
-    # ---- VISUAL-OBS: singlestage / stage2 JSONs; served path = metadata.model ----
+    # ---- VISUAL-OBS ----
+    # CRITICAL JOIN NOTE: for a TWO-STAGE VO run, metadata.model is the STAGE-2 REASONER
+    # (e.g. Qwen3.5-27B), NOT the stage-1 VO model under test — so EVERY two-stage run collides
+    # on the reasoner path. The stage-1 JSONs carry model=None. The ONLY reliable identifier of
+    # the VO model is the FILENAME. So we map VO filename tokens -> served checkpoint path
+    # explicitly (curated, like master_models.txt). A `stage2_*` result is the deployable
+    # two-stage number (the headline); a `*_singlestage_*` result is the no-observations variant.
+    # Precedence per (model,thinking): stage2 > singlestage; *_v2 (rescored, see feedback_eval_
+    # gotchas §4) > non-v2. We pick the BEST-tier file per key and never let a worse tier win.
+    # Curated map: (anchor-token, served path). Anchors are SPECIFIC to the carried champion so
+    # they don't catch sibling probes (OBSGUIDE/TEXTONLY/plus_mix12k/_A_/_B_ sweeps are NOT the
+    # carried model). VO_EXCLUDE rejects a file even if a token matches (probe/variant guard).
+    VO_FILE_TO_MODEL = [  # ordered; first matching token wins
+        ("oracle_obs_cat_union5_step339",  "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-union5-step339"),
+        ("union_oracleobs_llmfms_ep3",     "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-plus-llm-fms-step1785"),
+        ("oracle_obs_merged_1805_step2558","/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-step2558"),
+        ("oracle_obs_cat_step357",         "/mnt/data/sgsilva/models/qwen35-4b-oracle-obs-cat-1105-step357"),
+        ("reasoning_oracleobs_cat_ep3",    "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-reasoning-step330"),
+        ("oracle_397b_categorical",        "/mnt/data/shared/models/Qwen3.5-397B-A17B"),
+    ]
+    # files whose token matches but are a DIFFERENT model / non-deployable probe — never join.
+    VO_EXCLUDE = ("obsguide", "textonly", "plus_mix12k", "_a_ep3", "_b_ep3", "_c_ep3", "_d_ep3",
+                  "baseline_ep3", "reasoner-self", "union5_decode")
+    def _vo_model_path(name: str) -> str:
+        """Resolve a VO JSON filename -> served checkpoint path via the curated map. '' if no
+        match OR an excluded probe (distinct sentinel — the row is then skipped, not joined to a
+        wrong key). Add a carried model's anchor token here when its VO run lands."""
+        if any(x in name for x in VO_EXCLUDE):
+            return ""
+        for tok, path in VO_FILE_TO_MODEL:
+            if tok in name:
+                return path
+        return ""
+    def _vo_tier(name: str) -> int:
+        """Higher = preferred. stage2 beats singlestage; _v2 rescored beats v1 within a tier."""
+        base = 2 if name.startswith("stage2_") else (1 if "singlestage" in name else 0)
+        return base * 2 + (1 if name.endswith("_v2.json") else 0)
     if VO_RUNS.is_dir():
+        vo_best: dict[tuple[str, str], int] = {}  # (model,thinking) -> winning tier so far
         for vj in sorted(VO_RUNS.glob("*.json")):
             name = vj.name.lower()
             if "singlestage" not in name and not name.startswith("stage2_"):
+                continue  # only the two scorable VO families (stage1/agreement are separate)
+            tier = _vo_tier(name)
+            if tier == 0:
                 continue
+            if any(x in name for x in VO_EXCLUDE):
+                continue  # probe/variant guard applies regardless of how we resolve the path
             try:
                 d = json.loads(vj.read_text())
             except Exception:
@@ -438,8 +480,25 @@ def _rows():
             m = d.get("metrics", {}) or {}
             if not m:
                 continue
+            # Resolve the VO model path: prefer the curated historical map (two-stage files record
+            # the REASONER in metadata.model, so the filename is the only truth). For a NEW-PIPELINE
+            # run not in the map, fall back to metadata.model — eval_all.sh visualobs is single-stage
+            # and DOES record the real served path there. Skip if neither resolves (no garbage key).
+            model_path = _vo_model_path(name)
+            # Fallback to metadata.model ONLY for a genuinely NEW-PIPELINE single-stage file —
+            # i.e. one that carries no historical VO model token at all (so we don't resurrect V1
+            # single-stage noise for a model the curated map already scores via its stage2 file).
+            historical = any(t in name for t in (
+                "oracleobs", "oracle_obs", "llmfms", "union5", "397b", "baseline_qwen35", "mix12k"))
+            if not model_path and "singlestage" in name and not historical:
+                model_path = str((d.get("metadata") or {}).get("model", "")) or ""
+            if not model_path:
+                continue
             thinking = "on" if "thinkon" in name else ("off" if "thinkoff" in name else "unknown")
-            model_path = str((d.get("metadata") or {}).get("model", vj.stem))
+            key = (_norm_path(model_path), thinking)
+            if vo_best.get(key, -1) >= tier:
+                continue  # a better-or-equal VO file already populated this row
+            vo_best[key] = tier
             r = get(model_path, thinking, display=vj.stem)
             def vm(k):
                 v = m.get(k)
