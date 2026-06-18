@@ -16,7 +16,7 @@
 #   /home/sgsilva/utilities/eval/sbatch_eval_all.sh
 # Or manually: export vars first, then:
 #   export MODEL=/mnt/data/sgsilva/models/qwen35-4b-mix-12k-1506-sft-step1299
-#   export BASE_MODEL=qwen3.5-4b STAGES=aux,benchmarks,visualobs THINKING=off
+#   export BASE_MODEL=qwen3.5-4b STAGES=aux,visualobs,benchmarks THINKING=off
 #   export TRAIN_GROUP_ID=mix_12k_1506 RUN_ID=step1299_full_thinkoff
 #   sbatch --export=ALL /home/sgsilva/utilities/eval/eval_all.sbatch
 # (--export=ALL forwards your whole exported env, so STAGES' commas are safe.)
@@ -29,7 +29,7 @@ set -uo pipefail
 # ---- required ----
 : "${MODEL:?set MODEL=/mnt/data/sgsilva/models/<ckpt>}"
 : "${BASE_MODEL:?set BASE_MODEL=qwen3.5-4b|qwen3.5-9b|qwen3.5-27b}"
-: "${STAGES:?set STAGES=aux,benchmarks,visualobs (any subset)}"
+: "${STAGES:?set STAGES=aux,visualobs,benchmarks (any subset)}"
 : "${THINKING:?set THINKING=on|off (must match the SFT target)}"
 # ---- optional (defaults) ----
 PORT="${PORT:-8000}"

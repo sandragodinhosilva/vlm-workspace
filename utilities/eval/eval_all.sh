@@ -12,7 +12,7 @@
 #
 # Usage:
 #   eval_all.sh --model <PATH> --base-model qwen3.5-4b \
-#     --stages aux,benchmarks,visualobs \
+#     --stages aux,visualobs,benchmarks \
 #     --base-url http://localhost:8000/v1 \
 #     --train-group-id mix_12k_1506 --run-id step1299_testset1506 --tag mix_12k_1506_1506testset \
 #     [--thinking on|off] [--testset 1506] [--max-samples N]
@@ -309,7 +309,34 @@ if have_stage aux; then
   fi
 fi
 
-# ---------------- benchmarks ----------------
+# ---------------- visualobs (single-stage) ----------------
+# ORDER: aux -> visualobs -> benchmarks. Benchmarks run LAST because they are the slowest
+# (thinkon-27B runaway tail on MMMU/Video-MME) and the most likely to be cut short — so the
+# cheap/fast axes (aux, VO) land FIRST and a kill loses only the benchmark tail, not VO/aux.
+if have_stage visualobs; then
+  echo ""; echo ">>> STAGE: visualobs (single-stage, 1181-rep test)"
+  case "$(basename "$MODEL" | tr '[:upper:]' '[:lower:]')" in
+    *oracle*|*visual*obs*|*vo3d*) : ;;
+    *) echo "[visualobs] ⚠ WARNING: '$(basename "$MODEL")' does not look like a visual-obs/oracle"
+       echo "            checkpoint. Single-stage severity eval on the 1181-rep test may not apply"
+       echo "            to this model family. Proceeding anyway (you selected it)." ;;
+  esac
+  stem="$(basename "$MODEL" | sed 's/^qwen35-[0-9]*b-//')"
+  vmax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
+  mkdir -p "$VO_OUT"
+  vargs=( "$VPT_PY" "$VPT/data_preparation/evaluate.py"
+    --test-dataset-dir "$VO_TEST"
+    --model "$SERVED_ID" --server-url "$BASE_URL"
+    --max-tokens "$vmax"
+    --output-file "$VO_OUT/${stem}_singlestage_think${THINKING}.json" --resume )
+  [[ "$THINKING" == off ]] && vargs+=( --disable-thinking )
+  [[ -n "$MAX_SAMPLES" ]] && vargs+=( --max-samples "$MAX_SAMPLES" )
+  ( cd "$VPT" && "${vargs[@]}" ) \
+    && STAGE_RESULTS+=("visualobs: OK -> $VO_OUT/${stem}_singlestage_think${THINKING}.json") \
+    || STAGE_RESULTS+=("visualobs: FAILED")
+fi
+
+# ---------------- benchmarks (LAST — slowest, most likely to be cut short) ----------------
 if have_stage benchmarks; then
   echo ""; echo ">>> STAGE: benchmarks (VSI-Bench / MMMU-val / Video-MME)"
   reason_bool="$([[ "$THINKING" == on ]] && echo true || echo false)"
@@ -350,30 +377,6 @@ PY
     && STAGE_RESULTS+=("benchmarks: OK -> $BENCH_DIR/results/{vsibench,mmmu_val,video_mme}/$disp/") \
     || STAGE_RESULTS+=("benchmarks: FAILED")
   rm -f "$cfg"
-fi
-
-# ---------------- visualobs (single-stage) ----------------
-if have_stage visualobs; then
-  echo ""; echo ">>> STAGE: visualobs (single-stage, 1181-rep test)"
-  case "$(basename "$MODEL" | tr '[:upper:]' '[:lower:]')" in
-    *oracle*|*visual*obs*|*vo3d*) : ;;
-    *) echo "[visualobs] ⚠ WARNING: '$(basename "$MODEL")' does not look like a visual-obs/oracle"
-       echo "            checkpoint. Single-stage severity eval on the 1181-rep test may not apply"
-       echo "            to this model family. Proceeding anyway (you selected it)." ;;
-  esac
-  stem="$(basename "$MODEL" | sed 's/^qwen35-[0-9]*b-//')"
-  vmax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
-  mkdir -p "$VO_OUT"
-  vargs=( "$VPT_PY" "$VPT/data_preparation/evaluate.py"
-    --test-dataset-dir "$VO_TEST"
-    --model "$SERVED_ID" --server-url "$BASE_URL"
-    --max-tokens "$vmax"
-    --output-file "$VO_OUT/${stem}_singlestage_think${THINKING}.json" --resume )
-  [[ "$THINKING" == off ]] && vargs+=( --disable-thinking )
-  [[ -n "$MAX_SAMPLES" ]] && vargs+=( --max-samples "$MAX_SAMPLES" )
-  ( cd "$VPT" && "${vargs[@]}" ) \
-    && STAGE_RESULTS+=("visualobs: OK -> $VO_OUT/${stem}_singlestage_think${THINKING}.json") \
-    || STAGE_RESULTS+=("visualobs: FAILED")
 fi
 
 # ---------------- compile master CSV (additive; never touches per-stage outputs) ----------------
