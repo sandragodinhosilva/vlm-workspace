@@ -36,7 +36,7 @@ srun --nodes=1 \
      --gres=gpu:${NUM_GPUS} \
      -c $((24*NUM_GPUS)) \
      --mem=$((311*NUM_GPUS))G \
-     --job-name=sft-vlm \
+     --job-name=sam3d \
      --nodelist=worker-21 \
      --pty bash -i 
 

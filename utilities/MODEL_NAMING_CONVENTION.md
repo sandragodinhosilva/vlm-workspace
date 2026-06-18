@@ -75,3 +75,12 @@ literally); apply the full shape to all NEW exports.
   formatted-CSV builder and agreement-file naming stay compatible. The wrapper
   renames `<prefix>-step<N>` → `<prefix>-step<N>_thinkon` post-export for
   reasoning runs.
+
+## Pre-launch linter (2026-06-17)
+`/home/sgsilva/utilities/chains/lint_model_name.sh` asserts a checkpoint-dir basename derives to a
+compliant prefix BEFORE launch/export. It SOURCES this exporter's real `derive_model_prefix` (never
+reimplements), then checks the shape `qwen35-(4b|27b)-<task>-(sft|grpo|sft_grpo)`, no dotted family,
+no leaked scaffolding, and reasoning<->thinkon coherence. Run:
+  bash /home/sgsilva/utilities/chains/lint_model_name.sh --config <cfg>.yaml
+  bash /home/sgsilva/utilities/chains/lint_model_name.sh <checkpoint_dir>
+Exit 1 => fix the checkpoint_dir basename (NOT the exporter). Wired into the /launch-sft preflight.
