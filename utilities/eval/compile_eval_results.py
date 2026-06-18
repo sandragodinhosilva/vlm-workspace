@@ -45,20 +45,28 @@ MASTER_DIR = Path("/mnt/data/sgsilva/results/master")          # renamed from ev
 MASTER_CSV = MASTER_DIR / "eval_master.csv"
 COPY_DIR = MASTER_DIR / "runs"
 
-# one row per (model_key, thinking); model_key = the served model basename / display name
+# one row per (model_key, thinking); model_key = the served model basename / display name.
+# Column order = logical reading order: IDENTITY -> WHEN -> HEADLINE SCORES (benchmarks +
+# aux + visual-obs) -> AUX DETAIL -> TRAINING PROVENANCE -> SOURCE PROVENANCE (bookkeeping).
 FIELDS = [
-    "model", "owner", "display", "thinking", "reasoning",
-    # general benchmarks
+    # --- identity: who/what this row is ---
+    "display", "owner", "thinking", "reasoning", "model",
+    # --- when: model creation + most-recent eval (the two timestamps) ---
+    "model_created", "last_eval_ts",
+    # --- headline scores: the numbers you scan first ---
+    #   general benchmarks
     "MMMU_val", "Video_MME", "VSI_Bench",
-    # aux tasks (multimodal_reduced_testset) — headline + the rich eval_matrix columns
-    "aux_acc_weighted_3mod", "aux_video_acc", "aux_text_acc", "aux_image_composite",
-    "aux_image_dense_oks", "aux_image_task4_acc",
-    # training provenance (from eval_matrix)
-    "train_reasoning", "train_group_id", "train_sample_count", "best_step", "aux_run_ts",
-    # visual-obs (1181-rep)
+    #   aux 3-modality headline
+    "aux_acc_weighted_3mod",
+    #   visual-obs headline
     "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
-    # provenance
-    "aux_run_id", "aux_run_dir", "aux_source", "bench_source", "vo_source",
+    # --- aux per-modality / per-task detail ---
+    "aux_video_acc", "aux_text_acc", "aux_image_composite",
+    "aux_image_dense_oks", "aux_image_task4_acc",
+    # --- training provenance (from eval_matrix) ---
+    "train_reasoning", "train_group_id", "train_sample_count", "best_step",
+    # --- source provenance / bookkeeping (last) ---
+    "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source", "bench_source", "vo_source",
 ]
 
 
@@ -134,6 +142,49 @@ def _norm_path(p: str) -> str:
     except Exception:
         pass
     return s
+
+
+def _fmt_ts(epoch) -> str:
+    """epoch seconds -> 'YYYY-MM-DD HH:MM' (local), or '' on failure. Distinct empty sentinel
+    so a missing timestamp can't masquerade as a real one."""
+    if not epoch:
+        return ""
+    try:
+        import datetime as _dt
+        return _dt.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ""
+
+
+def _model_created(model_path: str) -> str:
+    """When the checkpoint was CREATED = mtime of the served checkpoint dir/file. For an HF
+    export dir that's the dir mtime (set at export); we also peek config.json (the file written
+    at export) for a tighter stamp. '' if the path doesn't exist (e.g. HF hub id)."""
+    p = _norm_path(model_path)
+    if not p or not os.path.exists(p):
+        return ""
+    try:
+        best = os.path.getmtime(p)
+        cfg = os.path.join(p, "config.json")
+        if os.path.isfile(cfg):
+            best = max(best, os.path.getmtime(cfg))
+        return _fmt_ts(best)
+    except Exception:
+        return ""
+
+
+def _newest_mtime(*paths) -> float:
+    """Max mtime over the given files/dirs that exist (0 if none)."""
+    best = 0.0
+    for p in paths:
+        if not p:
+            continue
+        try:
+            if os.path.exists(p):
+                best = max(best, os.path.getmtime(p))
+        except Exception:
+            pass
+    return best
 
 
 # a prediction VLMEvalKit couldn't get a real answer for (runaway thinkon generation that
@@ -361,6 +412,21 @@ def _rows():
             r["vo_sample_f1"] = vm("sample_error_detection_f1")
             r["vo_severity_acc"] = vm("overall_severity_accuracy")
             r["vo_source"] = vj.name
+
+    # ---- FINALIZE: the two timestamps per row ----
+    #  model_created = mtime of the served checkpoint (when the model was created/exported).
+    #  last_eval_ts  = newest mtime across the eval artifacts that fed THIS row (aux run dir,
+    #                  the benchmark result dirs, the visual-obs JSON) — the last eval performed.
+    for (model_path, _think), r in rows.items():
+        r["model_created"] = _model_created(model_path)
+        disp = r.get("display", "")
+        ev_paths = [r.get("aux_run_dir", "")]
+        for bench in ("mmmu_val", "video_mme", "vsibench"):
+            ev_paths.append(str(BENCH_RESULTS / bench / disp))
+        vo = r.get("vo_source", "")
+        if vo:
+            ev_paths.append(str(VO_RUNS / vo))
+        r["last_eval_ts"] = _fmt_ts(_newest_mtime(*ev_paths))
 
     return rows
 
