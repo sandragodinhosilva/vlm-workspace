@@ -13,9 +13,11 @@
 # (/mnt/data/shared/models/Qwen3.5-{4B,27B}) which COLLIDES with other runs served from the
 # same path (e.g. step1537) AND only has scattered single-axis scores. So we do NOT allowlist
 # them here. Instead they are being RE-RUN fresh through eval_all.sh --serve (aux+benchmarks+
-# visualobs) under distinct run-ids; add those run-ids below once the jobs land.
-# baseline_27b_newpipeline   # <- uncomment/replace with the fresh run-id
-# baseline_4b_newpipeline    # <- uncomment/replace with the fresh run-id
+# visualobs) under distinct run-ids; these match nothing until the jobs land, then auto-appear.
+# 4b baseline, both thinking modes (jobs queued 2026-06-18)
+baseline_4b_newpipeline
+# 27b baseline, both thinking modes (queue when nodes free)
+baseline_27b_newpipeline
 
 # ---- new-pipeline models (eval_all.sh --serve era) ----
 # A: SFT step_2812 (fe_comparison_3_mix_reas_12k_full_2005) — pmartins external
