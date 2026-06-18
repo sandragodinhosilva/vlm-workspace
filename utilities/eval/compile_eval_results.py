@@ -50,16 +50,16 @@ COPY_DIR = MASTER_DIR / "runs"
 # aux + visual-obs) -> AUX DETAIL -> TRAINING PROVENANCE -> SOURCE PROVENANCE (bookkeeping).
 FIELDS = [
     # --- identity: who/what this row is ---
-    "display", "owner", "thinking", "reasoning", "model",
-    # --- when: model creation + most-recent eval (the two timestamps) ---
-    "model_created", "last_eval_ts",
+    "display", "model", "model_created", "owner", "eval_thinking",
+    # --- when: most-recent eval (model_created is up with identity) ---
+    "last_eval_ts",
     # --- headline scores: the numbers you scan first ---
     #   general benchmarks
     "MMMU_val", "Video_MME", "VSI_Bench",
-    #   aux 3-modality headline
-    "aux_acc_weighted_3mod",
     #   visual-obs headline
     "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
+    #   aux 3-modality headline (after visual-obs)
+    "aux_acc_weighted_3mod",
     # --- aux per-modality / per-task detail ---
     "aux_video_acc", "aux_text_acc", "aux_image_composite",
     "aux_image_dense_oks", "aux_image_task4_acc",
@@ -256,7 +256,7 @@ def _rows():
 
     def get(model_path, thinking, display=""):
         key = (_norm_path(model_path), thinking)
-        r = rows.setdefault(key, {"model": key[0], "thinking": thinking, "owner": _owner(key[0])})
+        r = rows.setdefault(key, {"model": key[0], "eval_thinking": thinking, "owner": _owner(key[0])})
         if display and not r.get("display"):
             r["display"] = display
         return r
@@ -286,7 +286,6 @@ def _rows():
                     continue
                 aux_seen.add(k)
                 r = get(model_path, thinking, display=f"{rec.get('base_model','')}:{rec.get('run_id','')}")
-                r["reasoning"] = rec.get("reasoning", "")
                 r["aux_acc_weighted_3mod"] = _f(rec.get("acc_weighted_3modalities"))
                 r["aux_video_acc"] = _f(rec.get("acc_video"))
                 r["aux_text_acc"] = _f(rec.get("acc_text"))
