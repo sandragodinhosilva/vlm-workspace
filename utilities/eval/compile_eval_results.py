@@ -155,13 +155,33 @@ def _write_csv(path: Path, row_items, fields):
     return len(ordered)
 
 
+# A bare baseline is scored on different axes under DIFFERENT identity strings (aux uses
+# 'Qwen3.5-4b', VO uses the local shared path, benchmarks use the 'Qwen/Qwen3.5-4B' hub id) —
+# so without normalization the SAME baseline splits into 3 rows. Map every known alias (lowercased,
+# trailing-slash-stripped) -> one canonical served path so the axes join into a single row.
+_BASELINE_ALIASES = {
+    "qwen3.5-4b": "/mnt/data/shared/models/Qwen3.5-4B",
+    "qwen/qwen3.5-4b": "/mnt/data/shared/models/Qwen3.5-4B",
+    "/mnt/data/shared/models/qwen3.5-4b": "/mnt/data/shared/models/Qwen3.5-4B",
+    "qwen3.5-27b": "/mnt/data/shared/models/Qwen3.5-27B",
+    "qwen/qwen3.5-27b": "/mnt/data/shared/models/Qwen3.5-27B",
+    "/mnt/data/shared/models/qwen3.5-27b": "/mnt/data/shared/models/Qwen3.5-27B",
+    "qwen3.5-397b-a17b": "/mnt/data/shared/models/Qwen3.5-397B-A17B",
+    "/mnt/data/shared/models/qwen3.5-397b-a17b": "/mnt/data/shared/models/Qwen3.5-397B-A17B",
+}
+
+
 def _norm_path(p: str) -> str:
     """Canonical join key = the served checkpoint path, normalized (strip trailing slash,
     resolve symlinks where possible). All three pipelines serve the SAME path, so this is the
-    one reliable key. Falls back to the raw string when not a real path (e.g. HF hub id)."""
+    one reliable key. Bare-baseline aliases collapse to one canonical path (see _BASELINE_ALIASES).
+    Falls back to the raw string when not a real path (e.g. an unknown HF hub id)."""
     if not p:
         return ""
     s = str(p).rstrip("/")
+    canon = _BASELINE_ALIASES.get(s.lower())
+    if canon:
+        return canon
     try:
         rp = os.path.realpath(s)
         if os.path.exists(rp):
@@ -523,6 +543,16 @@ def _rows():
         if vo:
             ev_paths.append(str(VO_RUNS / vo))
         r["last_eval_ts"] = _fmt_ts(_newest_mtime(*ev_paths))
+
+    # ---- DEDUP stale baseline rows ----
+    # A baseline scored under an untagged aux run-id lands as thinking='unknown'. When a properly
+    # tagged (on/off) row exists for the SAME canonical model, the unknown row is a stale duplicate
+    # (older aux-only run) — drop it so each baseline shows one row per real thinking mode.
+    tagged_baselines = {mp for (mp, th), r in rows.items()
+                        if r.get("is_baseline") == "yes" and th in ("on", "off")}
+    for key in [k for k in rows if k[1] == "unknown" and rows[k].get("is_baseline") == "yes"
+                and k[0] in tagged_baselines]:
+        del rows[key]
 
     return rows
 

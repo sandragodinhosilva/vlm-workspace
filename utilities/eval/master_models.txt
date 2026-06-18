@@ -9,14 +9,17 @@
 # ============================================================================
 
 # ---- baselines ----
-# NOTE: the OLD baseline rows are served from the bare shared path
-# (/mnt/data/shared/models/Qwen3.5-{4B,27B}) which COLLIDES with other runs served from the
-# same path (e.g. step1537) AND only has scattered single-axis scores. So we do NOT allowlist
-# them here. Instead they are being RE-RUN fresh through eval_all.sh --serve (aux+benchmarks+
-# visualobs) under distinct run-ids; these match nothing until the jobs land, then auto-appear.
-# 4b baseline, both thinking modes (jobs queued 2026-06-18)
+# Bare un-SFT'd Qwen3.5. Their general-BENCHMARK results already exist and are REUSED (no re-run):
+#   Qwen3.5-4B  MMMU 75.57 / Video-MME 65.74 / VSI 69.68
+#   Qwen3.5-27B MMMU 78.74 / Video-MME 73.84 / VSI 75.65
+# (joined by the canonical shared path). VO single-stage cat baselines also exist (V1). Only a
+# CLEAN aux row is still worth a fresh run; benchmarks need NO compute. NOTE: a few SFT runs were
+# served from the same bare path (e.g. step1537) so they share these benchmark numbers — that's
+# correct for benchmarks (same served weights); aux differs by run-id.
+/mnt/data/shared/models/qwen3.5-4b
+/mnt/data/shared/models/qwen3.5-27b
+# fresh-aux baseline run-ids (match nothing until those jobs land, then auto-fill the aux axis)
 baseline_4b_newpipeline
-# 27b baseline, both thinking modes (queue when nodes free)
 baseline_27b_newpipeline
 
 # ---- new-pipeline models (eval_all.sh --serve era) ----
