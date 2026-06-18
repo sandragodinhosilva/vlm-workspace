@@ -4,17 +4,17 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=192
-#SBATCH --output=/mnt/data/sgsilva/logs/eval_all_slurm-%j.out
-#SBATCH --error=/mnt/data/sgsilva/logs/eval_all_slurm-%j.err
+#SBATCH --output=/mnt/data/sgsilva/logs/eval/slurm/eval_all_slurm-%j.out
+#SBATCH --error=/mnt/data/sgsilva/logs/eval/slurm/eval_all_slurm-%j.err
 #
 # Serve a checkpoint, run all requested eval stages, compile the unified master CSV, then
 # tear down the server — all in ONE sbatch job. The node frees when the job ends.
 # eval_all.sh --serve owns the vLLM lifecycle (launch + health-wait + trap-kill on exit; it
 # kills ONLY the PID it started, never pkill-by-pattern).
 #
-# Submit by EXPORTING the vars in your shell first, then plain `sbatch` (nothing is hardcoded to
-# a node — Slurm picks one). Do NOT use inline `--export=...,STAGES=a,b,c` — the commas in STAGES
-# collide with --export's own delimiter and split into bogus vars. Export instead:
+# SUBMIT VIA THE WRAPPER (preferred — puts .out/.err in a dated subdir):
+#   /home/sgsilva/utilities/eval/sbatch_eval_all.sh
+# Or manually: export vars first, then:
 #   export MODEL=/mnt/data/sgsilva/models/qwen35-4b-mix-12k-1506-sft-step1299
 #   export BASE_MODEL=qwen3.5-4b STAGES=aux,benchmarks,visualobs THINKING=off
 #   export TRAIN_GROUP_ID=mix_12k_1506 RUN_ID=step1299_full_thinkoff
