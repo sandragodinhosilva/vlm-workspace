@@ -491,6 +491,13 @@ def _rows():
             r["aux_image_composite"] = pct("image")
             r["aux_image_dense_oks"] = pct("image_dense")
             r["aux_image_task4_acc"] = pct("image_task4")
+            # Headline `acc_weighted_3modalities` = equal-weight mean(video, text, image)
+            # (verified vs 40+ eval_matrix rows). The matrix source reads it from a column; the
+            # fallback JSON has no such field, so compute it here — else a fresh run (not yet
+            # exported to the matrix) shows a BLANK 'Aux 3-Mod Weighted' headline on the board.
+            _v, _t, _i = pct("video"), pct("text"), pct("image")
+            if all(isinstance(x, (int, float)) for x in (_v, _t, _i)):
+                r["aux_acc_weighted_3mod"] = round((_v + _t + _i) / 3, 2)
             r["aux_run_id"] = run_id
             r["aux_run_dir"] = str(d.get("run_dir", agg.parent.parent))
             r["aux_source"] = "multimodal_json(fallback)"
