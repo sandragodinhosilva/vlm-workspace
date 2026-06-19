@@ -40,7 +40,7 @@ VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visua
 # GT visual-obs (human) for the agreement stage — per-rep entries carry `human_error_severities`
 # (the HUMAN ground truth) + folder_name/repetition_id. Agreement = model-vs-GT (NOT vs oracle).
 VO_GT_CAT=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed_visual_obs/oracle/oracle_397b_1105_categorical_test.json
-AGREE_PY=/home/sgsilva/vlm-post-training/data_preparation/analyze_observation_agreement.py
+AGREE_PY=/home/sgsilva/vlm-post-training/visual_obs/analyze_observation_agreement.py   # moved from data_preparation/ (reorg)
 # Agreement needs the model's STAGE-1 OBSERVATIONS (shape {ex:{rep:{parsed_answers}}}), NOT the
 # single-stage SEVERITY json evaluate.py emits ({metadata,metrics,per_sample_results:[...]}) —
 # feeding the latter as --a crashes the agreement script (AttributeError: 'list' has no 'keys').
@@ -49,13 +49,14 @@ AGREE_PY=/home/sgsilva/vlm-post-training/data_preparation/analyze_observation_ag
 # (memory: reference_visual_obs_eval_commands + bash history), NOT the full train+test processed
 # dir (that would over-generate ~4.5x; the join discards the surplus). --visual-obs-file +
 # categorical variant match the recipe. --resume → stable per-model obs file.
-VO_OBS_GEN=/home/sgsilva/vlm-post-training/data_preparation/generate_visual_observations_human.py
-# evaluate_v2: re-scores the single-stage SEVERITY json with the error-NAME-MISMATCH fix
+VO_OBS_GEN=/home/sgsilva/vlm-post-training/visual_obs/generate_visual_observations_human.py   # moved from data_preparation/ (reorg)
+# evaluate_vo: re-scores the single-stage SEVERITY json with the error-NAME-MISMATCH fix
 # (feedback_eval_gotchas §4) WITHOUT re-running the model. The compiler's _vo_tier PREFERS *_v2.json,
 # so without this pass a fresh single-stage VO run is scored under the OLD buggy name-join logic
-# while neighbors use the fix. Moved into data_preparation/results/ (reorg — docs still say
-# data_preparation/evaluate_v2.py). Agreement (stage-1, index-based) does NOT need v2.
-VO_EVAL_V2=/home/sgsilva/vlm-post-training/data_preparation/results/evaluate_v2.py
+# while neighbors use the fix. Reorg 2026-06-19: moved to eval/ + renamed evaluate_vo.py (was
+# data_preparation/results/evaluate_v2.py), co-located with the evaluate.py it modifies.
+# Agreement (stage-1, index-based) does NOT need it.
+VO_EVAL_V2=/home/sgsilva/vlm-post-training/eval/evaluate_vo.py
 VO_PROCESSED_DIR=/mnt/data/sgsilva/datasets/1105/1105_test_processed_symlinks   # moved under 1105/ (was datasets/ root)
 # (the categorical question file resolves automatically from --visual-obs-variant categorical →
 #  repo-root visual_obs/visual_observations_categorical.json; no explicit --visual-obs-file needed.)
@@ -333,7 +334,7 @@ PY
     [[ -d "$VO_TEST" ]] && echo "  [ok]   visualobs: 1181-rep test dir present" || { echo "  [FAIL] visualobs test dir missing"; ok=0; }
     # driver + agreement scripts must exist (a reorg of data_preparation/ would otherwise abort the
     # stage mid-run with no preflight warning — the class-1 moved-script failure mode).
-    [[ -f "$VPT/data_preparation/evaluate.py" ]] || { echo "  [FAIL] visualobs: evaluate.py missing"; ok=0; }
+    [[ -f "$VPT/eval/evaluate.py" ]] || { echo "  [FAIL] visualobs: evaluate.py missing"; ok=0; }
     [[ -f "$AGREE_PY" ]] || { echo "  [FAIL] visualobs: analyze_observation_agreement.py missing"; ok=0; }
     [[ -f "$VO_OBS_GEN" ]] || { echo "  [FAIL] visualobs: obs generator ($VO_OBS_GEN) missing — agreement stage can't run"; ok=0; }
     [[ -d "$VO_PROCESSED_DIR" ]] && echo "  [ok]   visualobs: agreement processed-dir present" \
@@ -408,7 +409,7 @@ if have_stage visualobs; then
   stem="$(basename "$SERVED_ID" | sed 's/^qwen35-[0-9]*b-//')"
   vmax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
   mkdir -p "$VO_OUT"
-  vargs=( "$VPT_PY" "$VPT/data_preparation/evaluate.py"
+  vargs=( "$VPT_PY" "$VPT/eval/evaluate.py"
     --test-dataset-dir "$VO_TEST"
     --model "$SERVED_ID" --server-url "$BASE_URL"
     --max-tokens "$vmax"
