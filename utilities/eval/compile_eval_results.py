@@ -66,8 +66,11 @@ FIELDS = [
     # --- headline scores: the numbers you scan first ---
     #   general benchmarks (+ per-cell scoring method: parsable / judged / raw)
     "MMMU_val", "Video_MME", "VSI_Bench", "bench_method",
-    #   visual-obs headline
+    #   visual-obs headline (two-stage severity/detection)
     "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
+    #   visual-obs AGREEMENT vs HUMAN GT (single-stage obs; error_relevant.vs_gt.a.overall) —
+    #   the comparable no-reasoner signal the old formatted CSV showed as its own band
+    "vo_agree_errf1", "vo_agree_acc", "vo_agree_prec", "vo_agree_rec",
     #   aux 3-modality headline (after visual-obs)
     "aux_acc_weighted_3mod",
     # --- aux per-modality / per-task detail (3D/non-3D video split lives in the aux eval_matrix.csv) ---
@@ -89,6 +92,8 @@ HEADER_LABELS = {
     "MMMU_val": "MMMU-val", "Video_MME": "Video-MME", "VSI_Bench": "VSI-Bench",
     "bench_method": "Benchmark Scoring",
     "vo_error_f1": "VO Error-F1", "vo_sample_f1": "VO Sample-F1", "vo_severity_acc": "VO Severity Acc",
+    "vo_agree_errf1": "VO Agree-F1 (vs GT)", "vo_agree_acc": "VO Agree-Acc (vs GT)",
+    "vo_agree_prec": "VO Agree-Prec (vs GT)", "vo_agree_rec": "VO Agree-Rec (vs GT)",
     "aux_acc_weighted_3mod": "Aux 3-Mod Weighted",
     "aux_video_acc": "Aux Video", "aux_text_acc": "Aux Text", "aux_image_composite": "Aux Image",
     "aux_image_dense_oks": "Aux Image Dense OKS", "aux_image_task4_acc": "Aux Image Task4",
@@ -534,6 +539,13 @@ def _rows():
                 # row some benchmarks may be 'parsable' and others 'raw'/'judged' — bench_method
                 # records the method PER cell so the mix is visible, not silently conflated.
                 for col, bench, mlabel in (("MMMU_val", "mmmu_val", "MMMU"), ("Video_MME", "video_mme", "VMME"), ("VSI_Bench", "vsibench", "VSI")):
+                    # Do NOT clobber a JUDGED cell with raw-parsable: the judge rescored
+                    # right-but-unparsed \boxed{}/prose answers (the honest, higher number);
+                    # _parsable_bench_acc reads the RAW per-sample xlsx and would DROP those same
+                    # rescued answers as non-responses → understates the model (the inverse of the
+                    # judge's purpose). Parsable only fills/overrides raw cells, never judged.
+                    if meth.get(mlabel) == "judged":
+                        continue
                     pa = _parsable_bench_acc(disp, bench)
                     if pa is not None and pa[2] > 0:  # only when some were actually dropped
                         r[col] = pa[0]
@@ -567,6 +579,11 @@ def _rows():
         ("baseline_qwen35_27b_cat",        "/mnt/data/shared/models/Qwen3.5-27B"),
         ("baseline_qwen35_27b",            "/mnt/data/shared/models/Qwen3.5-27B"),
         ("baseline_qwen35_4b",             "/mnt/data/shared/models/Qwen3.5-4B"),
+        # historical AGREEMENT files name the bare baseline with a DOTTED id (agreement_qwen3.5-27b_
+        # cat_…), not the baseline_qwen35_NB token the scored files use. Add the dotted variants
+        # LAST (broad substrings; first-match precedence means specific SFT tokens above win first).
+        ("qwen3.5-27b",                    "/mnt/data/shared/models/Qwen3.5-27B"),
+        ("qwen3.5-4b",                     "/mnt/data/shared/models/Qwen3.5-4B"),
     ]
     # files whose token matches but are a DIFFERENT model / non-deployable probe — never join.
     VO_EXCLUDE = ("obsguide", "textonly", "plus_mix12k", "_a_ep3", "_b_ep3", "_c_ep3", "_d_ep3",
@@ -630,6 +647,43 @@ def _rows():
             r["vo_sample_f1"] = vm("sample_error_detection_f1")
             r["vo_severity_acc"] = vm("overall_severity_accuracy")
             r["vo_source"] = vj.name
+
+        # ---- AGREEMENT vs HUMAN GT (separate family: agreement_*.json). The OLD formatted CSV's
+        # "agreement with human annotations" band read error_relevant.vs_gt.a.overall (a = model
+        # under test, b = reference): {micro_f1, accuracy, precision, recall}. Verified byte-exact
+        # vs the old CSV (27b cat thinkoff: f1 0.2182 / acc 0.6396 / prec 0.3047 / rec 0.17).
+        # Same filename→model resolution + VO_EXCLUDE as the scored families (agreement json carries
+        # NO metadata.model). Picks the BEST agreement file per (model,thinking) by recency-stable
+        # tier (_v2 > v1); never overwrites with a worse one. ----
+        agree_best: dict[tuple[str, str], int] = {}
+        for aj in sorted(VO_RUNS.glob("agreement_*.json")):
+            name = aj.name.lower()
+            if any(x in name for x in VO_EXCLUDE):
+                continue
+            model_path = _vo_model_path(name)
+            if not model_path:
+                continue  # no curated token → skip (distinct sentinel, never a wrong join)
+            thinking = "on" if "thinkon" in name else ("off" if "thinkoff" in name else "unknown")
+            tier = 1 if name.endswith("_v2.json") else 0
+            key = (_norm_path(model_path), thinking)
+            if agree_best.get(key, -1) >= tier:
+                continue
+            try:
+                ad = json.loads(aj.read_text())
+                ov = (((ad.get("error_relevant") or {}).get("vs_gt") or {}).get("a") or {}).get("overall") or {}
+            except Exception:
+                continue
+            if not ov:
+                continue  # no vs_gt path (e.g. an oracle-only agreement w/o human GT) → skip
+            agree_best[key] = tier
+            r = get(model_path, thinking, display=aj.stem)
+            def am(k):
+                v = ov.get(k)
+                return round(v * 100, 2) if isinstance(v, (int, float)) else ""
+            r["vo_agree_errf1"] = am("micro_f1")
+            r["vo_agree_acc"] = am("accuracy")
+            r["vo_agree_prec"] = am("precision")
+            r["vo_agree_rec"] = am("recall")
 
     # ---- FINALIZE: the two timestamps per row ----
     #  model_created = mtime of the served checkpoint (when the model was created/exported).

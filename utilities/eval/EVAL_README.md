@@ -50,14 +50,45 @@ Fully unattended.
 ```
 - `--thinking on|off` is **REQUIRED** with `--serve` (can't probe a server that isn't up yet; it
   sets `ENABLE_THINKING`). MUST match the SFT target (non-reasoning→off, else degenerate loop).
-- Serve params default by base-model (`4b/9b`→ TP 8 / max-len 32768; `27b`→ TP 8 / 65536);
-  override with `--tp` / `--max-len`. Port is parsed from `--base-url`.
-- `--serve-wait <secs>` health-wait budget (default 1800). Serve log →
-  `/mnt/data/sgsilva/logs/eval/serve/eval_all_serve_<run_id>_think<mode>.log`.
+- **TP auto-derives from the GPUs allocated to THIS job** (`CUDA_VISIBLE_DEVICES` count): a
+  gpu:4 alloc → TP 4, a gpu:8 alloc → TP 8. Explicit `--tp` still wins. (A hardcoded TP 8 on a
+  4-GPU alloc fails to start the server — that's why it follows the alloc now.) `max-len`
+  defaults by base-model (`4b/9b`→32768, `27b`→65536); override with `--max-len`.
+- **PORT auto-derives from `SLURM_JOB_ID`** (`8000 + JOB_ID%100`) so two packed jobs on one node
+  get DISTINCT ports — collision-free with no manual bookkeeping. Explicit `PORT=` overrides;
+  interactive (no SLURM_JOB_ID) falls back to 8000.
+  ⚠ A shared-port collision makes the eval query the WRONG model's server → garbage scores
+  (war story: a 27B baseline scored video 2% because it hit a grpo492 server on port 8000 —
+  see `feedback_eval_gotchas` §6). The OLD GPU-bank heuristic did NOT prevent this (SLURM 0-bases
+  CUDA_VISIBLE_DEVICES per job → both packed jobs saw GPUs 0-3 → both picked 8000); the job-id
+  scheme (2026-06-19) fixes it. A served-id mismatch is now a HARD preflight FAIL, not a WARN.
+- `--serve-wait <secs>` health-wait budget (default 1800). Serve log → DATED subdir
+  `/mnt/data/sgsilva/logs/eval/serve/<YYYY-MM-DD>/eval_all_serve_<run_id>[_think<mode>]__<jobid>_<HHMMSS>.log`
+  (jobid+timestamp suffix so reruns of one config don't overwrite each other).
 - `--serve` and `--preflight` are mutually exclusive (preflight launches nothing).
 - `--keep-server` leaves the vLLM up after a NORMAL eval exit (reuse within the job's walltime;
   INT/TERM still tear down). NOTE: in sbatch the node frees at job end regardless — for a server
   that outlives the job (reuse across evals), use `serve_only.sbatch` instead.
+
+### Submit via the wrapper — `sbatch_eval_all.sh` (dated SLURM logs + half-node packing)
+**Submit through `sbatch_eval_all.sh`, not `sbatch eval_all.sbatch` directly** — the wrapper
+pre-creates the dated SLURM dir and passes `--output`/`--error` on the CLI (a static `#SBATCH
+--output` can't expand `$(date)`). Direct submits land flat in `slurm/` (un-dated).
+```bash
+export MODEL=... BASE_MODEL=qwen3.5-27b STAGES=aux THINKING=off
+export TRAIN_GROUP_ID=baseline RUN_ID=baseline_27b_newpipeline_thinkoff
+export SERVE_VENV=/home/sgsilva/vlm-post-training-home-venv   # pmartins/27B-merged only; UNSET otherwise
+/home/sgsilva/utilities/eval/sbatch_eval_all.sh --job-name=eval-27b-base-aux-off
+```
+- **Default = HALF NODE** (`gpu:4`, 96 CPU, 1200G) so TWO gpu:4 evals PACK onto one
+  8-GPU/192-CPU/2489G node (partition `OverSubscribe=YES:4`). The old full-node default
+  (`--cpus-per-task=192`, no `--mem`) grabbed ALL CPUs+RAM → nothing else could land even with
+  4 idle GPUs (that's why gpu:4 jobs sat PENDING on "Resources" next to a half-free node).
+- **Full-node jobs (TP 8 / 397B-A17B MoE)** need the whole node — pass the override:
+  `sbatch_eval_all.sh --gres=gpu:8 --cpus-per-task=192 --mem=2400G --job-name=...`.
+- **`unset SERVE_VENV`** between launches — it's an exported env var and leaks into the next
+  job if you only re-export the model. Only the pmartins `TokenizersBackend` / `merged_rep_2603`
+  family needs it; bare Qwen3.5 (4B/27B/397B, `Qwen2Tokenizer`) uses the default serving venv.
 
 ## External / long-path checkpoints (e.g. pmartins) + thinkon-27B runaways
 - **Long paths (>120 chars) auto-resolve to a short symlink** `models/_ext/<run_id>` for
@@ -169,9 +200,9 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
   `model, display, thinking, MMMU_val, Video_MME, VSI_Bench, aux_video_acc, aux_text_acc,
   aux_image_composite, aux_image_dense_oks, aux_image_task4_acc, vo_error_f1, vo_sample_f1,
   vo_severity_acc, + provenance`.
-- **Baselines pinned to top:** in every file the raw un-SFT'd Qwen3.5 reference rows (shared-
-  models path / bare `Qwen3.5-NB` id / `baseline`-named runs) sort to the top, then the rest
-  alphabetically — so the reference line is always the first thing you see.
+- **Row order = `master_models.json` group order** (allowlist file), with a BLANK separator row
+  between groups — baselines first, then VO contenders, then new-pipeline. (The old alpha-sort
+  with baselines-pinned-top is the legacy fallback when no allowlist file is present.)
 - **Copies:** `/mnt/data/sgsilva/results/eval_master/runs/<run_id>__<ts>/` — each aux run's
   aggregate JSON + SUMMARY (browse all outcomes in one place). `--no-copy` to skip.
 - A model joins across stages only where it was actually run on each; single-stage models stay
@@ -190,3 +221,41 @@ no per-checkpoint config or naming upkeep required.
 home-venv for aux/VO; benchmark venvs for benchmarks; outputs to canonical roots under
 `/mnt/data/sgsilva/results` (benchmarks now under `results/benchmarks`) + `aux_tasks/evals`; literal paths; no node
 assumptions (server is yours to start); thinking-mode must match the SFT target.
+
+## Troubleshooting — check these BEFORE trusting numbers
+- **Garbage scores from a PORT collision (data-corruption, not a crash).** If a `--serve` eval's
+  numbers look wrong-but-plausible (e.g. video 2% for a model that should get ~50%), it likely
+  queried the WRONG model's server on a shared port. **Grep the run/slurm log for**
+  `served id != expected` **or** `differs from registered server model`. If present, the run is
+  poisoned → quarantine it (`mv` to `aux_tasks/evals/_poisoned_*`, don't delete) and recompile.
+  Prevented by auto-PORT (GPU-bank derived); never hardcode `PORT=8000` on two co-located jobs.
+- **A stage aborts on `No module named X` / `can't open file …`.** A script was moved into a
+  subdir and a caller still points at the old path. Sweep `${SCRIPT_DIR}/…` refs (shell) and
+  `sys.path`/`parents[N]` math (python). Known-fixed: `suggest_eval_names.py` (→`inspect/`),
+  `eval_layout` import in `eval_text_datasets.py` (`parents[2]`→`parents[1]`, it's in
+  `aux_tasks/shared`).
+- **Aux landed VIDEO-ONLY (text/image blank).** Symptom of the text stage crashing early (it runs
+  before image) — historically the `eval_layout` import bug. Re-run aux after the fix; video
+  re-runs harmlessly.
+- **`thinking=unknown` on the board.** The source file's name lacked `_thinkon/_thinkoff`. Tag the
+  `--output-file`/`RUN_ID` with the mode (same ckpt → different numbers per mode).
+- **Run shows no `==== RUN END ====` footer / `/log` can't tell pass from fail.** Was the
+  `exec > >(tee…)` proc-sub bug (fixed: direct `exec >> $LOG` + EXIT trap). If you re-introduce a
+  `tee` in a driver, the footer/trap breaks again — redirect directly, like `clog` does.
+
+## Logs — all dated (2026-06-19)
+- **Run log** (eval_all.sh stdout+stderr): `logs/eval/<YYYY-MM-DD>/eval_all_<run>_think<mode>_<stages>__<jobid>_<ts>.log`
+  via `log_start`; carries START header (real `cmd`) + END footer (status/exit/duration).
+- **Serve log:** `logs/eval/serve/<YYYY-MM-DD>/eval_all_serve_<run>[_think<mode>]__<jobid>_<ts>.log`.
+- **SLURM .out/.err:** `logs/eval/slurm/<YYYY-MM-DD>/eval_all_slurm-<jobid>.{out,err}` — ONLY when
+  submitted via `sbatch_eval_all.sh` (the wrapper passes dated `--output`/`--error`; a direct
+  `sbatch eval_all.sbatch` lands flat in `slurm/`).
+
+## Changelog
+- **2026-06-19** — half-node packing default (gpu:4/96C/1200G) + full-node override; PORT auto by
+  GPU bank, TP auto by `CUDA_VISIBLE_DEVICES`; stage order aux→visualobs→benchmarks; all logs
+  dated + de-collided; run-log footer fixed (silent-fail); allowlist is now `master_models.json`
+  (`{pattern,display,train_reasoning,group,note}`, group-ordered + blank separators) — supersedes
+  `master_models.txt` and the old "baselines alpha-pinned to top" behavior; fixed moved-script
+  path breaks (`suggest_eval_names.py`, `eval_layout`). See `feedback_eval_gotchas` §6,
+  `project_eval_v2_era`.

@@ -2,10 +2,20 @@
 #SBATCH --job-name=eval-all
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=192
+#SBATCH --gres=gpu:4
+#SBATCH --cpus-per-task=96
+#SBATCH --mem=1200G
 #SBATCH --output=/mnt/data/sgsilva/logs/eval/slurm/eval_all_slurm-%j.out
 #SBATCH --error=/mnt/data/sgsilva/logs/eval/slurm/eval_all_slurm-%j.err
+#
+# DEFAULT = HALF NODE (gpu:4, 96 CPU, 1200G) so TWO gpu:4 evals PACK onto one 8-GPU/192-CPU/
+# 2489G node (partition OverSubscribe=YES:4). The old full-node default left half the GPUs idle:
+# --cpus-per-task=192 + no --mem grabbed ALL CPUs+RAM, so nothing else could land even with 4
+# free GPUs.  PORT is auto-derived from the allocated GPUs below so two co-located jobs DON'T
+# collide on 8000 (no manual PORT= needed when packing).
+#   - gpu:4 job (default)          : just submit; two pack per node automatically.
+#   - FULL-NODE job (TP=8 / 397B)  : sbatch --gres=gpu:8 --cpus-per-task=192 --mem=2400G ...
+#     (the 27B/397B aux+serve need all 8 GPUs; ask for the whole node explicitly.)
 #
 # Serve a checkpoint, run all requested eval stages, compile the unified master CSV, then
 # tear down the server — all in ONE sbatch job. The node frees when the job ends.
@@ -32,7 +42,19 @@ set -uo pipefail
 : "${STAGES:?set STAGES=aux,visualobs,benchmarks (any subset)}"
 : "${THINKING:?set THINKING=on|off (must match the SFT target)}"
 # ---- optional (defaults) ----
-PORT="${PORT:-8000}"
+# PORT: derived from SLURM_JOB_ID so two co-located packed jobs CANNOT collide. The old GPU-bank
+# heuristic was BROKEN for packing — SLURM remaps CUDA_VISIBLE_DEVICES to 0-based PER JOB (both
+# packed gpu:4 jobs see "0,1,2,3" → both picked 8000 → the 2nd eval queried the 1st's server →
+# WRONG-MODEL garbage scores; war story: 94198/94199 on worker-4, 4B-on hit the 27B server → video
+# 2%). job-id parity gives each job a distinct port with no manual bookkeeping. Explicit PORT= still
+# overrides (e.g. to attach a known port). Interactive (no SLURM_JOB_ID) falls back to 8000.
+if [[ -z "${PORT:-}" ]]; then
+  if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    PORT=$(( 8000 + (SLURM_JOB_ID % 100) ))   # 8000-8099, distinct per job → collision-free when packed
+  else
+    PORT=8000
+  fi
+fi
 SERVE_WAIT="${SERVE_WAIT:-1800}"
 BASE_URL="http://localhost:${PORT}/v1"
 
@@ -43,6 +65,10 @@ echo "  model     : $MODEL"
 echo "  base      : $BASE_MODEL   stages: $STAGES   thinking: $THINKING"
 echo "  serve     : port $PORT  TP=${TP:-default}  max_len=${MAX_LEN:-default}  wait=${SERVE_WAIT}s"
 echo "  group/run : ${TRAIN_GROUP_ID:-<none>} / ${RUN_ID:-<none>}"
+# --export=ALL forwards the WHOLE env, so a stale exported value silently re-targets this run.
+# Echo the leak-prone vars so a leftover (esp. SERVE_VENV/TP/TESTSET/BENCH_MAX_TOKENS) is visible
+# in the log BEFORE the run starts. SERVE_VENV must be UNSET for bare Qwen (pmartins-only).
+echo "  env-leak watch: SERVE_VENV=${SERVE_VENV:-<unset>}  TESTSET=${TESTSET:-<default 1506>}  BENCH_MAX_TOKENS=${BENCH_MAX_TOKENS:-<default>}  TAG=${TAG:-<none>}  MAX_SAMPLES=${MAX_SAMPLES:-<none>}"
 nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader | sed 's/^/    gpu /'
 
 # ---- build the eval_all.sh command (only pass flags that are set) ----

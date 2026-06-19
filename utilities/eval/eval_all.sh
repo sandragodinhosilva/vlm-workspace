@@ -41,11 +41,29 @@ VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visua
 # (the HUMAN ground truth) + folder_name/repetition_id. Agreement = model-vs-GT (NOT vs oracle).
 VO_GT_CAT=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed_visual_obs/oracle/oracle_397b_1105_categorical_test.json
 AGREE_PY=/home/sgsilva/vlm-post-training/data_preparation/analyze_observation_agreement.py
+# Agreement needs the model's STAGE-1 OBSERVATIONS (shape {ex:{rep:{parsed_answers}}}), NOT the
+# single-stage SEVERITY json evaluate.py emits ({metadata,metrics,per_sample_results:[...]}) —
+# feeding the latter as --a crashes the agreement script (AttributeError: 'list' has no 'keys').
+# generate_visual_observations_human.py produces the correct obs shape. PROCESSED_DIR is the
+# TEST-ONLY symlink set (132 samples / exactly the 1181 test reps) — the canonical recipe's dir
+# (memory: reference_visual_obs_eval_commands + bash history), NOT the full train+test processed
+# dir (that would over-generate ~4.5x; the join discards the surplus). --visual-obs-file +
+# categorical variant match the recipe. --resume → stable per-model obs file.
+VO_OBS_GEN=/home/sgsilva/vlm-post-training/data_preparation/generate_visual_observations_human.py
+# evaluate_v2: re-scores the single-stage SEVERITY json with the error-NAME-MISMATCH fix
+# (feedback_eval_gotchas §4) WITHOUT re-running the model. The compiler's _vo_tier PREFERS *_v2.json,
+# so without this pass a fresh single-stage VO run is scored under the OLD buggy name-join logic
+# while neighbors use the fix. Moved into data_preparation/results/ (reorg — docs still say
+# data_preparation/evaluate_v2.py). Agreement (stage-1, index-based) does NOT need v2.
+VO_EVAL_V2=/home/sgsilva/vlm-post-training/data_preparation/results/evaluate_v2.py
+VO_PROCESSED_DIR=/mnt/data/sgsilva/datasets/1105/1105_test_processed_symlinks   # moved under 1105/ (was datasets/ root)
+# (the categorical question file resolves automatically from --visual-obs-variant categorical →
+#  repo-root visual_obs/visual_observations_categorical.json; no explicit --visual-obs-file needed.)
 
 # ---- args ----
 MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1"
 THINKING=""; TRAIN_GROUP_ID=""; RUN_ID=""; TAG=""; TESTSET="1506"; MAX_SAMPLES=""
-BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""; BENCH_MAX_TOKENS=32768
+BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""; BENCH_MAX_TOKENS=32768; BENCH_MAX_TOKENS_SET=0
 SERVE=0; TP=""; MAX_LEN=""; SERVE_WAIT=1800; KEEP_SERVER=0   # --serve: launch+teardown our own vLLM
 SERVE_VENV="/home/sgsilva/qwen3.5-serving-home-venv"   # --serve-venv override for ckpts needing another
 # stack (e.g. pmartins transformers-5.x 'TokenizersBackend' tokenizers -> vlm-post-training-home-venv)
@@ -64,7 +82,7 @@ while [[ $# -gt 0 ]]; do
     --testset) TESTSET="$2"; shift 2;;
     --max-samples) MAX_SAMPLES="$2"; shift 2;;
     --bench-extra) BENCH_EXTRA="$2"; shift 2;;
-    --bench-max-tokens) BENCH_MAX_TOKENS="$2"; shift 2;;  # cap ALL benchmarks (VSI config + MMMU/VideoMME run_eval); thinkon runaway -> fail fast
+    --bench-max-tokens) BENCH_MAX_TOKENS="$2"; BENCH_MAX_TOKENS_SET=1; shift 2;;  # cap ALL benchmarks (VSI config + MMMU/VideoMME run_eval); thinkon runaway -> fail fast
     --preflight) PREFLIGHT=1; shift;;   # validate everything + exit WITHOUT running any eval
     --serve) SERVE=1; shift;;           # launch our OWN vLLM, run, then kill it on exit (sbatch-friendly)
     --serve-venv) SERVE_VENV="$2"; shift 2;;  # QWEN35_VENV for the serve (pmartins -> vlm-post-training-home-venv)
@@ -78,25 +96,49 @@ done
 
 [[ -z "$MODEL" || -z "$STAGES" ]] && { echo "ERROR: --model and --stages are required." >&2; exit 2; }
 [[ "$BASE_URL" != */v1 ]] && BASE_URL="${BASE_URL%/}/v1"
-LOG=$(log_start eval "eval_all_${TAG:-${RUN_ID:-notag}}")
+# Run name disambiguates by THINKING mode (same ckpt gives different numbers on/off) and stages,
+# so on/off runs of one model never collapse to one log name. LOG_CMD records the REAL invocation
+# (model/stages/thinking/tp), not the bare $0, so the log header is reproducible.
+_run_name="eval_all_${TAG:-${RUN_ID:-notag}}_think${THINKING:-NA}_$(echo "$STAGES" | tr ',' '-')"
+LOG_CMD="$0 --model $MODEL --base-model $BASE_MODEL --stages $STAGES --thinking ${THINKING:-NA} --base-url $BASE_URL${TP:+ --tp $TP}${RUN_ID:+ --run-id $RUN_ID}"
+export LOG_CMD
+LOG=$(log_start eval "$_run_name")
+# Tee stdout+stderr to BOTH the dated $LOG and the original fds, so the SLURM .out/.err still
+# mirror everything for live `tail -f` (an `exec >> $LOG` alone leaves the slurm out EMPTY).
+# The catch tee normally introduces — its proc-sub subshell suppresses log_start's BUILT-IN EXIT
+# trap, so the `==== RUN END ====` footer never writes (crashed runs look clean = silent fail) —
+# is sidestepped by NOT relying on that trap: we install our OWN explicit EXIT trap below, which
+# fires in this shell regardless of the tee subshell (verified). So we get both: slurm mirror + footer.
 exec > >(tee -a "$LOG") 2>&1
+# log_start's OWN trap also can't fire here (LOG was captured via command substitution → its
+# _LOG_RUN_PID != this shell's $$ → its PID-guarded trap skips finalize). Our explicit trap writes
+# the footer for EVERY exit path (the 9 error-exits below, crashes, signals, normal end); log_end
+# is idempotent so a later explicit call is a harmless no-op.
+trap 'log_end "$LOG" "$?"' EXIT
 
 # ---- --serve: validate inputs that MUST be known before the server exists ----
 if [[ "$SERVE" == 1 ]]; then
   # thinking can't be probed before the server is up -> must be explicit, and it sets ENABLE_THINKING.
   [[ "$THINKING" == on || "$THINKING" == off ]] || {
     echo "ERROR: --serve requires --thinking on|off (can't autodetect before the server is up; it sets ENABLE_THINKING)." >&2; exit 2; }
-  # serve params: explicit flags win, else per-base-model defaults.
-  if [[ -z "$TP" || -z "$MAX_LEN" ]]; then
+  # serve params: explicit --tp wins; else default to the GPUs ACTUALLY allocated to this job
+  # (CUDA_VISIBLE_DEVICES count) so a packed gpu:4 job uses TP=4, a full-node job uses TP=8.
+  # A hardcoded TP=8 on a 4-GPU alloc fails to start the server. MAX_LEN stays per-base-model.
+  if [[ -z "$TP" ]]; then
+    n_gpu="$(echo "${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}" | tr ',' '\n' | grep -c .)"
+    TP="${n_gpu:-8}"
+  fi
+  if [[ -z "$MAX_LEN" ]]; then
     case "$BASE_MODEL" in
-      *27b*) : "${TP:=8}"; : "${MAX_LEN:=65536}" ;;
-      *)     : "${TP:=8}"; : "${MAX_LEN:=32768}" ;;   # 4b/9b default
+      *27b*) MAX_LEN=65536 ;;
+      *)     MAX_LEN=32768 ;;   # 4b/9b default
     esac
   fi
   # derive host:port from --base-url (we serve there, then talk to it there)
   SERVE_PORT="$(printf '%s' "$BASE_URL" | sed -E 's#https?://[^:/]+:?([0-9]*)/.*#\1#')"
   [[ -z "$SERVE_PORT" ]] && SERVE_PORT=8000
   [[ ! -d "$MODEL" ]] && { echo "ERROR: --serve needs a model PATH on disk (got: $MODEL)" >&2; exit 2; }
+  [[ -x /home/sgsilva/vlm-evaluation/start_vllm_server.sh ]] || { echo "ERROR: --serve needs start_vllm_server.sh (not found/executable at /home/sgsilva/vlm-evaluation/start_vllm_server.sh)" >&2; exit 2; }
 fi
 
 # ---- LONG paths (>120 chars, e.g. external 225-char pmartins ckpts): serve+eval via a SHORT
@@ -148,6 +190,16 @@ PY
 fi
 [[ "$THINKING" == on || "$THINKING" == off ]] || { echo "ERROR: --thinking must be on|off" >&2; exit 2; }
 
+# AUTO-CAP benchmark max-tokens for thinkON: a thinkon-27B rambles to max_tokens on hard MMMU/
+# Video-MME items (~30min/sample at 32768 → Video-MME ≈ days, ~27% non-responses). If the user
+# didn't pass --bench-max-tokens explicitly, drop the default 32768 → 16384 when thinking=on so
+# runaways fail fast (~2-4min) while real answers (well under 16384) are untouched. Explicit
+# --bench-max-tokens always wins. thinkOFF keeps the full budget.
+if [[ "$BENCH_MAX_TOKENS_SET" == 0 && "$THINKING" == on ]]; then
+  BENCH_MAX_TOKENS=16384
+  echo "==> thinkON + no explicit --bench-max-tokens: auto-capping benchmarks to $BENCH_MAX_TOKENS (runaway guard)"
+fi
+
 have_stage() { [[ ",$STAGES," == *",$1,"* ]]; }
 
 # ---- --serve: launch OUR OWN vLLM, wait for health, kill it on exit (sbatch-friendly) ----
@@ -165,13 +217,18 @@ teardown_server() {
 }
 # EXIT handler: respect --keep-server on a NORMAL exit (reuse the server); INT/TERM (crash/cancel)
 # ALWAYS tear down so a killed job frees the node — never leave a stray 8-GPU server behind.
+# ALSO writes the run-log footer: this trap REPLACES the bare `trap 'log_end…' EXIT` set at the
+# top (a second `trap … EXIT` clobbers the first), so under --serve the footer must be written
+# HERE or it's lost. Capture $? FIRST (teardown/echo would overwrite it).
 on_exit() {
+  local rc=$?
   if [[ "$KEEP_SERVER" == 1 ]]; then
     echo ">>> --keep-server: leaving vLLM (PID $OUR_SERVER_PID) running at $BASE_URL"
     echo "    served id: $SERVED_ID   kill it: kill -INT -$OUR_SERVER_PID   (node frees at job end regardless)"
   else
     teardown_server
   fi
+  log_end "$LOG" "$rc"   # idempotent; writes ==== RUN END ==== footer (status/exit/duration)
 }
 if [[ "$SERVE" == 1 ]]; then
   [[ "$PREFLIGHT" == 1 ]] && { echo "ERROR: --serve and --preflight are mutually exclusive (preflight launches nothing)." >&2; exit 2; }
@@ -179,10 +236,17 @@ if [[ "$SERVE" == 1 ]]; then
   trap teardown_server INT TERM
   ENABLE_BIT="$([[ "$THINKING" == on ]] && echo 1 || echo 0)"
   # log name: prefer RUN_ID (unique) so pmartins '.../step_N/hf' paths don't all collide on 'hf'.
-  # Write under logs/eval/serve/ (NOT the logs root — strays there are flagged by the Stop hook).
+  # Write under logs/eval/serve/<DATE>/ (NOT the logs root — strays there are flagged by the Stop
+  # hook). Dated subdir + jobid/timestamp suffix so reruns of one config DON'T overwrite each
+  # other (the flat name was reused every launch → each new serve clobbered the prior log).
   SERVE_TAG="${RUN_ID:-$(basename "$MODEL")}"
-  mkdir -p /mnt/data/sgsilva/logs/eval/serve
-  SERVE_LOG="/mnt/data/sgsilva/logs/eval/serve/eval_all_serve_${SERVE_TAG}_think${THINKING}.log"
+  # RUN_ID may already carry the thinking mode (…_thinkoff); only append _think<mode> if absent,
+  # to avoid the doubled '…_thinkoff_thinkoff' seen before.
+  case "$SERVE_TAG" in *think${THINKING}*) _serve_think="" ;; *) _serve_think="_think${THINKING}" ;; esac
+  _serve_date="$(date -u +%Y-%m-%d)"; _serve_stamp="$(date -u +%H%M%S)"
+  _serve_id="${SLURM_JOB_ID:-p$$}"
+  mkdir -p "/mnt/data/sgsilva/logs/eval/serve/${_serve_date}"
+  SERVE_LOG="/mnt/data/sgsilva/logs/eval/serve/${_serve_date}/eval_all_serve_${SERVE_TAG}${_serve_think}__${_serve_id}_${_serve_stamp}.log"
   echo "==> --serve: launching vLLM  model=$(basename "$SERVED_ID")  TP=$TP  max_len=$MAX_LEN  port=$SERVE_PORT  thinking=$THINKING"
   echo "    serve venv: $SERVE_VENV"
   echo "    serve log: $SERVE_LOG   (host $(hostname))"
@@ -236,7 +300,13 @@ PY
   else
     local sid="${served%%|*}" smax="${served##*|}"
     echo "  [ok]   server up: id=$sid  max_model_len=$smax"
-    [[ "$sid" == "$SERVED_ID" ]] || echo "  [WARN] served id != expected ('$sid' vs '$SERVED_ID') — eval model must equal the served id or requests 404"
+    # HARD GATE (was a non-fatal WARN): a served id != expected is the PORT-collision data-corruption
+    # signature — the eval would query the WRONG model's server and log plausible garbage. Refuse.
+    if [[ "$sid" != "$SERVED_ID" ]]; then
+      echo "  [FAIL] served id != expected ('$sid' vs '$SERVED_ID') — refusing to eval the WRONG model"
+      echo "         (likely a shared-PORT collision: another job's server is bound to $BASE_URL)."
+      ok=0
+    fi
     # 2. served max_model_len > planned eval max-tokens (aux 16384/8192, VO 32768/4096, bench 32768)
     local emax; emax="$([[ "$THINKING" == on ]] && echo 32768 || echo 16384)"
     if [[ "$smax" =~ ^[0-9]+$ ]]; then
@@ -261,6 +331,14 @@ PY
   fi
   if have_stage visualobs; then
     [[ -d "$VO_TEST" ]] && echo "  [ok]   visualobs: 1181-rep test dir present" || { echo "  [FAIL] visualobs test dir missing"; ok=0; }
+    # driver + agreement scripts must exist (a reorg of data_preparation/ would otherwise abort the
+    # stage mid-run with no preflight warning — the class-1 moved-script failure mode).
+    [[ -f "$VPT/data_preparation/evaluate.py" ]] || { echo "  [FAIL] visualobs: evaluate.py missing"; ok=0; }
+    [[ -f "$AGREE_PY" ]] || { echo "  [FAIL] visualobs: analyze_observation_agreement.py missing"; ok=0; }
+    [[ -f "$VO_OBS_GEN" ]] || { echo "  [FAIL] visualobs: obs generator ($VO_OBS_GEN) missing — agreement stage can't run"; ok=0; }
+    [[ -d "$VO_PROCESSED_DIR" ]] && echo "  [ok]   visualobs: agreement processed-dir present" \
+      || echo "  [WARN] visualobs: agreement processed-dir missing ($VO_PROCESSED_DIR) — agreement will SKIP"
+    [[ -f "$VO_GT_CAT" ]] || { echo "  [FAIL] visualobs: agreement GT file ($VO_GT_CAT) missing"; ok=0; }
     case "$(basename "$MODEL" | tr '[:upper:]' '[:lower:]')" in
       *oracle*|*visual*obs*|*vo3d*) : ;;
       *) echo "  [WARN] visualobs: '$(basename "$MODEL")' not a visual-obs/oracle ckpt — severity eval may not apply" ;;
@@ -340,17 +418,50 @@ if have_stage visualobs; then
   vo_obs="$VO_OUT/${stem}_singlestage_think${THINKING}.json"
   if ( cd "$VPT" && "${vargs[@]}" ); then
     STAGE_RESULTS+=("visualobs: OK -> $vo_obs")
-    # ---- AGREEMENT (auto, stage-1 obs vs HUMAN GT — no reasoner; the comparable single-stage VO
-    # metric). model-vs-GT via --gt-source (human_error_severities); ±1 ordinal tolerance. ----
-    echo ""; echo ">>> STAGE: agreement (stage-1 obs vs human GT)"
-    agree_out="$VO_OUT/agreement_${stem}_think${THINKING}.json"
-    aargs=( "$VPT_PY" "$AGREE_PY"
-      --a "$vo_obs" --b "$VO_GT_CAT" --gt-source "$VO_GT_CAT"
-      --label-a model --label-b gt --categorical-tolerance 1
-      --output "$agree_out" )
-    ( cd "$VPT" && "${aargs[@]}" ) \
-      && STAGE_RESULTS+=("agreement: OK -> $agree_out") \
-      || STAGE_RESULTS+=("agreement: FAILED")
+    # ---- evaluate_v2 RESCORE (error-name-mismatch fix; no model re-run). Writes <stem>_..._v2.json
+    # next to the original (never overwrites); the compiler prefers the _v2 tier. Scope the glob to
+    # THIS run's single-stage file so we don't rescore the whole dir every time. Non-fatal: a rescore
+    # failure leaves the (older-logic) singlestage json in place rather than failing the run. ----
+    echo ""; echo ">>> visualobs: evaluate_v2 rescore (error-name-mismatch fix)"
+    ( cd "$VPT" && "$VPT_PY" "$VO_EVAL_V2" --results-dir "$VO_OUT" --glob "${stem}_singlestage_think${THINKING}.json" ) \
+      && STAGE_RESULTS+=("visualobs_v2: OK -> ${vo_obs%.json}_v2.json") \
+      || STAGE_RESULTS+=("visualobs_v2: WARN (rescore failed; singlestage json kept)")
+    # ---- AGREEMENT (auto, model stage-1 obs vs HUMAN GT — no reasoner; the comparable single-stage
+    # VO metric). model-vs-GT via --gt-source (human_error_severities); ±1 ordinal tolerance.
+    # Two steps (canonical recipe = memory reference_visual_obs_eval_commands step a→b):
+    # (1) generate the model's stage-1 OBSERVATIONS over the 1181 test reps (the correct
+    # {ex:{rep:{parsed_answers}}} shape — NOT the single-stage severity json above, which crashes
+    # the agreement script); (2) compare obs vs GT. --resume to a stable per-model file so a re-run
+    # / partial doesn't redo finished reps. max-tokens per recipe (4096 off / 32768 on). ----
+    echo ""; echo ">>> STAGE: agreement — step 1/2: generate stage-1 observations (1181 test reps)"
+    obs_out="$VO_OUT/obs_${stem}_think${THINKING}.json"
+    if [[ -d "$VO_PROCESSED_DIR" ]]; then
+      omax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
+      oargs=( "$VPT_PY" "$VO_OBS_GEN"
+        --model "$SERVED_ID" --server-url "$BASE_URL"
+        --processed-dir "$VO_PROCESSED_DIR"
+        --visual-obs-variant categorical
+        --max-tokens "$omax" --max-workers 16
+        --output-file "$obs_out" --resume )
+      [[ "$THINKING" == off ]] && oargs+=( --disable-thinking )
+      [[ -n "$MAX_SAMPLES" ]] && oargs+=( --limit "$MAX_SAMPLES" )
+      if ( cd "$VPT" && "${oargs[@]}" ); then
+        echo ">>> STAGE: agreement — step 2/2: obs vs human GT"
+        agree_out="$VO_OUT/agreement_${stem}_think${THINKING}.json"
+        aargs=( "$VPT_PY" "$AGREE_PY"
+          --a "$obs_out" --b "$VO_GT_CAT" --gt-source "$VO_GT_CAT"
+          --label-a model --label-b gt --categorical-tolerance 1
+          --output "$agree_out" )
+        ( cd "$VPT" && "${aargs[@]}" ) \
+          && STAGE_RESULTS+=("agreement: OK -> $agree_out") \
+          || STAGE_RESULTS+=("agreement: FAILED")
+      else
+        STAGE_RESULTS+=("agreement: FAILED (obs generation)")
+      fi
+    else
+      echo "[agreement] SKIP: processed-dir not found ($VO_PROCESSED_DIR)" >&2
+      STAGE_RESULTS+=("agreement: SKIPPED (no processed-dir)")
+    fi
   else
     STAGE_RESULTS+=("visualobs: FAILED")
   fi
@@ -410,3 +521,9 @@ echo "=================================================="
 echo " eval_all SUMMARY  (model=$(basename "$MODEL"), thinking=$THINKING)"
 echo "=================================================="
 for r in "${STAGE_RESULTS[@]}"; do echo "  $r"; done
+
+# Exit with failed RC if ANY stage recorded FAILED — the EXIT trap above reads $? and writes the
+# footer as status=failed/done accordingly (so a half-broken run no longer logs as clean).
+_eval_rc=0
+for r in "${STAGE_RESULTS[@]}"; do [[ "$r" == *FAILED* ]] && _eval_rc=1; done
+exit "$_eval_rc"
