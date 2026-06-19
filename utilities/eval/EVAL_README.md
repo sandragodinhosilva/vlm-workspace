@@ -84,6 +84,14 @@ export SERVE_VENV=/home/sgsilva/vlm-post-training-home-venv   # pmartins/27B-mer
   8-GPU/192-CPU/2489G node (partition `OverSubscribe=YES:4`). The old full-node default
   (`--cpus-per-task=192`, no `--mem`) grabbed ALL CPUs+RAM → nothing else could land even with
   4 idle GPUs (that's why gpu:4 jobs sat PENDING on "Resources" next to a half-free node).
+- **Right-size the GPUs** — TP auto-derives from the alloc, so request only what the model needs:
+  4B → `--gres=gpu:2 --cpus-per-task=48 --mem=600G` (TP2); 27B → the gpu:4 default (TP4);
+  397B / TP8 → full node (below). Any `--gres`/`--cpus-per-task`/`--mem`/`--job-name` you pass to
+  the wrapper are forwarded to `sbatch` as OPTIONS (they override the `#SBATCH` defaults) — the
+  wrapper places them BEFORE the script path so SLURM reads them as options, not script args.
+  (Bug fixed 2026-06-19: when `"$@"` went AFTER the script path, `--gres=gpu:2` was silently
+  dropped and the job fell back to the gpu:4 default — a 4B mis-sized to 4 GPUs.) Verify after
+  submit: `scontrol show job <id> | grep -E 'JobName|AllocTRES'`.
 - **Full-node jobs (TP 8 / 397B-A17B MoE)** need the whole node — pass the override:
   `sbatch_eval_all.sh --gres=gpu:8 --cpus-per-task=192 --mem=2400G --job-name=...`.
 - **`unset SERVE_VENV`** between launches — it's an exported env var and leaks into the next

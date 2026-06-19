@@ -15,8 +15,13 @@ set -euo pipefail
 SLURM_DIR="/mnt/data/sgsilva/logs/eval/slurm/$(date -u +%Y-%m-%d)"
 mkdir -p "$SLURM_DIR"
 
+# "$@" (e.g. --gres=gpu:2 --job-name=...) MUST come BEFORE the script path so SLURM treats them as
+# sbatch OPTIONS that override the #SBATCH defaults. Anything AFTER the script path is passed as a
+# positional ARG to eval_all.sbatch (which ignores it) — so a trailing --gres was silently dropped
+# and the job fell back to the #SBATCH --gres=gpu:4 default (mis-sized 4B jobs). Keep "$@" here.
 sbatch \
   --output="${SLURM_DIR}/eval_all_slurm-%j.out" \
   --error="${SLURM_DIR}/eval_all_slurm-%j.err" \
   --export=ALL \
-  /home/sgsilva/utilities/eval/eval_all.sbatch "$@"
+  "$@" \
+  /home/sgsilva/utilities/eval/eval_all.sbatch
