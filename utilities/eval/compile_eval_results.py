@@ -73,8 +73,9 @@ FIELDS = [
     "vo_agree_errf1", "vo_agree_acc", "vo_agree_prec", "vo_agree_rec",
     #   aux 3-modality headline (after visual-obs)
     "aux_acc_weighted_3mod",
-    # --- aux per-modality / per-task detail (3D/non-3D video split lives in the aux eval_matrix.csv) ---
-    "aux_video_acc", "aux_text_acc", "aux_image_composite",
+    # --- aux per-modality / per-task detail. Video splits by source: 3D MCQA (mcqa_video_3d_2705,
+    # the harder spatial-reasoning set) vs non-3D (mcqa_video_1505). Combined = aux_video_acc. ---
+    "aux_video_acc", "aux_video_3d", "aux_video_non3d", "aux_text_acc", "aux_image_composite",
     "aux_image_dense_oks", "aux_image_task4_acc",
     # --- training provenance (from eval_matrix; train_reasoning moved up to identity) ---
     "train_group_id", "train_sample_count", "best_step",
@@ -95,7 +96,8 @@ HEADER_LABELS = {
     "vo_agree_errf1": "VO Agree-F1 (vs GT)", "vo_agree_acc": "VO Agree-Acc (vs GT)",
     "vo_agree_prec": "VO Agree-Prec (vs GT)", "vo_agree_rec": "VO Agree-Rec (vs GT)",
     "aux_acc_weighted_3mod": "Aux 3-Mod Weighted",
-    "aux_video_acc": "Aux Video", "aux_text_acc": "Aux Text", "aux_image_composite": "Aux Image",
+    "aux_video_acc": "Aux Video (all)", "aux_video_3d": "Aux Video 3D", "aux_video_non3d": "Aux Video non-3D",
+    "aux_text_acc": "Aux Text", "aux_image_composite": "Aux Image",
     "aux_image_dense_oks": "Aux Image Dense OKS", "aux_image_task4_acc": "Aux Image Task4",
     "train_group_id": "Train Group", "train_sample_count": "Train Samples", "best_step": "Best Step",
     "aux_run_ts": "Aux Run TS", "aux_run_id": "Aux Run ID", "aux_run_dir": "Aux Run Dir",
@@ -386,6 +388,28 @@ def _bench_display_to_path() -> dict[str, str]:
     return out
 
 
+def _video_source_split(video_results_json: str):
+    """Read a video eval results_json's `by_source` and return (acc_3d, acc_non3d) percentages,
+    or ('', '') if unavailable. The 1506 video stage evaluates TWO sources tagged
+    metadata.source_dataset: mcqa_video_3d_2705 (3D spatial MCQA, harder) and mcqa_video_1505
+    (non-3D). Each by_source entry carries an `accuracy` (already a pct). Distinct '' sentinel on
+    any miss — never fabricate a number."""
+    if not video_results_json:
+        return "", ""
+    try:
+        bs = (json.loads(Path(video_results_json).read_text()).get("by_source") or {})
+    except Exception:
+        return "", ""
+    def _acc(src):
+        v = bs.get(src)
+        if isinstance(v, dict):
+            a = v.get("accuracy")
+            if isinstance(a, (int, float)):
+                return round(a, 2)
+        return ""
+    return _acc("mcqa_video_3d_2705"), _acc("mcqa_video_1505")
+
+
 def _rows():
     """Return {(model_path, thinking): {field: value}} JOINED on the served checkpoint path."""
     rows: dict[tuple[str, str], dict] = {}
@@ -435,6 +459,19 @@ def _rows():
                 r = get(model_path, thinking, display=f"{rec.get('base_model','')}:{rec.get('run_id','')}")
                 r["aux_acc_weighted_3mod"] = _f(rec.get("acc_weighted_3modalities"))
                 r["aux_video_acc"] = _f(rec.get("acc_video"))
+                # 3D/non-3D video split — the matrix has no per-source column, so read by_source
+                # from the video run's results_json (under video_run_dir/.../results/*.json).
+                _vrd = rec.get("video_run_dir", "").strip()
+                if _vrd:
+                    # the FINAL results json, NOT the partial *.checkpoint.json (resume sidecar);
+                    # newest by mtime among non-checkpoint files.
+                    _cands = [p for p in Path(_vrd).rglob("results/*.json")
+                              if not p.name.endswith(".checkpoint.json")]
+                    _vrj = max(_cands, key=lambda p: p.stat().st_mtime, default=None) if _cands else None
+                    if _vrj:
+                        _v3d, _vn3d = _video_source_split(str(_vrj))
+                        if _v3d != "": r["aux_video_3d"] = _v3d
+                        if _vn3d != "": r["aux_video_non3d"] = _vn3d
                 r["aux_text_acc"] = _f(rec.get("acc_text"))
                 r["aux_image_composite"] = _f(rec.get("acc_image"))
                 r["aux_image_dense_oks"] = _f(rec.get("oks_image"))
@@ -463,6 +500,7 @@ def _rows():
             tl = (run_id + " " + str(d.get("tag", ""))).lower()
             thinking = "on" if "thinkon" in tl else ("off" if "thinkoff" in tl else "unknown")
             mods = d.get("modalities", {}) or {}
+            video_rj = (mods.get("video") or {}).get("results_json")  # for the 3d/non3d source split
             model_path = ""
             for leg in ("video", "text", "image"):
                 rj = (mods.get(leg) or {}).get("results_json")
@@ -487,6 +525,9 @@ def _rows():
                 v = (mods.get(mod) or {}).get("metric_value_pct")
                 return round(v, 2) if isinstance(v, (int, float)) else ""
             r["aux_video_acc"] = pct("video")
+            _v3d, _vn3d = _video_source_split(video_rj)  # 3D MCQA vs non-3D split (by_source)
+            if _v3d != "": r["aux_video_3d"] = _v3d
+            if _vn3d != "": r["aux_video_non3d"] = _vn3d
             r["aux_text_acc"] = pct("text")
             r["aux_image_composite"] = pct("image")
             r["aux_image_dense_oks"] = pct("image_dense")
