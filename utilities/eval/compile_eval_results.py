@@ -70,15 +70,36 @@ FIELDS = [
     "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
     #   aux 3-modality headline (after visual-obs)
     "aux_acc_weighted_3mod",
-    # --- aux per-modality / per-task detail (video split by source: 3D=mcqa_video_3d_2705,
-    #     non-3D=mcqa_video_1505) ---
-    "aux_video_acc", "aux_video_3d", "aux_video_non3d", "aux_text_acc", "aux_image_composite",
+    # --- aux per-modality / per-task detail (3D/non-3D video split lives in the aux eval_matrix.csv) ---
+    "aux_video_acc", "aux_text_acc", "aux_image_composite",
     "aux_image_dense_oks", "aux_image_task4_acc",
     # --- training provenance (from eval_matrix; train_reasoning moved up to identity) ---
     "train_group_id", "train_sample_count", "best_step",
     # --- source provenance / bookkeeping (last) ---
     "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source", "bench_source", "vo_source",
 ]
+
+# Human-readable header labels for the CSV (so a paste into Excel reads cleanly). Internal field
+# KEYS stay snake_case everywhere in code; only the written header row is prettified. Any field
+# not listed falls back to its key with '_'->' ' and title-cased.
+HEADER_LABELS = {
+    "display": "Display", "model": "Model Path", "model_created": "Model Created",
+    "owner": "Owner", "is_baseline": "Baseline?", "train_reasoning": "Trained w/ Reasoning",
+    "eval_thinking": "Eval Thinking", "last_eval_ts": "Last Eval",
+    "MMMU_val": "MMMU-val", "Video_MME": "Video-MME", "VSI_Bench": "VSI-Bench",
+    "bench_method": "Benchmark Scoring",
+    "vo_error_f1": "VO Error-F1", "vo_sample_f1": "VO Sample-F1", "vo_severity_acc": "VO Severity Acc",
+    "aux_acc_weighted_3mod": "Aux 3-Mod Weighted",
+    "aux_video_acc": "Aux Video", "aux_text_acc": "Aux Text", "aux_image_composite": "Aux Image",
+    "aux_image_dense_oks": "Aux Image Dense OKS", "aux_image_task4_acc": "Aux Image Task4",
+    "train_group_id": "Train Group", "train_sample_count": "Train Samples", "best_step": "Best Step",
+    "aux_run_ts": "Aux Run TS", "aux_run_id": "Aux Run ID", "aux_run_dir": "Aux Run Dir",
+    "aux_source": "Aux Source", "bench_source": "Benchmark Source", "vo_source": "VO Source",
+}
+
+
+def _header(field: str) -> str:
+    return HEADER_LABELS.get(field, field.replace("_", " ").title())
 
 
 def _base_model(model: str, display: str = "") -> str:
@@ -137,19 +158,25 @@ def _load_allowlist():
         return None
     data = json.loads(MODEL_ALLOWLIST.read_text())
     out = []
-    for e in data.get("models", []):
+    for idx, e in enumerate(data.get("models", [])):
         pat = (e.get("pattern") or "").strip().lower()
         if pat:
-            out.append((pat, (e.get("display") or "").strip(), (e.get("train_reasoning") or "").strip()))
+            out.append({
+                "pattern": pat,
+                "display": (e.get("display") or "").strip(),
+                "train_reasoning": (e.get("train_reasoning") or "").strip(),
+                "group": (e.get("group") or "").strip(),
+                "order": idx,  # board rows appear in allowlist order; blank row between groups
+            })
     return out
 
 
 def _match_allow(row: dict, allow):
-    """Return the FIRST matching (pattern, display, train_reasoning) tuple for a row, or None.
+    """Return the FIRST matching allowlist entry dict for a row, or None.
     Match is a substring of the row's model path OR display."""
     hay = f"{row.get('model','')} {row.get('display','')}".lower()
     for entry in allow:
-        if entry[0] in hay:
+        if entry["pattern"] in hay:
             return entry
     return None
 
@@ -185,14 +212,31 @@ def _aux_testset(run_id: str, eval_family: str = "", tag: str = "", timestamp: s
 
 
 def _write_csv(path: Path, row_items, fields):
-    """Write rows with baselines pinned to the top, then the rest alphabetically by model."""
-    ordered = sorted(row_items, key=lambda kv: (0 if _is_baseline(kv[1].get("model", ""), kv[1].get("display", "")) else 1, kv[0]))
+    """Write rows. If rows carry an allowlist `_order` (curated board), emit in THAT order and
+    insert a BLANK row between groups (`_group` change) — the user-defined layout. Otherwise
+    (legacy / no allowlist) pin baselines to the top, then alphabetical by model."""
+    have_order = any("_order" in r for _k, r in row_items)
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
-        w.writeheader()
+        csv.writer(f).writerow([_header(k) for k in fields])  # pretty (human-readable) header row
+        if have_order:
+            # within an allowlist position, keep a stable secondary sort (thinkoff before thinkon)
+            _th = {"off": 0, "on": 1, "unknown": 2}
+            ordered = sorted(row_items, key=lambda kv: (kv[1].get("_order", 1e9),
+                                                        _th.get(kv[1].get("eval_thinking", ""), 3)))
+            n, prev_group = 0, None
+            for _key, row in ordered:
+                g = row.get("_group", "")
+                if prev_group is not None and g != prev_group:
+                    w.writerow({k: "" for k in fields})  # blank separator row between groups
+                w.writerow({k: row.get(k, "") for k in fields})
+                prev_group = g
+                n += 1
+            return n
+        ordered = sorted(row_items, key=lambda kv: (0 if _is_baseline(kv[1].get("model", ""), kv[1].get("display", "")) else 1, kv[0]))
         for _key, row in ordered:
             w.writerow({k: row.get(k, "") for k in fields})
-    return len(ordered)
+        return len(ordered)
 
 
 # A bare baseline is scored on different axes under DIFFERENT identity strings (aux uses
@@ -312,23 +356,6 @@ def _parsable_bench_acc(disp: str, bench: str):
     return round(keep["hit"].mean() * 100, 2), len(keep), int(bad.sum())
 
 
-def _video_by_source(video_results_json: str):
-    """From a video MCQA results_json, return (acc_3d, acc_non3d) where 3D=mcqa_video_3d_2705,
-    non-3D=mcqa_video_1505. ('','') if the file/by_source is absent or sources are unlabeled
-    ('unknown' — older runs don't carry per-source tags; we DON'T guess a split)."""
-    if not video_results_json or not os.path.exists(video_results_json):
-        return "", ""
-    try:
-        bs = (json.loads(Path(video_results_json).read_text()).get("by_source") or {})
-    except Exception:
-        return "", ""
-    def acc(src):
-        v = bs.get(src)
-        a = v.get("accuracy") if isinstance(v, dict) else v
-        return round(a, 2) if isinstance(a, (int, float)) else ""
-    return acc("mcqa_video_3d_2705"), acc("mcqa_video_1505")
-
-
 def _bench_display_to_path() -> dict[str, str]:
     """Map a benchmark summary.csv display_name -> served model path WITHOUT needing config
     files. The path is encoded in the result tree: results/<bench>/<display>/<model_slug>/,
@@ -403,11 +430,6 @@ def _rows():
                 r = get(model_path, thinking, display=f"{rec.get('base_model','')}:{rec.get('run_id','')}")
                 r["aux_acc_weighted_3mod"] = _f(rec.get("acc_weighted_3modalities"))
                 r["aux_video_acc"] = _f(rec.get("acc_video"))
-                # video 3D/non-3D split from the video run dir's results json (matrix has no by_source)
-                _vdir = (rec.get("video_run_dir") or "").strip()
-                _vjson = next(iter(sorted(glob.glob(f"{_vdir}/results/*.json"))), "") if _vdir else ""
-                v3d, vn3d = _video_by_source(_vjson)
-                r["aux_video_3d"], r["aux_video_non3d"] = v3d, vn3d
                 r["aux_text_acc"] = _f(rec.get("acc_text"))
                 r["aux_image_composite"] = _f(rec.get("acc_image"))
                 r["aux_image_dense_oks"] = _f(rec.get("oks_image"))
@@ -460,8 +482,6 @@ def _rows():
                 v = (mods.get(mod) or {}).get("metric_value_pct")
                 return round(v, 2) if isinstance(v, (int, float)) else ""
             r["aux_video_acc"] = pct("video")
-            v3d, vn3d = _video_by_source((mods.get("video") or {}).get("results_json", ""))
-            r["aux_video_3d"], r["aux_video_non3d"] = v3d, vn3d
             r["aux_text_acc"] = pct("text")
             r["aux_image_composite"] = pct("image")
             r["aux_image_dense_oks"] = pct("image_dense")
@@ -662,11 +682,12 @@ def main() -> int:
             entry = _match_allow(r, allow)
             if entry is None:
                 continue
-            _pat, disp, treas = entry
-            if disp:                      # curated clean display name overrides the raw one
-                r["display"] = disp
-            if treas and not r.get("train_reasoning"):  # curated train_reasoning fills the gap
-                r["train_reasoning"] = treas
+            if entry["display"]:               # curated clean display name overrides the raw one
+                r["display"] = entry["display"]
+            if entry["train_reasoning"] and not r.get("train_reasoning"):  # curated fills the gap
+                r["train_reasoning"] = entry["train_reasoning"]
+            r["_order"] = entry["order"]        # allowlist position (board ordering)
+            r["_group"] = entry["group"]        # group bucket (blank row inserted between groups)
             kept.append((k, r))
         dropped = len(items) - len(kept)
         print(f"[allowlist] {MODEL_ALLOWLIST.name}: {len(allow)} patterns -> kept {len(kept)}/{len(items)} rows ({dropped} off-board)")

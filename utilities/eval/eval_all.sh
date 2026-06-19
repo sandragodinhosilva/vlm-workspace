@@ -37,6 +37,10 @@ BENCH_RUN=/home/sgsilva/benchmarks/scripts/run_eval.py
 BENCH_PY=/home/sgsilva/benchmarks/SIBench-VSR/.venv/bin/python
 VO_TEST=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test
 VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visual_obs_runs/ back-compat-symlinked)
+# GT visual-obs (human) for the agreement stage — per-rep entries carry `human_error_severities`
+# (the HUMAN ground truth) + folder_name/repetition_id. Agreement = model-vs-GT (NOT vs oracle).
+VO_GT_CAT=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed_visual_obs/oracle/oracle_397b_1105_categorical_test.json
+AGREE_PY=/home/sgsilva/vlm-post-training/data_preparation/analyze_observation_agreement.py
 
 # ---- args ----
 MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1"
@@ -321,7 +325,9 @@ if have_stage visualobs; then
        echo "            checkpoint. Single-stage severity eval on the 1181-rep test may not apply"
        echo "            to this model family. Proceeding anyway (you selected it)." ;;
   esac
-  stem="$(basename "$MODEL" | sed 's/^qwen35-[0-9]*b-//')"
+  # stem from SERVED_ID (the short symlink / run-id), NOT $MODEL — basename($MODEL) is 'hf' for
+  # every pmartins '.../step_N/hf', which COLLIDES all their VO output files (A overwrote B once).
+  stem="$(basename "$SERVED_ID" | sed 's/^qwen35-[0-9]*b-//')"
   vmax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
   mkdir -p "$VO_OUT"
   vargs=( "$VPT_PY" "$VPT/data_preparation/evaluate.py"
@@ -331,9 +337,23 @@ if have_stage visualobs; then
     --output-file "$VO_OUT/${stem}_singlestage_think${THINKING}.json" --resume )
   [[ "$THINKING" == off ]] && vargs+=( --disable-thinking )
   [[ -n "$MAX_SAMPLES" ]] && vargs+=( --max-samples "$MAX_SAMPLES" )
-  ( cd "$VPT" && "${vargs[@]}" ) \
-    && STAGE_RESULTS+=("visualobs: OK -> $VO_OUT/${stem}_singlestage_think${THINKING}.json") \
-    || STAGE_RESULTS+=("visualobs: FAILED")
+  vo_obs="$VO_OUT/${stem}_singlestage_think${THINKING}.json"
+  if ( cd "$VPT" && "${vargs[@]}" ); then
+    STAGE_RESULTS+=("visualobs: OK -> $vo_obs")
+    # ---- AGREEMENT (auto, stage-1 obs vs HUMAN GT — no reasoner; the comparable single-stage VO
+    # metric). model-vs-GT via --gt-source (human_error_severities); ±1 ordinal tolerance. ----
+    echo ""; echo ">>> STAGE: agreement (stage-1 obs vs human GT)"
+    agree_out="$VO_OUT/agreement_${stem}_think${THINKING}.json"
+    aargs=( "$VPT_PY" "$AGREE_PY"
+      --a "$vo_obs" --b "$VO_GT_CAT" --gt-source "$VO_GT_CAT"
+      --label-a model --label-b gt --categorical-tolerance 1
+      --output "$agree_out" )
+    ( cd "$VPT" && "${aargs[@]}" ) \
+      && STAGE_RESULTS+=("agreement: OK -> $agree_out") \
+      || STAGE_RESULTS+=("agreement: FAILED")
+  else
+    STAGE_RESULTS+=("visualobs: FAILED")
+  fi
 fi
 
 # ---------------- benchmarks (LAST — slowest, most likely to be cut short) ----------------
