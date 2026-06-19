@@ -135,7 +135,11 @@ EOF
 _log_finalize() {
     [[ "${_LOG_RUN_ENDED:-0}" == "1" ]] && return
     [[ -n "${_LOG_RUN_PID:-}" && "${_LOG_RUN_PID}" != "$$" ]] && return
-    local status="$1" code="$2" logfile="$3" meta="$4" rundir="$5"
+    local status="$1" code="$2" logfile="$3" meta="${4:-}" rundir="${5:-}"
+    # If the run aborted before log_start finished exporting state (e.g. a --serve preflight FAIL),
+    # logfile/meta may be empty. Still write the footer to the logfile if we have one; skip the
+    # meta/index rewrite cleanly rather than dying on `set -u` (which suppressed the footer entirely).
+    [[ -z "$logfile" ]] && return
     local end_epoch dur ended
     end_epoch=$(_log_epoch); ended=$(_log_now)
     dur=$(( end_epoch - ${_LOG_RUN_START:-end_epoch} ))
@@ -147,6 +151,7 @@ _log_finalize() {
         echo "duration : ${dur}s"
         echo "================="
     } >>"$logfile" 2>/dev/null
+    [[ -z "$meta" ]] && return   # no meta.json (early abort) → footer written, skip the meta/index rewrite
     # rewrite meta status (sed in place is fine; small file, single writer)
     sed -i "s/\"status\":\"running\"/\"status\":\"$status\"/" "$meta" 2>/dev/null
     # extract category from meta.json for the terminal index line
@@ -160,7 +165,7 @@ _log_finalize() {
 log_end() {
     local logfile="$1" code="${2:-0}"
     local status; if [[ "$code" == "0" ]]; then status="done"; else status="failed"; fi
-    _log_finalize "$status" "$code" "$logfile" "$_LOG_RUN_META" "$_LOG_RUN_RUNDIR"
+    _log_finalize "$status" "$code" "$logfile" "${_LOG_RUN_META:-}" "${_LOG_RUN_RUNDIR:-}"
     export _LOG_RUN_ENDED=1
     [[ -n "${_LOG_RUN_WATCH:-}" ]] && kill "$_LOG_RUN_WATCH" 2>/dev/null
     trap - EXIT INT TERM
