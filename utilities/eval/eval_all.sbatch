@@ -48,12 +48,23 @@ set -uo pipefail
 # WRONG-MODEL garbage scores; war story: 94198/94199 on worker-4, 4B-on hit the 27B server → video
 # 2%). job-id parity gives each job a distinct port with no manual bookkeeping. Explicit PORT= still
 # overrides (e.g. to attach a known port). Interactive (no SLURM_JOB_ID) falls back to 8000.
-if [[ -z "${PORT:-}" ]]; then
-  if [[ -n "${SLURM_JOB_ID:-}" ]]; then
-    PORT=$(( 8000 + (SLURM_JOB_ID % 100) ))   # 8000-8099, distinct per job → collision-free when packed
-  else
-    PORT=8000
+# LEAK GUARD: under SLURM, an INHERITED PORT (almost always a stale export leaked via --export=ALL,
+# NOT a deliberate pin) silently overrides the job-id scheme → two packed jobs both reuse the leaked
+# 8000 → wrong-model collision (the F2.2 preflight catches it, but the run is wasted). So under SLURM
+# we IGNORE an inherited PORT and always use the job-id port, warning loudly. To deliberately pin a
+# port (rare — e.g. attach a known server), set PORT_PIN=<n>, which wins.
+if [[ -n "${PORT_PIN:-}" ]]; then
+  PORT="$PORT_PIN"
+  echo "  PORT: pinned via PORT_PIN=$PORT"
+elif [[ -n "${SLURM_JOB_ID:-}" ]]; then
+  _jobport=$(( 8000 + (SLURM_JOB_ID % 100) ))   # 8000-8099, distinct per job → collision-free when packed
+  if [[ -n "${PORT:-}" && "${PORT}" != "${_jobport}" ]]; then
+    echo "  ⚠ WARN: ignoring INHERITED PORT=${PORT} (stale --export=ALL leak?) — using job-id port ${_jobport}." >&2
+    echo "          (a deliberate pin must use PORT_PIN=<n>; an inherited PORT under SLURM is treated as a leak.)" >&2
   fi
+  PORT="$_jobport"
+else
+  PORT="${PORT:-8000}"   # interactive (no SLURM_JOB_ID): honor an explicit PORT, else 8000
 fi
 SERVE_WAIT="${SERVE_WAIT:-1800}"
 BASE_URL="http://localhost:${PORT}/v1"
