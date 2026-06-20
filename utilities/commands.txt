@@ -1,0 +1,183 @@
+commands.txt — reconstructed cheatsheet (2026-06-20)
+====================================================
+RECONSTRUCTED from ~/.bash_history after the original (untracked, never committed)
+was lost in the reorg. These are real commands you ran — verify node/port/step before reuse.
+Skills cover the canonical recipes: /serve-vllm /eval-vlm /launch-sft /apps.
+
+
+SERVE A BASELINE (pre-SFT base model, /mnt/data/shared/models)
+--------------------------------------------------------------
+# 27B baseline — MOST-USED form: TP=2, thinkON, port 8007 (always set ENABLE_THINKING)
+ENABLE_THINKING=1 /home/sgsilva/vlm-evaluation/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-27B 2 262144 8007
+# 27B baseline — full 8-GPU, thinkOFF, SERVING venv (the big-server form)
+ENABLE_THINKING=0 QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv \
+  /home/sgsilva/vlm-evaluation/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-27B 8 262144 8000
+# 27B baseline — 4 GPU, thinkON, post-training venv, port 8020 (e.g. stage-2 reasoner)
+ENABLE_THINKING=1 QWEN35_VENV=/home/sgsilva/vlm-post-training-home-venv \
+  /home/sgsilva/vlm-evaluation/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-27B 4 65536 8020
+# 27B baseline — pin GPUs to share a node (TP=2 per pair)
+CUDA_VISIBLE_DEVICES=0,1 ENABLE_THINKING=0 /home/sgsilva/vlm-evaluation/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-27B 2 262144 4100
+CUDA_VISIBLE_DEVICES=2,3 ENABLE_THINKING=1 /home/sgsilva/vlm-evaluation/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-27B 2 262144 4099
+# 9B baseline
+bash /home/sgsilva/vlm-evaluation/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-9B 8 262144 8000
+# 4B baseline (eval as MCQA baseline: --model /mnt/data/shared/models/Qwen3.5-4B)
+bash /home/sgsilva/vlm-evaluation/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-4B 8 262144 8000
+# 397B oracle baseline (8 GPU, thinkoff)
+STARTUP_HEARTBEAT_SECS=30 ENABLE_THINKING=0 /home/sgsilva/vlm-evaluation/start_vllm_server.sh qwen3.5-397b-a17b 8 131072 8000
+# 122b (thinkON) — serving venv
+QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv bash ./start_vllm_server.sh qwen3.5-122b-a10b 8 262144 8000
+
+
+SERVE A MODEL (vLLM)  —  start_vllm_server.sh <CKPT> <TP> <MAX_LEN> <PORT>
+-------------------------------------------------------------------------
+# canonical (vlm-evaluation serving script)
+bash /home/sgsilva/vlm-evaluation/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-27B 8 262144 8000
+
+# 397B oracle (8 GPU, thinkoff)
+STARTUP_HEARTBEAT_SECS=30 ENABLE_THINKING=0 /mnt/data/sgsilva/vlm-evaluation/start_vllm_server.sh qwen3.5-397b-a17b 8 131072 8000
+
+# 122b (thinkon)
+STARTUP_HEARTBEAT_SECS=5 ENABLE_THINKING=1 ./start_vllm_server.sh qwen3.5-122b-a10b 8 262144 8000
+
+# 4B reasoning ckpt, thinkON, 2-GPU
+QWEN35_VENV=/home/sgsilva/vlm-post-training-home-venv ENABLE_THINKING=1 \
+  bash /home/sgsilva/vlm-evaluation/start_vllm_server.sh \
+  /mnt/data/sgsilva/models/qwen35-4b-mix-reas-12k-noimagereas-2005-step763 2 32768 8002
+
+# pmartins merged_rep_2603 family — NEEDS the vlm-post-training venv override
+QWEN35_VENV=/home/sgsilva/vlm-post-training-home-venv ENABLE_THINKING=1 \
+  /home/sgsilva/vlm-evaluation/start_vllm_server.sh \
+  /mnt/data/pmartins/vlm_ckpts/sft_qwen_35_27b_merged_rep_2603_full_exercise_2603_reasoning_aux_mix_25k_0804/step_1848/hf 2 65536 7090
+
+# diagnostics
+showmodels                      # alias: curl -s http://localhost:8000/v1/models | python -m json.tool
+ps -ef | grep start_vllm_server.sh | grep -v grep
+pkill -TERM -f 'start_vllm_server.sh qwen3.5-122b-a10b'   # only your own procs
+
+
+SRUN — interactive GPU alloc
+----------------------------
+# standard pattern (NUM_GPUS set first; 311G + 24c per GPU)
+srun --nodes=1 --gres=gpu:${NUM_GPUS} -c $((24*NUM_GPUS)) --mem=$((311*NUM_GPUS))G \
+     --job-name=sft-vlm --pty bash -i
+# pin a node (verify idle first: sinfo -t idle / hostname)
+srun --nodes=1 --nodelist=worker-11 --gres=gpu:${NUM_GPUS} -c $((24*NUM_GPUS)) --mem=$((311*NUM_GPUS))G --pty bash -i
+# full node, exclude dev nodes 30/31
+srun --nodes=1 --exclude=worker-30,worker-31 --gres=gpu:8 -c 192 --job-name sft-vlm --pty bash -i
+# small 2-GPU
+srun --nodes=1 --exclude=worker-30,worker-31 --gres=gpu:2 -c 48 --job-name=sft-vlm-small --pty bash -i
+# big-mem long-video (worker-2, 1400G)
+srun --nodes=1 --gres=gpu:2 -c 48 --mem=1400G --job-name=sft-vlm --nodelist=worker-2 --pty bash -i
+
+
+APPS (Gradio)  —  see /apps skill + ~/utilities/apps/launch_app.sh
+------------------------------------------------------------------
+# browser-app (most-used) — point BROWSER_MIXED_ROOT at the dataset, its own venv, port 7870
+BROWSER_MIXED_ROOT=/mnt/data/shared/vlm/data/merged_aux_datasets/reas2_mix_image10k_text5k_video10k_0804_audit \
+  /home/sgsilva/browser-app-home-venv/bin/python app.py --port 7870
+BROWSER_MIXED_ROOT=/mnt/data/sgsilva/tmp/q3d_2705_regen/1506_v2/mix_reas_12k_1506_v2 \
+  /home/sgsilva/browser-app-home-venv/bin/python app.py --port 7863
+# single-JSONL browse
+DEFAULT_JSONL=/mnt/data/sgsilva/tmp/qa_all_exercises_v14_added.jsonl python app.py --port 7863
+# plain (cwd already in the app dir) — the everyday form
+python app.py --port 7862            # add --share for a public link
+python web/multimodal_compare_app.py --port 7862
+# registry launcher
+~/utilities/apps/launch_app.sh vibe-test       # port 7874
+~/utilities/apps/launch_app.sh video-sft
+# tunnel from laptop (local 17874 -> remote 7874)
+ssh -N -L 17874:localhost:7874 new-login-1
+
+
+EVAL  —  MCQA via eval_multimodal_post_sft.sh (NOT evaluate.py)
+--------------------------------------------------------------
+cd /home/sgsilva/vlm-post-training/aux_tasks/sft && \
+  VIDEO_JSONL=/mnt/data/shared/vlm/data/video_aux_datasets/mcqa_video_1405_reasoning/test_plain.jsonl \
+  ./eval_multimodal_post_sft.sh \
+    --base-model qwen3.5-4b --tag mcqa-1405-reasoning-step96-test-plain-thinkoff \
+    --train-group-id video_mcqa_1405 --run-id step96 \
+    --model /mnt/data/sgsilva/models/qwen35-4b-mcqa-video-1405-reasoning-step96 \
+    --enable-thinking false --skip-text --skip-image
+# ALWAYS tag _thinkon/_thinkoff in --tag AND --run-id (matrix needs it)
+
+# visual-obs single/two-stage via evaluate.py
+python data_preparation/evaluate.py \
+  --test-dataset-dir /mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test \
+  --model <CKPT> --server-url http://<HOST>:<PORT>/v1 --max-tokens 16384 \
+  --output-file /mnt/data/sgsilva/results/visual_obs_runs/<RUN>_singlestage_<thinkon|thinkoff>.json
+
+
+EXPORT CHECKPOINTS (nemo-rl DCP -> HF)  —  <CKPT_DIR> <OUT=/mnt/data/sgsilva/models> <export-name>
+------------------------------------------------------------------------------------------------
+# everyday form (full path to the script + checkpoints/<run> dir)
+bash /home/sgsilva/nemo-rl-vlm/scripts/export_all_checkpoints.sh \
+  /mnt/data/sgsilva/checkpoints/sft_qwen35_27b_oracle_obs_cat_reasoning \
+  /mnt/data/sgsilva/models qwen35-27b-oracle-obs-cat-reasoning
+# pin the venv explicitly (PYTHON_BIN) — exporting from a results/...__fresh_* dir
+PYTHON_BIN=/home/sgsilva/nemo-rl-vlm/.venv/bin/python bash scripts/export_all_checkpoints.sh \
+  /mnt/data/sgsilva/nemo-rl-vlm/results/<run>__fresh_<ts> /mnt/data/sgsilva/models <name>
+# re-export skipping a half-written partial step
+PYTHON_BIN=/home/sgsilva/nemo-rl-vlm/.venv/bin/python EXPORT_CLEAN_PARTIAL=1 bash scripts/export_all_checkpoints.sh \
+  <CKPT_DIR> /mnt/data/sgsilva/models <name>
+# with mcore extra (image runs)
+uv run --locked --extra mcore bash scripts/export_all_checkpoints.sh <CKPT_DIR> /mnt/data/sgsilva/models <name>
+# background + log to centralized dir
+nohup bash scripts/export_all_checkpoints.sh <CKPT_DIR> /mnt/data/sgsilva/models <name> \
+  > /mnt/data/sgsilva/logs/export_logs/<run>/export.log 2>&1 &
+ps -ef | rg "convert_megatron_to_hf|export_all_checkpoints"
+
+
+EXPORT + CLEANUP (auto-scan training roots, export ALL, then optionally delete)
+-------------------------------------------------------------------------------
+# script: ~/utilities/chains/export_and_cleanup_nvidia_rl.sh  (moved into chains/ in the reorg)
+# scans common training output roots -> exports each ckpt to /mnt/data/sgsilva/models
+bash ~/utilities/chains/export_and_cleanup_nvidia_rl.sh --dry-run            # preview, no changes
+bash ~/utilities/chains/export_and_cleanup_nvidia_rl.sh --dry-run --delete   # preview incl. what would be deleted
+bash ~/utilities/chains/export_and_cleanup_nvidia_rl.sh --delete             # export then DELETE originals (only after HF export verified)
+# related: external watcher that exports each step as nemo-rl prunes it
+bash ~/utilities/chains/watch_export_checkpoints.sh
+
+
+SFT / GRPO LAUNCH  —  see /launch-sft skill
+-------------------------------------------
+cd /home/sgsilva/nemo-rl-vlm
+# 27B multinode SFT — the dominant launcher (sbatch a slurm_multinode_worker_*.sh)
+sbatch examples/configs/recipes/vlm/slurm_multinode_worker_qwen35_27b_thrive.sh
+sbatch examples/configs/recipes/vlm/slurm_multinode_worker_qwen35_27b_human_reps_only.sh
+# GRPO worker (visual-obs cat)
+bash examples/configs/recipes/vlm/slurm_multinode_worker_grpo_oracle_obs_cat_4b.sh --worker
+# single-node 4B SFT — in-repo venv (has megatron); NEVER the eval venv
+/home/sgsilva/nemo-rl-vlm/.venv/bin/python examples/run_vlm_sft.py \
+  --config examples/configs/sft_vlm_qwen35_4b_mix_image10k_text5k_video10k_0804_megatron.yaml
+# 2-step smoke (verify config before a real run)
+/home/sgsilva/nemo-rl-vlm/.venv/bin/python examples/run_vlm_sft.py --config <cfg> \
+  sft.max_num_steps=2 sft.val_period=1 sft.val_batches=1 checkpointing.enabled=false
+# force venv rebuild / restart clean
+NRL_FORCE_REBUILD_VENVS=true RAY_DEDUP_LOGS=0 /home/sgsilva/nemo-rl-vlm/.venv/bin/python examples/run_vlm_sft.py --config <cfg>
+.venv/bin/python examples/run_vlm_sft.py --config <cfg> --ignore-previous   # restart, don't resume
+python scripts/verify_and_fix_config.py <cfg>     # ALWAYS before launch (recomputes step math)
+
+
+MONITOR  (your two muscle-memory commands: squeue -la, showmodels)
+------------------------------------------------------------------
+squeue -la                                    # your jobs (used constantly)
+showmodels                                    # what's served on :8000
+sinfo -t idle                                 # free nodes before pinning
+hostname                                      # ALWAYS before a launch
+watch -n 2 nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader
+curl -s http://localhost:8000/v1/models | python -m json.tool
+tail -F /mnt/data/sgsilva/logs/<cat>/<date>/<run>.log     # -F (logs lag ~10s before they exist)
+tail -f slurm_logs/nemo-rl-sft-qwen35-27b-thrive-<jobid>.out
+
+
+JUDGE / DATA OPS  (wrap in clog; see CLAUDE.md logging rules)
+------------------------------------------------------------
+# 397B judge over reasoning visual-obs (smoke: --max-samples)
+/home/sgsilva/vlm-post-training-home-venv/bin/python \
+  /home/sgsilva/vlm-post-training/data_preparation/judge_reasoning_visual_obs.py \
+  --input-dataset <ds> --judge-model qwen3.5-397b-a17b --server-url http://<host>:<port>/v1 \
+  --output <out.json> --concurrency 16
+# SIBench judge
+SIBench-VSR/.venv/bin/python scripts/run_judge_all.py --judge-base-url http://localhost:8000/v1 --judge-model Qwen/Qwen3.5-4B
+# tmux for long judge/serve sessions
+tmux attach -t judge2
