@@ -80,6 +80,18 @@ echo "  group/run : ${TRAIN_GROUP_ID:-<none>} / ${RUN_ID:-<none>}"
 # Echo the leak-prone vars so a leftover (esp. SERVE_VENV/TP/TESTSET/BENCH_MAX_TOKENS) is visible
 # in the log BEFORE the run starts. SERVE_VENV must be UNSET for bare Qwen (pmartins-only).
 echo "  env-leak watch: SERVE_VENV=${SERVE_VENV:-<unset>}  TESTSET=${TESTSET:-<default 1506>}  BENCH_MAX_TOKENS=${BENCH_MAX_TOKENS:-<default>}  TAG=${TAG:-<none>}  MAX_SAMPLES=${MAX_SAMPLES:-<none>}"
+# BENCH_EXTRA leak guard: a stale `--skip-vsibench/--skip-mmmu/--skip-videomme` leaked via
+# --export=ALL silently drops benchmarks from a fresh run (the mix12k/mixreas miss 2026-06-20:
+# leaked --skip-vsibench --skip-mmmu → only Video-MME ran, MMMU+VSI blank with NO error). Make it
+# LOUD + explicit: if the benchmarks stage is requested AND BENCH_EXTRA carries a skip, print a
+# banner naming exactly which benchmarks WON'T run, so a leak can't masquerade as a clean run.
+if [[ ",${STAGES}," == *",benchmarks,"* && "${BENCH_EXTRA:-}" == *--skip-* ]]; then
+  echo "  ⚠⚠ BENCH_EXTRA=\"${BENCH_EXTRA}\" will SKIP benchmarks in this run:" >&2
+  [[ "${BENCH_EXTRA}" == *--skip-vsibench* ]] && echo "       - VSI-Bench  WILL NOT RUN" >&2
+  [[ "${BENCH_EXTRA}" == *--skip-mmmu*     ]] && echo "       - MMMU-val   WILL NOT RUN" >&2
+  [[ "${BENCH_EXTRA}" == *--skip-videomme* ]] && echo "       - Video-MME  WILL NOT RUN" >&2
+  echo "     If you did NOT intend this, it's a stale --export=ALL leak → 'unset BENCH_EXTRA' and resubmit." >&2
+fi
 nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader | sed 's/^/    gpu /'
 
 # ---- build the eval_all.sh command (only pass flags that are set) ----

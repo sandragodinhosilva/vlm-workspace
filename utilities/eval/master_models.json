@@ -44,6 +44,21 @@
     { "pattern": "sft_step2812", "display": "27B SFT fe-cmp3-mix2005 step2812 (pmartins)", "train_reasoning": "yes", "group": "newpipeline",
       "note": "new-pipeline; fe_comparison_3_mix_reas_12k_full_2005" },
     { "pattern": "grpo_step492", "display": "27B GRPO fe-cmp3-mix2005 step492 (pmartins)", "train_reasoning": "yes", "group": "newpipeline",
-      "note": "new-pipeline; same mix + aux_12k" }
+      "note": "new-pipeline; same mix + aux_12k" },
+
+    { "pattern": "oracle-obs-merged-1805-binary-aux12k-union-sft-step4127", "display": "27B aux12k-union SFT step4127", "train_reasoning": "no", "group": "aux12k_union",
+      "note": "1805_binary + aux12k union SFT (job 94484)" },
+    { "pattern": "oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751", "display": "27B aux12k-union small25 SFT step751", "train_reasoning": "no", "group": "aux12k_union",
+      "note": "small25 variant of 1805_binary+aux12k union SFT" },
+
+    { "pattern": "qwen35-27b-mix-12k-1506-sft-step1299", "display": "27B mix-12k-1506 SFT step1299", "train_reasoning": "no", "group": "mix",
+      "note": "27B aux-mix SFT (distinct from the 4B mix-12k row)" },
+    { "pattern": "qwen35-27b-mix-reasoning-12k-1506-sft-step1299", "display": "27B mix-reas-12k-1506 SFT step1299", "train_reasoning": "yes", "group": "mix",
+      "note": "27B reasoning aux-mix SFT, thinkON" },
+
+    { "pattern": "qwen35-4b-mix-12k-1506-sft-step1299", "display": "4B mix-12k-1506 SFT step1299", "train_reasoning": "no", "group": "mix",
+      "note": "experimental aux-mix SFT (job 94512)" },
+    { "pattern": "models/qwen3.5-27b-mix-image10k-text5k-video10k-0804-step768", "display": "27B mix img10k/txt5k/vid10k-0804 step768", "train_reasoning": "no", "group": "mix",
+      "note": "experimental aux-mix SFT, TP2 (job 94511); pattern is path-anchored to NOT swallow the -linear-085 merge variant" }
   ]
 }

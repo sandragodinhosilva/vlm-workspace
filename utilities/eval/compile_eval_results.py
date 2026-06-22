@@ -620,9 +620,20 @@ def _rows():
         ("oracle_obs_cat_union5_step339",  "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-union5-step339"),
         ("union_oracleobs_llmfms_ep3",     "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-plus-llm-fms-step1785"),
         ("oracle_obs_merged_1805_step2558","/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-step2558"),
+        # NB: VO/agreement filenames use the DASHED stem (oracle-obs-…), so tokens here must match
+        # that exact form — the underscored token above won't match the dashed step4127 file.
+        ("oracle-obs-merged-1805-binary-aux12k-union-sft-step4127", "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-sft-step4127"),
+        ("oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751", "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751"),
+        ("qwen3.5-27b-mix-image10k-text5k-video10k-0804-step768", "/mnt/data/sgsilva/models/qwen3.5-27b-mix-image10k-text5k-video10k-0804-step768"),
+        ("mix-12k-1506-sft-step1299",      "/mnt/data/sgsilva/models/qwen35-4b-mix-12k-1506-sft-step1299"),
         ("oracle_obs_cat_step357",         "/mnt/data/sgsilva/models/qwen35-4b-oracle-obs-cat-1105-step357"),
         ("reasoning_oracleobs_cat_ep3",    "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-reasoning-step330"),
         ("oracle_397b_categorical",        "/mnt/data/shared/models/Qwen3.5-397B-A17B"),
+        # eval_all.sh names the 397B VO/agreement files by the SERVED basename (Qwen3.5-397B-A17B),
+        # lowercased here → qwen3.5-397b-a17b. The bare-baseline tokens below only cover 27b/4b, and
+        # the `397b` historical guard suppresses the metadata fallback → without this the 397B VO row
+        # stays blank. Place ABOVE the broad qwen3.5-27b/4b tokens (first-match wins).
+        ("qwen3.5-397b-a17b",              "/mnt/data/shared/models/Qwen3.5-397B-A17B"),
         # bare baselines (two-stage cat preferred; canonical path collapses via _BASELINE_ALIASES)
         ("baseline_qwen35_27b_cat",        "/mnt/data/shared/models/Qwen3.5-27B"),
         ("baseline_qwen35_27b",            "/mnt/data/shared/models/Qwen3.5-27B"),

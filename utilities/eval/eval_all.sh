@@ -316,6 +316,24 @@ PY
     fi
   fi
   echo "  [ok]   thinking mode = $THINKING"
+  # 3b. master_models.json allowlist: is THIS model listed? The board is allowlist-gated, so a
+  # model that isn't listed runs to COMPLETED but stays INVISIBLE on the master CSV (the 94484
+  # miss). WARN (not FAIL) — the eval is still valid, but you almost always want the row. Add the
+  # entry NOW (before the hours of compute) rather than rediscovering the gap after. Matches by the
+  # same case-insensitive substring rule the compiler uses (pattern in served PATH or basename).
+  local allowlist="$(dirname "$0")/master_models.json"
+  if [[ -f "$allowlist" ]]; then
+    if "$VPT_PY" - "$allowlist" "$MODEL" <<'PY'
+import json,sys
+al,model=sys.argv[1],sys.argv[2].lower()
+pats=[m.get("pattern","").lower() for m in json.load(open(al)).get("models",[])]
+sys.exit(0 if any(p and p in model for p in pats) else 1)
+PY
+    then echo "  [ok]   master_models.json: '$(basename "$MODEL")' is allowlisted (will appear on the board)"
+    else echo "  [WARN] master_models.json: '$(basename "$MODEL")' NOT allowlisted — eval will run but stay INVISIBLE on the board."
+         echo "         Add a {pattern,display,group} entry to $allowlist NOW, then re-run (or recompile after)."
+    fi
+  fi
   # 4/5/6. per-stage prerequisites
   if have_stage aux; then
     [[ -n "$TRAIN_GROUP_ID" && -n "$RUN_ID" ]] && echo "  [ok]   aux: train-group-id + run-id present" \
@@ -509,6 +527,19 @@ PY
     && STAGE_RESULTS+=("benchmarks: OK -> $BENCH_DIR/results/{vsibench,mmmu_val,video_mme}/$disp/") \
     || STAGE_RESULTS+=("benchmarks: FAILED")
   rm -f "$cfg"
+fi
+
+# ---------------- re-export aux eval_matrix (REQUIRED before compile) ----------------
+# The aux stage writes only per-RUN aggregates; eval_matrix.csv (the compiler's PRIMARY aux
+# input) is built separately by export_eval_matrix.py and is "only up to date after re-exporting"
+# (its own header). Without this, a finished aux run is INVISIBLE to the master board (the aux
+# cells stay stale/blank) — exactly the 94484 miss. So re-export here whenever aux ran, BEFORE
+# the compile below reads the matrix. Covers BOTH base-model matrices in one call.
+if have_stage aux; then
+  echo ""; echo ">>> Re-exporting aux eval_matrix (so the new aux run lands in the board)"
+  "$VPT_PY" "$VPT/aux_tasks/evals/export_eval_matrix.py" --base-model qwen3.5-4b,qwen3.5-27b \
+    && STAGE_RESULTS+=("aux_matrix: OK -> /mnt/data/sgsilva/results/aux/eval_matrix*.csv") \
+    || STAGE_RESULTS+=("aux_matrix: FAILED (board aux cells may be stale)")
 fi
 
 # ---------------- compile master CSV (additive; never touches per-stage outputs) ----------------

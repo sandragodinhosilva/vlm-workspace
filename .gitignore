@@ -4,3 +4,5 @@
 # Track only utilities/ and this file
 !/.gitignore
 !/utilities
+utilities/apps/__pycache__/*
+utilities/eval/__pycache__/compile_eval_results.cpython-312.pyc
