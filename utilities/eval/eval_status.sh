@@ -95,7 +95,7 @@ printf '%-8s %-26s %-8s %-9s %-9s %-4s %-8s %s\n' JOBID NAME STATE ELAPSED NODE 
 printf '%-8s %-26s %-8s %-9s %-9s %-4s %-8s %s\n' ----- ---- ----- ------- ---- ---- --- -----
 
 # RUNNING/PENDING eval jobs (%b = TRES_PER_NODE, e.g. 'gres/gpu:2')
-squeue -u "$USER_ID" -h -o '%i|%j|%T|%M|%N|%b|%R' 2>/dev/null | grep -iE 'eval|397b' | while IFS='|' read -r jid name state tm node tres reason; do
+squeue -u "$USER_ID" -h -o '%i|%j|%T|%M|%N|%b|%R' 2>/dev/null | grep -iE 'eval|397b|^[0-9]+\|vo[-_]' | while IFS='|' read -r jid name state tm node tres reason; do
   gpus="${tres##*:}"; [[ "$gpus" =~ ^[0-9]+$ ]] || gpus="?"
   eta="—"; stg="$reason"
   if [[ "$state" == RUNNING ]]; then
@@ -121,5 +121,5 @@ done
 echo
 echo "--- finished today (sacct) ---"
 sacct -S "$(date -u +%F)" -u "$USER_ID" --format=JobID,JobName%30,State,Elapsed -X -n 2>/dev/null \
-  | grep -iE 'eval|397b' | grep -vE 'RUNNING|PENDING' \
+  | grep -iE 'eval|397b|[[:space:]]vo[-_]' | grep -vE 'RUNNING|PENDING' \
   | awk '{printf "  %-8s %-30s %-12s %s\n", $1, $2, $3, $4}'

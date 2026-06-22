@@ -64,23 +64,34 @@ FIELDS = [
     # --- when: most-recent eval (model_created is up with identity) ---
     "last_eval_ts",
     # --- headline scores: the numbers you scan first ---
+    "_spacer_identity",   # blank spacer column: identity │ ⎵ │ benchmarks
     #   general benchmarks (+ per-cell scoring method: parsable / judged / raw)
-    "MMMU_val", "Video_MME", "VSI_Bench", "bench_method",
-    #   visual-obs headline (two-stage severity/detection)
-    "vo_error_f1", "vo_sample_f1", "vo_severity_acc",
+    "MMMU_val", "Video_MME", "VSI_Bench",
+    "_spacer_bench",   # blank spacer column: benchmarks │ ⎵ │ VO
+    #   visual-obs detection/severity — kept in TWO non-comparable column sets (Audit 2026-06-22 F3):
+    #   s1 = SINGLE-STAGE (model emits severity directly; populated by eval_all.sh visualobs);
+    #   s2 = TWO-STAGE (a stage-2 reasoner consumes the model's stage-1 obs → severity). s2 are
+    #   PLACEHOLDERS for the reasoner run — they fill from stage2_* files where present, else BLANK.
+    "vo_s1_error_f1", "vo_s1_sample_f1", "vo_s1_severity_acc",
+    "vo_s2_error_f1", "vo_s2_sample_f1", "vo_s2_severity_acc",
     #   visual-obs AGREEMENT vs HUMAN GT (single-stage obs; error_relevant.vs_gt.a.overall) —
     #   the comparable no-reasoner signal the old formatted CSV showed as its own band
     "vo_agree_errf1", "vo_agree_acc", "vo_agree_prec", "vo_agree_rec",
+    "_spacer_vo",      # blank spacer column: VO │ ⎵ │ aux
     #   aux 3-modality headline (after visual-obs)
     "aux_acc_weighted_3mod",
     # --- aux per-modality / per-task detail. Video splits by source: 3D MCQA (mcqa_video_3d_2705,
     # the harder spatial-reasoning set) vs non-3D (mcqa_video_1505). Combined = aux_video_acc. ---
     "aux_video_acc", "aux_video_3d", "aux_video_non3d", "aux_text_acc", "aux_image_composite",
     "aux_image_dense_oks", "aux_image_task4_acc",
-    # --- training provenance (from eval_matrix; train_reasoning moved up to identity) ---
-    "train_group_id", "train_sample_count", "best_step",
-    # --- source provenance / bookkeeping (last) ---
-    "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source", "bench_source", "vo_source",
+    "_spacer_aux",     # blank spacer column: aux │ ⎵ │ metadata/provenance
+    # --- training provenance (train_reasoning moved up to identity) ---
+    "train_group_id", "train_sample_count",
+    # --- source provenance / bookkeeping (last). Ordered to MATCH the results groups:
+    #     BENCHMARKS sources → VO sources → AUX sources. ---
+    "bench_method", "bench_source",
+    "vo_s1_source", "vo_s2_source", "vo_s2_reasoner", "vo_test_set",
+    "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source",
 ]
 
 # Human-readable header labels for the CSV (so a paste into Excel reads cleanly). Internal field
@@ -92,21 +103,49 @@ HEADER_LABELS = {
     "eval_thinking": "Eval Thinking", "last_eval_ts": "Last Eval",
     "MMMU_val": "MMMU-val", "Video_MME": "Video-MME", "VSI_Bench": "VSI-Bench",
     "bench_method": "Benchmark Scoring",
-    "vo_error_f1": "VO Error-F1", "vo_sample_f1": "VO Sample-F1", "vo_severity_acc": "VO Severity Acc",
+    # "single-stage" = model emits severity DIRECTLY in one call (no obs step); spelled out (not
+    # "1-stage") so it can't be misread as "the stage-1 obs step" — single-stage SKIPS stage-1 obs.
+    "vo_s1_error_f1": "VO Error-F1 (single-stage)", "vo_s1_sample_f1": "VO Sample-F1 (single-stage)",
+    "vo_s1_severity_acc": "VO Severity Acc (single-stage)",
+    # "two-stage" = stage-1 obs -> stage-2 reasoner -> severity.
+    "vo_s2_error_f1": "VO Error-F1 (two-stage)", "vo_s2_sample_f1": "VO Sample-F1 (two-stage)",
+    "vo_s2_severity_acc": "VO Severity Acc (two-stage)",
     "vo_agree_errf1": "VO Agree-F1 (vs GT)", "vo_agree_acc": "VO Agree-Acc (vs GT)",
     "vo_agree_prec": "VO Agree-Prec (vs GT)", "vo_agree_rec": "VO Agree-Rec (vs GT)",
     "aux_acc_weighted_3mod": "Aux 3-Mod Weighted",
     "aux_video_acc": "Aux Video (all)", "aux_video_3d": "Aux Video 3D", "aux_video_non3d": "Aux Video non-3D",
     "aux_text_acc": "Aux Text", "aux_image_composite": "Aux Image",
     "aux_image_dense_oks": "Aux Image Dense OKS", "aux_image_task4_acc": "Aux Image Task4",
-    "train_group_id": "Train Group", "train_sample_count": "Train Samples", "best_step": "Best Step",
+    "train_group_id": "Train Group", "train_sample_count": "Train Samples",
     "aux_run_ts": "Aux Run TS", "aux_run_id": "Aux Run ID", "aux_run_dir": "Aux Run Dir",
-    "aux_source": "Aux Source", "bench_source": "Benchmark Source", "vo_source": "VO Source",
+    "aux_source": "Aux Source", "bench_source": "Benchmark Source",
+    "vo_s1_source": "VO Source (single-stage)", "vo_s2_source": "VO Source (two-stage)",
+    "vo_s2_reasoner": "Stage2 Reasoner", "vo_test_set": "VO Test Set",
+    # blank spacer columns between metric groups (identity │ benchmarks │ VO │ aux │ metadata)
+    "_spacer_identity": "", "_spacer_bench": "", "_spacer_vo": "", "_spacer_aux": "",
 }
 
 
 def _header(field: str) -> str:
     return HEADER_LABELS.get(field, field.replace("_", " ").title())
+
+
+# Top "band" header (row 1 of a 2-row header): a group label sits on the FIRST field of each band
+# and is blank for the rest, so in a spreadsheet it reads as a header spanning that band's columns.
+# Makes the VO grouping unmistakable — "Single-stage" / "Two-stage" / "Agreement vs human GT" are
+# DIFFERENT pipelines, not comparable. Fields not listed get a blank band cell.
+GROUP_BANDS = {
+    "MMMU_val": "General benchmarks",
+    "vo_s1_error_f1": "Visual-obs: SINGLE-STAGE (model emits severity directly)",
+    "vo_s2_error_f1": "Visual-obs: TWO-STAGE (stage-1 obs -> stage-2 reasoner)",
+    "vo_agree_errf1": "Visual-obs: AGREEMENT vs human GT (stage-1 obs + rules)",
+    "aux_acc_weighted_3mod": "Aux tasks",
+}
+
+
+def _band_row(fields):
+    """Row-1 band labels keyed to the first field of each band (blank elsewhere)."""
+    return [GROUP_BANDS.get(k, "") for k in fields]
 
 
 def _base_model(model: str, display: str = "") -> str:
@@ -172,10 +211,54 @@ def _load_allowlist():
                 "pattern": pat,
                 "display": (e.get("display") or "").strip(),
                 "train_reasoning": (e.get("train_reasoning") or "").strip(),
+                "train_sample_count": str(e.get("train_sample_count") or "").strip(),  # curated (eval_matrix unwired)
                 "group": (e.get("group") or "").strip(),
                 "order": idx,  # board rows appear in allowlist order; blank row between groups
+                # optional: keep ONLY this thinking-mode row for this model ("on"/"off"). Used to drop a
+                # degenerate contrast row (e.g. a reasoning model served thinkoff collapses) — keep the on row.
+                "keep_thinking": (e.get("keep_thinking") or "").strip().lower(),
             })
+    # Both _match_allow and the VO map are FIRST-MATCH substring maps, so a BROAD pattern listed
+    # before a more SPECIFIC one would steal the specific row's curated display/train_reasoning. That
+    # ordering invariant is invisible and a future append can break it — so warn when one pattern is a
+    # substring of another (the order-sensitive case). Not fatal: hand-ordering can be intentional.
+    for i, a in enumerate(out):
+        for j, b in enumerate(out):
+            if i != j and a["pattern"] in b["pattern"] and a["pattern"] != b["pattern"]:
+                rel = "BEFORE" if i < j else "after"
+                print(f"[allowlist WARN] pattern {a['pattern']!r} is a substring of {b['pattern']!r} "
+                      f"and is listed {rel} it — first-match may mis-assign. Order specific-before-broad.")
     return out
+
+
+def _vo_map_from_config():
+    """Build the VO-filename→served-path map + exclude list from master_models.json — the SINGLE
+    source of truth for per-model definitions (no hardcoded model names in this script). Each model
+    entry contributes its `vo_tokens` (ordered filename anchors) → its `vo_path`; the order is the
+    allowlist order (specific-before-broad is the file author's responsibility). Top-level
+    `vo_exclude` lists probe/variant tokens that reject a file even if a token matches. Returns
+    (VO_FILE_TO_MODEL: list[(token_lc, path)], VO_EXCLUDE: tuple[str]). Empty if the file is absent."""
+    if not MODEL_ALLOWLIST.exists():
+        return [], ()
+    data = json.loads(MODEL_ALLOWLIST.read_text())
+    pairs = []
+    for idx, e in enumerate(data.get("models", [])):
+        vp = (e.get("vo_path") or "").strip()
+        if not vp:
+            continue
+        for j, tok in enumerate(e.get("vo_tokens") or []):
+            tok = (tok or "").strip().lower()
+            if tok:
+                pairs.append((tok, vp, idx, j))
+    # PRECEDENCE: allowlist order is BOARD-DISPLAY order (baselines first), which is NOT the
+    # VO-token precedence we need — a BROAD baseline token like 'qwen3.5-27b' must resolve AFTER the
+    # specific SFT tokens, else it shadows them (first-match wins). So sort by token LENGTH descending
+    # (longer = more specific); ties keep allowlist order. This makes 'oracle-obs-cat-union5-step339'
+    # (28 ch) beat 'qwen3.5-27b' (11 ch) without any manual ordering in the JSON.
+    pairs.sort(key=lambda t: (-len(t[0]), t[2], t[3]))
+    out = [(tok, vp) for tok, vp, _i, _j in pairs]
+    excl = tuple((x or "").strip().lower() for x in data.get("vo_exclude", []) if (x or "").strip())
+    return out, excl
 
 
 def _match_allow(row: dict, allow):
@@ -213,8 +296,20 @@ def _aux_testset(run_id: str, eval_family: str = "", tag: str = "", timestamp: s
         return "old"
     if eval_family.strip().lower() == "baseline":
         return "old"
-    if timestamp and timestamp[:10] >= _V2_TS_BOUNDARY:  # new-pipeline run (eval_all -> 1506)
-        return "1506"
+    # DATE FALLBACK (allow-by-absence): a run stamped on/after the V2 boundary with NO explicit 1506
+    # token and NO old-marker is ASSUMED 1506. This is the one place we allow-by-absence instead of
+    # excluding the unknown — so it's a distinct sentinel '1506?' that the caller (a) treats as 1506
+    # but (b) LOGS, so a new experiment on yet-another testset stamped after the boundary is visible,
+    # not silently passed. _OLD_TESTSET_MARKERS must stay exhaustive for this to be safe.
+    ts = (timestamp or "").strip()
+    if ts:
+        # the comparison is lexicographic and only valid for ISO YYYY-MM-DD. Guard against epoch
+        # seconds / other formats sneaking in (would make `>=` garbage).
+        if len(ts) >= 10 and ts[4] == "-" and ts[7] == "-" and ts[:4].isdigit():
+            if ts[:10] >= _V2_TS_BOUNDARY:
+                return "1506?"   # date-fallback → caller treats as 1506 AND logs
+        else:
+            return "unknown"     # non-ISO timestamp → can't date-classify, exclude (don't guess)
     return "unknown"
 
 
@@ -225,7 +320,9 @@ def _write_csv(path: Path, row_items, fields):
     have_order = any("_order" in r for _k, r in row_items)
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
-        csv.writer(f).writerow([_header(k) for k in fields])  # pretty (human-readable) header row
+        raw = csv.writer(f)
+        raw.writerow(_band_row(fields))               # row 1: band labels (spanning groups)
+        raw.writerow([_header(k) for k in fields])    # row 2: per-column metric labels
         if have_order:
             # within an allowlist position, keep a stable secondary sort (thinkoff before thinkon)
             _th = {"off": 0, "on": 1, "unknown": 2}
@@ -331,11 +428,16 @@ def _newest_mtime(*paths) -> float:
 _UNPARSED_MARKERS = ("failed to obtain answer", "api error", "")
 
 
-def _parsable_bench_acc(disp: str, bench: str):
+def _parsable_bench_acc(disp: str, bench: str, thinking: str = "off"):
     """Recompute a benchmark's accuracy over PARSABLE answers only, from the per-sample
     *_result.xlsx VLMEvalKit writes (cols: hit, prediction). Excludes 'Failed to obtain answer'
     non-responses from BOTH numerator and denominator. Returns (pct, n_used, n_dropped) or None
-    if no result file / no pandas. The raw summary.csv value remains the fallback."""
+    if no result file / no pandas. The raw summary.csv value remains the fallback.
+
+    Empty-prediction handling depends on `thinking`: a thinkON run that hits max_tokens truncates
+    BEFORE emitting an answer → an empty string is a genuine NON-RESPONSE (drop it). A thinkOFF run
+    has no runaway to truncate, so an empty answer is plausibly a REAL (wrong) answer → KEEP it
+    (dropping it would inflate accuracy). 'Failed to obtain answer' / 'api error' are always drops."""
     try:
         import pandas as pd
     except Exception:
@@ -356,7 +458,9 @@ def _parsable_bench_acc(disp: str, bench: str):
     if "hit" not in df.columns or "prediction" not in df.columns:
         return None
     pred = df["prediction"].astype(str).str.strip().str.lower()
-    bad = pred.eq("") | pred.str.contains("failed to obtain answer", na=False) | pred.str.contains("api error", na=False)
+    bad = pred.str.contains("failed to obtain answer", na=False) | pred.str.contains("api error", na=False)
+    if thinking == "on":
+        bad = bad | pred.eq("")  # thinkON: empty = truncated non-response → drop. thinkOFF: keep (real wrong).
     keep = df[~bad]
     if len(keep) == 0:
         return None
@@ -413,6 +517,7 @@ def _video_source_split(video_results_json: str):
 def _rows():
     """Return {(model_path, thinking): {field: value}} JOINED on the served checkpoint path."""
     rows: dict[tuple[str, str], dict] = {}
+    datefallback_runs: list[str] = []  # aux runs classed 1506 ONLY by the date fallback (logged)
 
     def get(model_path, thinking, display=""):
         key = (_norm_path(model_path), thinking)
@@ -445,8 +550,11 @@ def _rows():
                     continue  # distinct sentinel: skip empty-model rows, don't invent a key
                 # V2 aux MUST be testset_1506 — exclude old/unknown-testset aux runs so the board's
                 # aux axis is internally comparable (the reduced3 comparison lives in its own CSV).
-                if _aux_testset(rec.get("run_id", ""), rec.get("eval_family", ""), rec.get("tag", ""), rec.get("timestamp", "")) != "1506":
+                _ts_class = _aux_testset(rec.get("run_id", ""), rec.get("eval_family", ""), rec.get("tag", ""), rec.get("timestamp", ""))
+                if _ts_class not in ("1506", "1506?"):
                     continue
+                if _ts_class == "1506?":
+                    datefallback_runs.append(f"{rec.get('run_id','')} @ {rec.get('timestamp','')[:10]} [{matrix.name}]")
                 thinking = "on" if "thinkon" in (rec.get("run_id", "").lower()) else (
                     "off" if "thinkoff" in (rec.get("run_id", "").lower()) else "unknown")
                 k = (_norm_path(model_path), thinking)
@@ -475,11 +583,17 @@ def _rows():
                 r["aux_text_acc"] = _f(rec.get("acc_text"))
                 r["aux_image_composite"] = _f(rec.get("acc_image"))
                 r["aux_image_dense_oks"] = _f(rec.get("oks_image"))
-                r["aux_image_task4_acc"] = _f(rec.get("acc_task4a")) or _f(rec.get("acc_task4b"))
+                # task4a preferred, task4b fallback — but a genuine 0.0 on task4a is a REAL score,
+                # not "missing". `_f("0.0") or _f(task4b)` would coalesce that 0 away (falsy-zero bug),
+                # so test presence explicitly: use task4a iff it parsed to a number, else task4b.
+                _t4a = _f(rec.get("acc_task4a"))
+                r["aux_image_task4_acc"] = _t4a if _t4a != "" else _f(rec.get("acc_task4b"))
                 r["train_reasoning"] = rec.get("train_reasoning", "")
                 r["train_group_id"] = rec.get("train_group_id", "")
-                r["train_sample_count"] = rec.get("train_sample_count", "")
-                r["best_step"] = rec.get("best_step", "")
+                # '0' is the eval_matrix UNSET sentinel (no model trains on 0 samples) → treat as blank,
+                # so it doesn't masquerade as a real count. Real counts come curated from master_models.json.
+                _tsc = rec.get("train_sample_count", "")
+                r["train_sample_count"] = "" if str(_tsc).strip() in ("", "0") else _tsc
                 r["aux_run_ts"] = rec.get("timestamp", "")
                 r["aux_run_id"] = rec.get("run_id", "")
                 r["aux_run_dir"] = rec.get("multimodal_run_dir", "")
@@ -495,8 +609,11 @@ def _rows():
                 continue
             run_id = str(d.get("run_id", ""))
             # V2 aux MUST be testset_1506 (same gate as the matrix source).
-            if _aux_testset(run_id, str(d.get("eval_family", "")), str(d.get("tag", "")), str(d.get("created_at", ""))) != "1506":
+            _ts_class = _aux_testset(run_id, str(d.get("eval_family", "")), str(d.get("tag", "")), str(d.get("created_at", "")))
+            if _ts_class not in ("1506", "1506?"):
                 continue
+            if _ts_class == "1506?":
+                datefallback_runs.append(f"{run_id} @ {str(d.get('created_at',''))[:10]} [fallback-json]")
             tl = (run_id + " " + str(d.get("tag", ""))).lower()
             thinking = "on" if "thinkon" in tl else ("off" if "thinkoff" in tl else "unknown")
             mods = d.get("modalities", {}) or {}
@@ -565,6 +682,10 @@ def _rows():
                     thinking = "on" if (rec.get("Reasoning", "").strip().lower() in ("yes", "true", "on")) else "off"
                 model_path = disp2path.get(disp, disp)  # path if config known, else display
                 r = get(model_path, thinking, display=disp)
+                # remember the BENCHMARK display name (= the benchmark result-tree dir name). The row's
+                # `display` is whatever pipeline populated it FIRST (aux runs first → `<base>:<run_id>`),
+                # which is NOT the benchmark dir name, so last_eval_ts must use this, not `display`.
+                r["_bench_display"] = disp
                 def num(c):
                     v = (rec.get(c) or "").strip()
                     try:
@@ -594,7 +715,7 @@ def _rows():
                     # judge's purpose). Parsable only fills/overrides raw cells, never judged.
                     if meth.get(mlabel) == "judged":
                         continue
-                    pa = _parsable_bench_acc(disp, bench)
+                    pa = _parsable_bench_acc(disp, bench, thinking)
                     if pa is not None and pa[2] > 0:  # only when some were actually dropped
                         r[col] = pa[0]
                         meth[mlabel] = f"parsable(-{pa[2]})"
@@ -613,40 +734,13 @@ def _rows():
     # two-stage number (the headline); a `*_singlestage_*` result is the no-observations variant.
     # Precedence per (model,thinking): stage2 > singlestage; *_v2 (rescored, see feedback_eval_
     # gotchas §4) > non-v2. We pick the BEST-tier file per key and never let a worse tier win.
-    # Curated map: (anchor-token, served path). Anchors are SPECIFIC to the carried champion so
-    # they don't catch sibling probes (OBSGUIDE/TEXTONLY/plus_mix12k/_A_/_B_ sweeps are NOT the
-    # carried model). VO_EXCLUDE rejects a file even if a token matches (probe/variant guard).
-    VO_FILE_TO_MODEL = [  # ordered; first matching token wins
-        ("oracle_obs_cat_union5_step339",  "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-union5-step339"),
-        ("union_oracleobs_llmfms_ep3",     "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-plus-llm-fms-step1785"),
-        ("oracle_obs_merged_1805_step2558","/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-step2558"),
-        # NB: VO/agreement filenames use the DASHED stem (oracle-obs-…), so tokens here must match
-        # that exact form — the underscored token above won't match the dashed step4127 file.
-        ("oracle-obs-merged-1805-binary-aux12k-union-sft-step4127", "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-sft-step4127"),
-        ("oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751", "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751"),
-        ("qwen3.5-27b-mix-image10k-text5k-video10k-0804-step768", "/mnt/data/sgsilva/models/qwen3.5-27b-mix-image10k-text5k-video10k-0804-step768"),
-        ("mix-12k-1506-sft-step1299",      "/mnt/data/sgsilva/models/qwen35-4b-mix-12k-1506-sft-step1299"),
-        ("oracle_obs_cat_step357",         "/mnt/data/sgsilva/models/qwen35-4b-oracle-obs-cat-1105-step357"),
-        ("reasoning_oracleobs_cat_ep3",    "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-reasoning-step330"),
-        ("oracle_397b_categorical",        "/mnt/data/shared/models/Qwen3.5-397B-A17B"),
-        # eval_all.sh names the 397B VO/agreement files by the SERVED basename (Qwen3.5-397B-A17B),
-        # lowercased here → qwen3.5-397b-a17b. The bare-baseline tokens below only cover 27b/4b, and
-        # the `397b` historical guard suppresses the metadata fallback → without this the 397B VO row
-        # stays blank. Place ABOVE the broad qwen3.5-27b/4b tokens (first-match wins).
-        ("qwen3.5-397b-a17b",              "/mnt/data/shared/models/Qwen3.5-397B-A17B"),
-        # bare baselines (two-stage cat preferred; canonical path collapses via _BASELINE_ALIASES)
-        ("baseline_qwen35_27b_cat",        "/mnt/data/shared/models/Qwen3.5-27B"),
-        ("baseline_qwen35_27b",            "/mnt/data/shared/models/Qwen3.5-27B"),
-        ("baseline_qwen35_4b",             "/mnt/data/shared/models/Qwen3.5-4B"),
-        # historical AGREEMENT files name the bare baseline with a DOTTED id (agreement_qwen3.5-27b_
-        # cat_…), not the baseline_qwen35_NB token the scored files use. Add the dotted variants
-        # LAST (broad substrings; first-match precedence means specific SFT tokens above win first).
-        ("qwen3.5-27b",                    "/mnt/data/shared/models/Qwen3.5-27B"),
-        ("qwen3.5-4b",                     "/mnt/data/shared/models/Qwen3.5-4B"),
-    ]
-    # files whose token matches but are a DIFFERENT model / non-deployable probe — never join.
-    VO_EXCLUDE = ("obsguide", "textonly", "plus_mix12k", "_a_ep3", "_b_ep3", "_c_ep3", "_d_ep3",
-                  "baseline_ep3", "reasoner-self", "union5_decode")
+    # Curated map: (anchor-token, served path) + the probe/variant exclude list — BOTH now sourced
+    # from master_models.json (per-model `vo_tokens`→`vo_path`, top-level `vo_exclude`). The script
+    # holds NO hardcoded model names; to add/rename a model edit ONLY the JSON. Order = allowlist
+    # order (specific-before-broad is the file author's responsibility); first matching token wins.
+    # The dashed↔underscored sibling tokens, the llmfms-probe exclude (so the clean dashed file wins,
+    # Audit 2026-06-22 F4), and the bare-baseline dotted variants all live in the JSON now.
+    VO_FILE_TO_MODEL, VO_EXCLUDE = _vo_map_from_config()
     def _vo_model_path(name: str) -> str:
         """Resolve a VO JSON filename -> served checkpoint path via the curated map. '' if no
         match OR an excluded probe (distinct sentinel — the row is then skipped, not joined to a
@@ -657,19 +751,28 @@ def _rows():
             if tok in name:
                 return path
         return ""
-    def _vo_tier(name: str) -> int:
-        """Higher = preferred. stage2 beats singlestage; _v2 rescored beats v1 within a tier."""
-        base = 2 if name.startswith("stage2_") else (1 if "singlestage" in name else 0)
-        return base * 2 + (1 if name.endswith("_v2.json") else 0)
+    # SINGLE-STAGE vs TWO-STAGE are NOT comparable (a two-stage stage-2 reasoner consumes the model's
+    # stage-1 obs → severity; single-stage emits severity directly). The board keeps BOTH in SEPARATE
+    # column sets so they never silently mix (Audit 2026-06-22 F3). Each pipeline has its own _v2-vs-v1
+    # tier track. Two-stage columns are a PLACEHOLDER for the user's reasoner run — they fill from
+    # stage2_* files where present (e.g. the historical 397B oracle ceiling) and stay BLANK otherwise.
+    def _vo_v2_tier(name: str) -> int:
+        """Within ONE pipeline, rank competing files for the SAME (model,thinking):
+        _v2 rescored beats v1 (×10), and the CATEGORICAL variant beats angle/other (+1). `cat` is the
+        V2-canonical visual-obs variant — the s2 column, agreement GT, and champions are all categorical
+        — so when a baseline has both a `_cat_` and a non-cat single-stage file the board takes `_cat_`
+        deterministically, not by alphabetical luck (user 2026-06-22: both cat+angle existed historically;
+        cat is the line we carry)."""
+        return (10 if name.endswith("_v2.json") else 0) + (1 if "_cat" in name else 0)
     if VO_RUNS.is_dir():
-        vo_best: dict[tuple[str, str], int] = {}  # (model,thinking) -> winning tier so far
+        ss_best: dict[tuple[str, str], int] = {}  # single-stage (model,thinking) -> winning _v2 tier
+        ts_best: dict[tuple[str, str], int] = {}  # two-stage   (model,thinking) -> winning _v2 tier
         for vj in sorted(VO_RUNS.glob("*.json")):
             name = vj.name.lower()
-            if "singlestage" not in name and not name.startswith("stage2_"):
+            is_two = name.startswith("stage2_")
+            is_single = ("singlestage" in name) and not is_two
+            if not (is_two or is_single):
                 continue  # only the two scorable VO families (stage1/agreement are separate)
-            tier = _vo_tier(name)
-            if tier == 0:
-                continue
             if any(x in name for x in VO_EXCLUDE):
                 continue  # probe/variant guard applies regardless of how we resolve the path
             try:
@@ -684,28 +787,60 @@ def _rows():
             # run not in the map, fall back to metadata.model — eval_all.sh visualobs is single-stage
             # and DOES record the real served path there. Skip if neither resolves (no garbage key).
             model_path = _vo_model_path(name)
-            # Fallback to metadata.model ONLY for a genuinely NEW-PIPELINE single-stage file —
-            # i.e. one that carries no historical VO model token at all (so we don't resurrect V1
-            # single-stage noise for a model the curated map already scores via its stage2 file).
-            historical = any(t in name for t in (
-                "oracleobs", "oracle_obs", "llmfms", "union5", "397b", "baseline_qwen35", "mix12k"))
-            if not model_path and "singlestage" in name and not historical:
+            # Fallback to metadata.model for ANY single-stage file the curated map missed. A
+            # single-stage VO json records the REAL served path in metadata.model (unlike two-stage,
+            # which records the reasoner), so it's a reliable key. Now that s1 and s2 live in SEPARATE
+            # column sets, the old "historical" guard (which suppressed this to avoid resurrecting V1
+            # single-stage noise into the shared column) is no longer needed — and it was BLANKING real
+            # s1 cells for union5/reasoning/etc. whose dashed singlestage filename didn't match the
+            # underscored map token (Audit 2026-06-22 follow-up). VO_EXCLUDE still rejects probes above.
+            if not model_path and is_single:
                 model_path = str((d.get("metadata") or {}).get("model", "")) or ""
             if not model_path:
                 continue
-            thinking = "on" if "thinkon" in name else ("off" if "thinkoff" in name else "unknown")
+            # Two-stage stage2_* files name the reasoner in metadata.model and carry NO _thinkon/off in
+            # many cases → key would land on 'unknown' and get dropped by the baseline-dedup, losing the
+            # oracle ceiling (Audit 2026-06-22 F2). The stage-2 reasoner is ALWAYS thinkoff (decision
+            # 2026-06-04), so a two-stage file with no think-token is thinkoff for JOIN purposes.
+            if "thinkon" in name:
+                thinking = "on"
+            elif "thinkoff" in name:
+                thinking = "off"
+            else:
+                thinking = "off" if is_two else "unknown"
+            # REASONER FILTER (two-stage only, user 2026-06-22): the board's vo_s2 shows the sft2812
+            # reasoner ONLY. The base-27B reasoner is HISTORICAL — its stage2 files stay on disk but are
+            # NOT read into the board, and there is NO fallback: a model with no sft2812 stage2 result
+            # leaves vo_s2 BLANK (never shows the old reasoner's number). So skip any two-stage file
+            # whose reasoner (metadata.model) is not the sft2812 fe_comparison ckpt.
+            if is_two:
+                _rsnr = str((d.get("metadata") or {}).get("model", "")).lower()
+                if not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
+                    continue   # not the sft2812 reasoner → historical, don't put it on the board
+                # only a COMPLETE sweep result counts (a mid-write file is partial → don't show it)
+                if (d.get("metadata") or {}).get("evaluated_samples") != 1181:
+                    continue
             key = (_norm_path(model_path), thinking)
-            if vo_best.get(key, -1) >= tier:
-                continue  # a better-or-equal VO file already populated this row
-            vo_best[key] = tier
+            best = ts_best if is_two else ss_best
+            tier = _vo_v2_tier(name)
+            if best.get(key, -1) >= tier:
+                continue  # a better-or-equal file (within this pipeline) already populated this row
+            best[key] = tier
             r = get(model_path, thinking, display=vj.stem)
             def vm(k):
                 v = m.get(k)
                 return round(v * 100, 2) if isinstance(v, (int, float)) else ""
-            r["vo_error_f1"] = vm("error_detection_f1")
-            r["vo_sample_f1"] = vm("sample_error_detection_f1")
-            r["vo_severity_acc"] = vm("overall_severity_accuracy")
-            r["vo_source"] = vj.name
+            pfx = "vo_s2_" if is_two else "vo_s1_"
+            r[f"{pfx}error_f1"] = vm("error_detection_f1")
+            r[f"{pfx}sample_f1"] = vm("sample_error_detection_f1")
+            r[f"{pfx}severity_acc"] = vm("overall_severity_accuracy")
+            r[f"{pfx}source"] = vj.name
+            # VO test-set path each eval ran on (1181-rep split) — read per-file, not hardcoded
+            _tsd = str((d.get("metadata") or {}).get("test_dataset_dir", "")).strip()
+            if _tsd and not r.get("vo_test_set"):
+                r["vo_test_set"] = _tsd
+            if is_two:
+                r["vo_s2_reasoner"] = str((d.get("metadata") or {}).get("model", "")) or ""
 
         # ---- AGREEMENT vs HUMAN GT (separate family: agreement_*.json). The OLD formatted CSV's
         # "agreement with human annotations" band read error_relevant.vs_gt.a.overall (a = model
@@ -754,13 +889,17 @@ def _rows():
         # the dir mtime is just when the shared files synced to disk, not a real creation date) ->
         # leave blank for baselines.
         r["model_created"] = "" if r["is_baseline"] == "yes" else _model_created(model_path)
-        disp = r.get("display", "")
+        # benchmark result dirs are keyed by the BENCHMARK display (`_bench_display`), NOT the row's
+        # `display` (which is the aux `<base>:<run_id>` for any model with an aux row, since aux runs
+        # first). Using `display` here made BENCH_RESULTS/<bench>/<aux-display> never exist → benchmark
+        # mtime never counted toward last_eval_ts. Fall back to `display` only when no bench ran.
+        bench_disp = r.get("_bench_display") or r.get("display", "")
         ev_paths = [r.get("aux_run_dir", "")]
         for bench in ("mmmu_val", "video_mme", "vsibench"):
-            ev_paths.append(str(BENCH_RESULTS / bench / disp))
-        vo = r.get("vo_source", "")
-        if vo:
-            ev_paths.append(str(VO_RUNS / vo))
+            ev_paths.append(str(BENCH_RESULTS / bench / bench_disp))
+        for vo in (r.get("vo_s1_source", ""), r.get("vo_s2_source", "")):
+            if vo:
+                ev_paths.append(str(VO_RUNS / vo))
         r["last_eval_ts"] = _fmt_ts(_newest_mtime(*ev_paths))
 
     # ---- DEDUP stale baseline rows ----
@@ -772,6 +911,24 @@ def _rows():
     for key in [k for k in rows if k[1] == "unknown" and rows[k].get("is_baseline") == "yes"
                 and k[0] in tagged_baselines]:
         del rows[key]
+
+    # ---- VISIBILITY for the two silent-acceptance paths the critique flagged ----
+    # (1) aux runs admitted to the 1506 axis ONLY by the date fallback (no explicit 1506 token) —
+    #     allow-by-absence, so surface them; a new experiment on yet-another testset shows up here.
+    if datefallback_runs:
+        print(f"[aux-testset] {len(datefallback_runs)} run(s) classed 1506 by DATE FALLBACK "
+              f"(no explicit 1506 token; stamped >= {_V2_TS_BOUNDARY}):")
+        for rid in datefallback_runs:
+            print(f"             · {rid}")
+    # (2) ORPHAN rows: an aux fallback that couldn't find RUN_METADATA.model synthesizes a
+    #     non-path key '<base>/<run_id>' that _norm_path can't resolve, so it never merges with the
+    #     real-path bench/VO rows for that model — a fragmentary orphan. Count + name them.
+    orphans = [(mp, th) for (mp, th) in rows if mp and not mp.startswith("/")]
+    if orphans:
+        print(f"[orphan-rows] {len(orphans)} aux row(s) keyed on a synthesized '<base>/<run_id>' "
+              f"(no RUN_METADATA.model → won't merge with bench/VO for that model):")
+        for mp, th in orphans:
+            print(f"             · {mp} [{th}]")
 
     return rows
 
@@ -795,10 +952,20 @@ def main() -> int:
             entry = _match_allow(r, allow)
             if entry is None:
                 continue
+            # keep_thinking: drop a model's row whose thinking mode isn't the one we want to show
+            # (e.g. reasoning-ep3 keep_thinking='on' → drop its degenerate thinkoff contrast row).
+            if entry.get("keep_thinking") and r.get("eval_thinking") != entry["keep_thinking"]:
+                continue
             if entry["display"]:               # curated clean display name overrides the raw one
                 r["display"] = entry["display"]
-            if entry["train_reasoning"] and not r.get("train_reasoning"):  # curated fills the gap
+            if entry["train_reasoning"]:        # curated train_reasoning is AUTHORITATIVE — it OVERRIDES
+                # the eval_matrix value. The matrix's train_reasoning is auto-derived per aux-run and is
+                # WRONG for some (e.g. pmartins sft2812/grpo492 trained on diverse_reasoning+mix_reas
+                # were stamped 'No' by the aux export → board showed 'No' despite the curated 'yes').
+                # The allowlist is the hand-verified source of truth, so it wins (2026-06-22).
                 r["train_reasoning"] = entry["train_reasoning"]
+            if entry.get("train_sample_count"):   # curated — eval_matrix train_sample_count is unwired for V2
+                r["train_sample_count"] = entry["train_sample_count"]
             r["_order"] = entry["order"]        # allowlist position (board ordering)
             r["_group"] = entry["group"]        # group bucket (blank row inserted between groups)
             kept.append((k, r))

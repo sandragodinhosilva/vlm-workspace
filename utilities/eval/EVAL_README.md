@@ -180,6 +180,34 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
   slot — NOT the model-under-test's endpoint). The unified master CSV PREFERS `summary_judge.csv`
   when present. Run via `eval_all.sh --judge-base-url http://worker-NN:8000/v1 --judge-model
   Qwen/Qwen3.5-4B`, or re-run run_eval.py with the judge flags later (skip/resume makes it cheap).
+- **Batch judge ALL models at once (the end-of-campaign pattern — recommended):** rather than
+  judging per-run, after the whole eval roster finishes, judge every completed model in one pass
+  with `benchmarks/scripts/run_judge_all.py`. It runs all 3 rescorers on every model that has
+  finished predictions, then auto-refreshes the summary CSVs (`collect_results.py` →
+  `summary[_judge].csv`, `add_test_set_acc.py`, `fill_judge_blanks.py` = fall back to non-judged
+  where the judge didn't run). Serve a SEPARATE small judge first (e.g.
+  `ENABLE_THINKING=0 QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv start_vllm_server.sh
+  /mnt/data/shared/models/Qwen3.5-27B 4 262144 8000` — **judge ALWAYS thinkoff**; the thinking mode
+  belongs to the model-under-test, never the judge), confirm the served id
+  (`curl -s http://<node>:8000/v1/models`), then:
+  ```
+  cd /home/sgsilva/benchmarks
+  source ~/utilities/logs-utils/log_run.sh && clog eval run_judge_all -- \
+    SIBench-VSR/.venv/bin/python scripts/run_judge_all.py \
+      --judge-base-url http://<node>:8000/v1 --judge-model <SERVED_ID_FROM_CURL>
+  ```
+  then recompile the board (`cd ~/utilities/eval && vlm-post-training-home-venv/bin/python
+  compile_eval_results.py`). `--judge-model` MUST exactly match the curl'd id or requests fail.
+  **clog category MUST be `eval`** (not `claude` — a mis-parsed category silently falls back to
+  `claude`; lead with the category: `clog eval <name> -- <cmd>`).
+  ⚠ **Stale-checkpoint skip gotcha:** `run_judge_all.py` treats ANY lingering
+  `results/benchmarks/*/<model>/**/*_checkpoint.pkl` as an in-progress run and SILENTLY SKIPS that
+  model from judging — even though VLMEvalKit leaves these `.pkl` files behind after a COMPLETED
+  run. Before a batch judge, confirm nothing is actually running (`squeue -u $USER`), and if a
+  completed model is missing from `summary_judge.csv`, a leftover `.pkl` is why (clear only the
+  dead-run `.pkl`, never one owned by a live job). The judge only RESCUES (recovers a real answer
+  the regex missed) — it can't fabricate: a degenerate model that emits pure `!!!!` stays ~chance
+  (e.g. small25 Video-MME 1.5%), which is the correct honest score, not a parse failure.
 - **⚠ `/home/sgsilva/benchmarks` is a SYMLINK → `/mnt/data/sgsilva/benchmarks`** (run_eval.py
   hardcodes the `/home` path). If the home-cleanup job removes it, benchmarks break until
   recreated: `ln -s /mnt/data/sgsilva/benchmarks /home/sgsilva/benchmarks`.
@@ -200,21 +228,58 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
 ## Unified master CSV (additive — does NOT touch the per-stage collectors/CSVs)
 - **Compiler:** `/home/sgsilva/utilities/eval/compile_eval_results.py` (read-only; re-run anytime;
   auto-run at the end of `eval_all.sh`).
-- **Output:** `/mnt/data/sgsilva/results/eval_master/eval_master.csv` (all families) PLUS one
-  **per-base-model split** `eval_master_{4b,9b,27b,other}.csv` — the combined file mixes sizes
+- **Output:** `/mnt/data/sgsilva/results/master/eval_master.csv` (all families) PLUS one
+  **per-base-model split** `eval_master_{4b,27b,other}.csv` — the combined file mixes sizes
   and gets unreadable, so each split holds only that family. Same columns/join in every file.
-  ONE row per `(served-checkpoint-path, thinking)`, JOINED on the served path across all three
-  stages (aux RUN_METADATA.model · benchmark configs display→path · VO metadata.model). Columns:
-  `model, display, thinking, MMMU_val, Video_MME, VSI_Bench, aux_video_acc, aux_text_acc,
-  aux_image_composite, aux_image_dense_oks, aux_image_task4_acc, vo_error_f1, vo_sample_f1,
-  vo_severity_acc, + provenance`.
+  (Path NOTE: renamed `eval_master/` → `master/` in the 2026-06-17 reorg; the V1 dump is frozen
+  under `master/v1/2026-06-18/`.) ONE row per `(served-checkpoint-path, thinking)`, JOINED on the
+  served path across all three stages (aux RUN_METADATA.model · benchmark configs display→path ·
+  VO metadata.model / curated filename map). 36 columns: identity → benchmarks (`MMMU_val,
+  Video_MME, VSI_Bench, bench_method`) → **visual-obs (see the metric guide below)** → aux
+  (`aux_acc_weighted_3mod` + per-modality incl. `aux_video_3d`/`aux_video_non3d`) → provenance.
 - **Row order = `master_models.json` group order** (allowlist file), with a BLANK separator row
   between groups — baselines first, then VO contenders, then new-pipeline. (The old alpha-sort
   with baselines-pinned-top is the legacy fallback when no allowlist file is present.)
-- **Copies:** `/mnt/data/sgsilva/results/eval_master/runs/<run_id>__<ts>/` — each aux run's
+- **Copies:** `/mnt/data/sgsilva/results/master/runs/<run_id>__<ts>/` — each aux run's
   aggregate JSON + SUMMARY (browse all outcomes in one place). `--no-copy` to skip.
 - A model joins across stages only where it was actually run on each; single-stage models stay
   single-stage rows. `thinking=unknown` = a source file whose name lacked `_thinkon/_thinkoff`.
+
+### Visual-obs (VO) metric columns — what each one means
+The board carries **THREE separate VO blocks** that are NOT interchangeable (a 2026-06-22 reorg
+split them so single-stage and two-stage can never silently mix in one column):
+
+| Board column | Source-JSON field | What it measures | Pipeline |
+|---|---|---|---|
+| `VO Error-F1 (single-stage)` `vo_s1_error_f1` | `metrics.error_detection_f1` | One of two headline metrics (see below — NOT the sole ranker). Binary F1 of "is this error-slot present (severity>1)?", **micro-averaged over a pooled confusion matrix** of every (rep × error-type) slot; pred matched to GT BY ERROR NAME. | **single-stage** — model emits severity DIRECTLY in one call, no obs step (eval_all.sh visualobs); from `*_singlestage_*.json`. |
+| `VO Sample-F1 (single-stage)` `vo_s1_sample_f1` | `metrics.sample_error_detection_f1` | Coarser sibling: binary F1 of "does this **rep** have *any* error?", one decision/rep, micro-pooled. | single-stage. |
+| `VO Severity Acc (single-stage)` `vo_s1_severity_acc` | `metrics.overall_severity_accuracy` | **Exact** ordinal match of the predicted severity integer (1–6) vs GT, micro over all slots incl. the sev==1 "no error" slots. **Adjacent miss = full miss.** | single-stage. |
+| `VO Error-F1/Sample-F1/Severity Acc (two-stage)` `vo_s2_*` | same 3 fields, from a `stage2_*.json` | **Identical metrics, TWO-STAGE pipeline:** a stage-2 reasoner (always thinkoff) consumes the model's stage-1 observations → severity. NOT comparable to the single-stage columns. | **two-stage** — `stage2_*.json`, but ONLY from the sft2812 reasoner (base-27B reasoner files are filtered out as historical). Currently only the 397B row fills (s2 err-F1 **47.52** = sft2812 reasoner over 397B's PLAIN obs). NOTE: this is NOT the historical 0.788 "oracle ceiling" — that came from the base-27B reasoner over 397B ORACLE obs and is excluded by the sft2812-only policy. Other rows BLANK pending their reasoner run. |
+| `VO Agree-F1/Acc/Prec/Rec (vs GT)` `vo_agree_*` | `agreement_*.json` → `error_relevant.vs_gt.a.overall.{micro_f1,accuracy,precision,recall}` | Model-under-test (side **a**) vs **human GT**, from the rules-derived error firing of the stage-1 obs (sev≥2 = error). `micro_f1` = pooled-count micro F1. The comparable no-reasoner clinical signal. | single-stage obs. Only exists for runs that emit stage-1 obs (`agreement_*.json`). |
+
+Severity is a per-slot **integer 1–6** (1 = no error; ≥2 = present); "positive" everywhere = sev>1.
+
+**TWO headline metrics — report BOTH, NOT one ranker** (decided 2026-06-22; the audit found a single
+ranker is misleading because the two measure different things and name DIFFERENT champions):
+- **`vo_s1_error_f1`** (single-stage): the model emits a severity dict directly; pred is matched to GT
+  **by error NAME**. This rewards detection AND output-format/name alignment, so format-trained
+  reasoning models score high (e.g. GRPO492 55.27 > SFT2812 54.92 > 397B 45.21 > union5 42.51). It does
+  NOT match the formatted CSV's VO ordering.
+- **`vo_agree_errf1`** (agreement vs human GT): the model only answers categorical obs questions; fixed
+  clinical RULES turn answers→errors→severity, scored vs the human annotator. Confound-free (no naming
+  credit). This ordering MATCHES the formatted CSV's "agreement with human" band: LLM-FMS 52.04 >
+  union5 49.50 > 4B-oracle 48.05 > … SFT2812 41.43 > GRPO492 40.06.
+
+When citing "the VO winner" SAY WHICH metric — they disagree. `cat` (categorical) is the canonical
+visual-obs variant — when a baseline has both a `_cat_` and an angle/other single-stage file, the board
+takes `_cat_`.
+
+**Mapping to the historical `visual_obs_sft_results_1105_formatted.csv`** (the reference Google-sheet
+export): that CSV is organized in BANDS. The *"Single stage baseline"* band → the `vo_s1_*` columns;
+the *"Two stages"* band → `vo_s2_*`; the *"agreement with human annotations"* band (row ~148) →
+`vo_agree_*`. Within a band, col `F1 Score` of the 1st metric block = `error_f1`, col `F1 Score` of
+the 2nd block = `sample_f1`, the severity block's `Acc` = `severity_acc`; the agreement band's
+`Error F1 score` = `vo_agree_errf1`. (Verified byte-exact on the 4B baseline single-stage row.)
 
 ## Naming — uniformize going forward
 The three pipelines historically named the same model differently (aux: base_model/run_id;

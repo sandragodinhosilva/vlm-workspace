@@ -343,10 +343,26 @@ PY
       [[ -d /mnt/data/shared/vlm/data/merged_aux_datasets/multimodal_reduced_testset_1506 ]] \
         && echo "  [ok]   aux: testset_1506 present" || { echo "  [FAIL] testset_1506 missing"; ok=0; }
     fi
+    # OUTPUT MANIFEST (aux): the per-run tree + the rich eval_matrix the board reads.
+    _aux_run="${RUN_ID:-<run-id>}"
+    _aux_dir="$VPT/aux_tasks/evals/$BASE_MODEL/multimodal/${TRAIN_GROUP_ID:-<group>}/final_sft/$_aux_run"
+    echo "  aux OUTPUT MANIFEST:"
+    echo "    $([[ -d "$_aux_dir" ]] && echo '↻ EXISTS  ' || echo '+ NEW     ') $_aux_dir/"
+    echo "                 ^ per-run tree: video/text/image legs + results/multimodal_*.json (the BOARD aux source) [via aux_tasks/sft/eval_multimodal_post_sft.sh → aggregate_multimodal_eval.py]"
+    echo "    ↻ APPEND    /mnt/data/sgsilva/results/aux/eval_matrix.csv  (+ eval_matrix_${BASE_MODEL}.csv)"
+    echo "                 ^ rich aux master — a NEW row appended for run-id '$_aux_run' (the board's Aux columns) [via aux_tasks/evals/export_eval_matrix.py]"
   fi
   if have_stage benchmarks; then
     [[ -e "$BENCH_RUN" && -x "$BENCH_PY" ]] && echo "  [ok]   benchmarks: run_eval.py + venv present" \
       || { echo "  [FAIL] benchmarks: run_eval.py or SIBench venv missing (symlink /home/sgsilva/benchmarks?)"; ok=0; }
+    # OUTPUT MANIFEST (benchmarks): per-bench result dir (keyed by the benchmark DISPLAY = run-id/tag)
+    # + the summary CSVs the board reads. The display dir name is whatever run_eval.py uses; show the root.
+    echo "  benchmarks OUTPUT MANIFEST  [via benchmarks/scripts/run_eval.py; judged via run_judge_all.py + rescore_*.py]:"
+    for _b in mmmu_val video_mme vsibench; do
+      echo "    + RESULT    /mnt/data/sgsilva/results/benchmarks/$_b/<display>/   (+ ${_b}_judged/ if --judge-*)"
+    done
+    echo "    ↻ APPEND    /mnt/data/sgsilva/results/benchmarks/summary.csv  (+ summary_judge.csv if judged)"
+    echo "                 ^ the BOARD MMMU/Video-MME/VSI source (compiler prefers summary_judge.csv) [via benchmarks/scripts/collect_results.py]"
   fi
   if have_stage visualobs; then
     [[ -d "$VO_TEST" ]] && echo "  [ok]   visualobs: 1181-rep test dir present" || { echo "  [FAIL] visualobs test dir missing"; ok=0; }
@@ -362,7 +378,48 @@ PY
       *oracle*|*visual*obs*|*vo3d*) : ;;
       *) echo "  [WARN] visualobs: '$(basename "$MODEL")' not a visual-obs/oracle ckpt — severity eval may not apply" ;;
     esac
+    # ---- OUTPUT MANIFEST: every file this run WILL create, with a per-file status so a collision is
+    # visible BEFORE launch (2026-06-22). Stem = same derivation as the run (full served basename).
+    # At preflight SERVED_ID may be unset (server not up for --serve) → fall back to MODEL/RUN_ID.
+    _pf_stem="$(basename "${SERVED_ID:-${RUN_ID:-$MODEL}}")"
+    _pf_real="$("$VPT_PY" -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$MODEL" 2>/dev/null)"
+    echo "  visualobs OUTPUT MANIFEST (stem='$_pf_stem') — FULL PATHS so you can inspect/cat them:"
+    _pf_made=()
+    for _pf_pair in \
+      "singlestage raw severity scores [via eval/evaluate.py]|$VO_OUT/${_pf_stem}_singlestage_think${THINKING}.json" \
+      "↳ auto-rescored from the raw above (no re-run; error-name-mismatch fix) — THE BOARD vo_s1 value [via eval/evaluate_vo.py]|$VO_OUT/${_pf_stem}_singlestage_think${THINKING}_v2.json" \
+      "stage-1 obs: per-question answers — the reasoner input [via visual_obs/generate_visual_observations_human.py]|$VO_OUT/obs_${_pf_stem}_think${THINKING}.json" \
+      "agreement vs human GT — THE BOARD vo_agree value [via visual_obs/analyze_observation_agreement.py]|$VO_OUT/agreement_${_pf_stem}_think${THINKING}.json"; do
+      _lbl="${_pf_pair%%|*}"; _pf="${_pf_pair##*|}"
+      if [[ -f "$_pf" ]]; then
+        _own=""
+        case "$_pf" in
+          *singlestage*) _own="$("$VPT_PY" -c "import json,sys;print((json.load(open(sys.argv[1])).get('metadata') or {}).get('model',''))" "$_pf" 2>/dev/null)";;
+          *obs_*) [[ -f "${_pf}.owner" ]] && _own="$(cat "${_pf}.owner" 2>/dev/null)";;
+        esac
+        if [[ -n "$_own" && -n "$_pf_real" && "$("$VPT_PY" -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$_own" 2>/dev/null)" != "$_pf_real" ]]; then
+          echo "    ⚠ COLLISION  $_pf"
+          echo "                 ^ $_lbl — OWNED BY $_own — run WILL refuse to overwrite"; ok=0
+        else
+          echo "    ↻ RESUME     $_pf"
+          echo "                 ^ $_lbl — exists (same model); --resume tops it off"
+        fi
+      else
+        echo "    + NEW        $_pf"
+        echo "                 ^ $_lbl"
+      fi
+      _pf_made+=("$_pf")
+    done
+    echo "    + LATER      $VO_OUT/stage2_${_pf_stem}_think${THINKING}{,_v2}.json"
+    echo "                 ^ two-stage — THE BOARD vo_s2 value — only when a reasoner sweep runs over the obs above [via utilities/eval/reasoner_sweep.sh → eval/evaluate.py --two-stage, then eval/evaluate_vo.py rescore]"
+    echo "  inspect after the run:  ls -la ${_pf_made[*]} 2>/dev/null"
   fi
+  # ---- ALWAYS-WRITTEN outputs (any stage): the unified board + this run's log ----
+  echo "  ALWAYS OUTPUT MANIFEST (every run, all stages):"
+  echo "    ↻ REBUILD   /mnt/data/sgsilva/results/master/eval_master.csv  (+ _${BASE_MODEL##qwen3.5-} split)"
+  echo "                 ^ the unified board — recompiled from all sources at the end of the run [via utilities/eval/compile_eval_results.py]"
+  echo "    + LOG       /mnt/data/sgsilva/logs/eval/<date>/eval_all_<run>_think${THINKING}_<stages>__<jobid>_<ts>.log"
+  [[ "$SERVE" == 1 ]] && echo "    + SERVELOG  /mnt/data/sgsilva/logs/eval/serve/<date>/eval_all_serve_<run>__<jobid>_<ts>.log"
   echo "===== PREFLIGHT $([[ $ok == 1 ]] && echo PASS || echo FAIL) ====="
   return $((1 - ok))
 }
@@ -424,18 +481,43 @@ if have_stage visualobs; then
   esac
   # stem from SERVED_ID (the short symlink / run-id), NOT $MODEL — basename($MODEL) is 'hf' for
   # every pmartins '.../step_N/hf', which COLLIDES all their VO output files (A overwrote B once).
-  stem="$(basename "$SERVED_ID" | sed 's/^qwen35-[0-9]*b-//')"
+  # DO NOT strip the qwen35-<N>b- base-model prefix: it is exactly what distinguishes a 4B from a 27B
+  # sibling (e.g. qwen35-4b-mix-12k-1506-sft-step1299 vs qwen35-27b-...). Stripping it collided the
+  # two and the 27B run overwrote the 4B's VO (data loss, 2026-06-22). The full basename is already
+  # unique — pmartins resolves to a unique _ext/<run_id> symlink, not 'hf'. Keep the full basename.
+  stem="$(basename "$SERVED_ID")"
   vmax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
   mkdir -p "$VO_OUT"
+  # ---- COLLISION GUARD (defense-in-depth, 2026-06-22): never overwrite ANOTHER model's VO file.
+  # If the target stem already exists AND its metadata.model is a DIFFERENT served path than ours,
+  # a stem collision would silently clobber that model's data (what happened to 4B-vs-27B mix-12k).
+  # Abort the stage LOUDLY instead — the operator picks a distinct run-id/stem. --resume is safe
+  # ONLY when the existing file is the SAME model (a genuine resume), which this allows.
+  _vo_target="$VO_OUT/${stem}_singlestage_think${THINKING}.json"
+  _vo_collision=0
+  if [[ -f "$_vo_target" ]]; then
+    _existing_model="$("$VPT_PY" -c "import json,sys;print((json.load(open(sys.argv[1])).get('metadata') or {}).get('model',''))" "$_vo_target" 2>/dev/null)"
+    _norm() { "$VPT_PY" -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$1" 2>/dev/null; }
+    if [[ -n "$_existing_model" && "$(_norm "$_existing_model")" != "$(_norm "$SERVED_ID")" ]]; then
+      echo "  [FAIL] visualobs: STEM COLLISION — $_vo_target already holds a DIFFERENT model:"
+      echo "         existing: $_existing_model"
+      echo "         this run: $SERVED_ID"
+      echo "         Refusing to overwrite (would lose the other model's VO). Use a distinct --run-id/stem."
+      STAGE_RESULTS+=("visualobs: FAIL (stem collision — would overwrite $_existing_model)")
+      _vo_collision=1
+    fi
+  fi
   vargs=( "$VPT_PY" "$VPT/eval/evaluate.py"
     --test-dataset-dir "$VO_TEST"
     --model "$SERVED_ID" --server-url "$BASE_URL"
     --max-tokens "$vmax"
-    --output-file "$VO_OUT/${stem}_singlestage_think${THINKING}.json" --resume )
+    --output-file "$_vo_target" --resume )
   [[ "$THINKING" == off ]] && vargs+=( --disable-thinking )
   [[ -n "$MAX_SAMPLES" ]] && vargs+=( --max-samples "$MAX_SAMPLES" )
-  vo_obs="$VO_OUT/${stem}_singlestage_think${THINKING}.json"
-  if ( cd "$VPT" && "${vargs[@]}" ); then
+  vo_obs="$_vo_target"
+  if [[ "${_vo_collision:-0}" == 1 ]]; then
+    echo "  visualobs: SKIPPED (collision guard tripped — see [FAIL] above)"
+  elif ( cd "$VPT" && "${vargs[@]}" ); then
     STAGE_RESULTS+=("visualobs: OK -> $vo_obs")
     # ---- evaluate_v2 RESCORE (error-name-mismatch fix; no model re-run). Writes <stem>_..._v2.json
     # next to the original (never overwrites); the compiler prefers the _v2 tier. Scope the glob to
@@ -454,7 +536,21 @@ if have_stage visualobs; then
     # / partial doesn't redo finished reps. max-tokens per recipe (4096 off / 32768 on). ----
     echo ""; echo ">>> STAGE: agreement — step 1/2: generate stage-1 observations (1181 test reps)"
     obs_out="$VO_OUT/obs_${stem}_think${THINKING}.json"
-    if [[ -d "$VO_PROCESSED_DIR" ]]; then
+    # COLLISION GUARD for obs (2026-06-22): obs files carry NO metadata.model, so we track ownership
+    # via a sidecar <obs>.owner. If an existing obs is owned by a DIFFERENT model, --resume would reuse
+    # (and the agreement would score the WRONG model's obs — exactly the 4B/27B mix-12k contamination).
+    # Refuse; the operator picks a distinct stem. A matching/absent owner = safe (genuine resume / fresh).
+    _obs_owner="${obs_out}.owner"; _served_real="$("$VPT_PY" -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$SERVED_ID" 2>/dev/null)"
+    if [[ -f "$obs_out" && -f "$_obs_owner" && "$(cat "$_obs_owner" 2>/dev/null)" != "$_served_real" ]]; then
+      echo "  [FAIL] agreement: obs STEM COLLISION — $obs_out is owned by a DIFFERENT model:"
+      echo "         owner:    $(cat "$_obs_owner" 2>/dev/null)"
+      echo "         this run: $_served_real"
+      echo "         Refusing to reuse/overwrite. Use a distinct --run-id/stem."
+      STAGE_RESULTS+=("agreement: FAIL (obs stem collision)")
+      _vo_collision=1
+    fi
+    if [[ "${_vo_collision:-0}" != 1 ]]; then echo "$_served_real" > "$_obs_owner"; fi
+    if [[ "${_vo_collision:-0}" != 1 && -d "$VO_PROCESSED_DIR" ]]; then
       omax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
       oargs=( "$VPT_PY" "$VO_OBS_GEN"
         --model "$SERVED_ID" --server-url "$BASE_URL"
@@ -529,24 +625,22 @@ PY
   rm -f "$cfg"
 fi
 
-# ---------------- re-export aux eval_matrix (REQUIRED before compile) ----------------
-# The aux stage writes only per-RUN aggregates; eval_matrix.csv (the compiler's PRIMARY aux
-# input) is built separately by export_eval_matrix.py and is "only up to date after re-exporting"
-# (its own header). Without this, a finished aux run is INVISIBLE to the master board (the aux
-# cells stay stale/blank) — exactly the 94484 miss. So re-export here whenever aux ran, BEFORE
-# the compile below reads the matrix. Covers BOTH base-model matrices in one call.
-if have_stage aux; then
-  echo ""; echo ">>> Re-exporting aux eval_matrix (so the new aux run lands in the board)"
-  "$VPT_PY" "$VPT/aux_tasks/evals/export_eval_matrix.py" --base-model qwen3.5-4b,qwen3.5-27b \
-    && STAGE_RESULTS+=("aux_matrix: OK -> /mnt/data/sgsilva/results/aux/eval_matrix*.csv") \
-    || STAGE_RESULTS+=("aux_matrix: FAILED (board aux cells may be stale)")
-fi
-
-# ---------------- compile master CSV (additive; never touches per-stage outputs) ----------------
-echo ""; echo ">>> Compiling unified master CSV (read-only union/join on served path)"
-"$VPT_PY" "$(dirname "$0")/compile_eval_results.py" \
-  && STAGE_RESULTS+=("master: OK -> /mnt/data/sgsilva/results/master/eval_master.csv") \
-  || STAGE_RESULTS+=("master: FAILED")
+# ---------------- re-export aux eval_matrix + compile board (one wrapper) ----------------
+# The aux stage writes only per-RUN aggregates; eval_matrix.csv (the compiler's PRIMARY aux input)
+# is built separately and is "only up to date after re-exporting". Without it a finished aux run is
+# INVISIBLE to the board (the 94484 miss). rebuild_board.sh does the FULL correct sequence: regen
+# the COMBINED matrix AND each per-base file (a multi-base export writes ONLY the combined file, so
+# the per-base files — which the compiler reads FIRST/PRIMARY — must be regenerated separately or
+# they go STALE and SHADOW the combined values), runs the staleness guard, then compiles. We use
+# --incremental here (per-run: only the new aux run lands). Backup IS taken (default): every eval
+# run snapshots the key CSVs to results/_backups/<ts>/ BEFORE touching them, so any board rebuild is
+# reversible and the AFTER diff shows exactly what the run changed. --full-scan (whole-matrix
+# rebuild, e.g. after an exporter code change) is the standalone `rebuild_board.sh` invocation.
+# See [[feedback_backup_before_mutating]].
+echo ""; echo ">>> Rebuilding aux eval_matrix + master board (rebuild_board.sh; backup + diff)"
+"$(dirname "$0")/rebuild_board.sh" --incremental \
+  && STAGE_RESULTS+=("board: OK (backed up) -> /mnt/data/sgsilva/results/master/eval_master.csv") \
+  || STAGE_RESULTS+=("board: WARN/FAILED (matrix or compile issue — check rebuild_board output)")
 
 echo ""
 echo "=================================================="
