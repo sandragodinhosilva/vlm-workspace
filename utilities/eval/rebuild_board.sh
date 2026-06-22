@@ -19,7 +19,11 @@
 set -uo pipefail
 
 VPT_PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
-EXPORTER=/home/sgsilva/vlm-post-training/aux_tasks/evals/export_eval_matrix.py
+# CANONICAL (git-tracked) exporter in the vlm-post-training fork. The historical path
+# aux_tasks/evals/export_eval_matrix.py is a SYMLINK into the (untracked) results tree — running the
+# tracked copy here keeps the executed code under version control. The file uses absolute paths
+# (EVAL_ROOT/MASTER_OUT_DIR), so it runs identically regardless of its own location.
+EXPORTER=/home/sgsilva/vlm-post-training/aux_tasks/scripts/export_eval_matrix.py
 COMPILER="$(dirname "$0")/compile_eval_results.py"
 AUX_DIR=/mnt/data/sgsilva/results/aux
 MASTER=/mnt/data/sgsilva/results/master/eval_master.csv
