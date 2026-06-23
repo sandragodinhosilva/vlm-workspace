@@ -20,8 +20,8 @@
 #   vlm-post-training/scripts_regen/docs/
 #   monitoring-app/docs/
 #   video-sft-vlm/docs/
-#   vlm-evaluation/docs/
 #   sft-data-vlm/docs/
+#   (vlm-evaluation/docs/ removed 2026-06-23 — repo archived to /mnt/data/sgsilva/archive/; docs stale)
 
 set -euo pipefail
 
@@ -44,7 +44,6 @@ mkdir -p \
   "$VAULT/vlm-post-training/scripts_regen/docs" \
   "$VAULT/monitoring-app/docs" \
   "$VAULT/video-sft-vlm/docs" \
-  "$VAULT/vlm-evaluation/docs" \
   "$VAULT/sft-data-vlm/docs"
 
 # --- sync all doc dirs ---
@@ -56,7 +55,6 @@ $RSYNC "$CLUSTER:/home/sgsilva/vlm-post-training/aux_tasks/transcripts/docs/"  "
 $RSYNC "$CLUSTER:/home/sgsilva/vlm-post-training/scripts_regen/docs/"          "$VAULT/vlm-post-training/scripts_regen/docs/"
 $RSYNC "$CLUSTER:/home/sgsilva/monitoring-app/docs/"                           "$VAULT/monitoring-app/docs/"
 $RSYNC "$CLUSTER:/home/sgsilva/video-sft-vlm/docs/"                            "$VAULT/video-sft-vlm/docs/"
-$RSYNC "$CLUSTER:/home/sgsilva/vlm-evaluation/docs/"                           "$VAULT/vlm-evaluation/docs/"
 $RSYNC "$CLUSTER:/home/sgsilva/sft-data-vlm/docs/"                             "$VAULT/sft-data-vlm/docs/"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] done"
