@@ -226,8 +226,15 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
   `build_formatted_csv.py`. Field contract: `data_preparation/canonical_csv_columns.py`.
 
 ## Unified master CSV (additive — does NOT touch the per-stage collectors/CSVs)
-- **Compiler:** `/home/sgsilva/utilities/eval/compile_eval_results.py` (read-only; re-run anytime;
-  auto-run at the end of `eval_all.sh`).
+- **Compiler:** `/home/sgsilva/utilities/eval/compile_eval_results.py` (read-only; re-run anytime).
+- **Rebuild is AUTOMATIC** — `eval_all.sh` runs `rebuild_board.sh` at the end of every run (and
+  `eval_all.sbatch` inherits it): backup key CSVs → `results/_backups/<ts>/` → regen the COMBINED
+  matrix AND each per-base `eval_matrix_{4b,27b}.csv` (a multi-base export writes ONLY the combined
+  file; the compiler reads the per-base file FIRST/PRIMARY, so a stale per-base SHADOWS the board) →
+  staleness guard → compile → BEFORE/AFTER diff. Default `--incremental` (only the new run's rows).
+  After an **exporter/compiler CODE change** (incremental reuses the cache), force a full rebuild:
+  `eval_all.sh --full-rebuild` (or `FULL_REBUILD=1` for the sbatch), or run `rebuild_board.sh`
+  standalone (full-scan by default). You normally never call the compiler/exporter by hand.
 - **Output:** `/mnt/data/sgsilva/results/master/eval_master.csv` (all families) PLUS one
   **per-base-model split** `eval_master_{4b,27b,other}.csv` — the combined file mixes sizes
   and gets unreadable, so each split holds only that family. Same columns/join in every file.
