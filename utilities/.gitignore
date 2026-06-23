@@ -7,3 +7,7 @@ eval/_campaign/**/*.csv
 # dated backups of already-tracked files (compile_eval_results.py.*, eval_master.csv.*, etc.)
 eval/_campaign/**/*.py.*
 eval/_campaign/**/*.csv.*
+
+# python bytecode
+__pycache__/
+*.pyc

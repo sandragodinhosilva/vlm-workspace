@@ -7,8 +7,10 @@
 - **The canonical vLLM serving script is now `/home/sgsilva/utilities/serve/start_vllm_server.sh`.**
   Use THIS path in any new command, doc, or script. Do NOT use
   `/home/sgsilva/vlm-evaluation/start_vllm_server.sh` (deprecated; being archived).
+- **The serving client `query_server.py` now lives at `/home/sgsilva/utilities/serve/query_server.py`**
+  (the canonical May-27 copy from `vlm-post-training/inference/` — see "query_server.py" note below).
 - `/home/sgsilva/vlm-evaluation` is **being de-promoted / archived.** It is a legacy eval toolkit;
-  the only thing still live in it was the serving script, which has now moved here.
+  the only things still live in it were the serving script + client, which have now moved here.
 
 ## Why
 `vlm-evaluation` is a legacy repo (its `evaluate.py` was long superseded by
@@ -48,8 +50,19 @@ vlm-evaluation script).
   the repo to an archive location and drop a standalone shim dir at the old path. NOTE: the repo is a
   personal fork committed to `sandragodinhosilva/vlm-evaluation`; it has ~1023 uncommitted deletions
   (do NOT stage/commit those). `query_server.py` also lives there (`utils/query_server.py`) — decide
-  whether it migrates too (a newer copy exists at `vlm-post-training/inference/query_server.py`,
-  May 27; they DIFFER — verify before relying on either).
+  whether it migrates too — DONE: see note below.
+
+## query_server.py (DONE 2026-06-23)
+Copied the **canonical** copy → `/home/sgsilva/utilities/serve/query_server.py`. There were TWO
+diverging copies (neither a superset):
+- `vlm-post-training/inference/query_server.py` (May 27) — **CANONICAL, the one copied here.** Has
+  Gemini/Vertex AI (`query_gemini_with_genai_sdk`, google-genai SDK) + `query_with_vllm_direct` +
+  `encode_images_to_video(..., mirror=)`. The original at `vlm-post-training/inference/` STAYS (not
+  removed) — this is a second canonical copy next to the launcher.
+- `vlm-evaluation/utils/query_server.py` (Apr 6) — older; has the async-litellm path
+  (`async_query_with_litellm`, `acompletion`) + `resolve_model_name`, NO Gemini. Goes away with the
+  archive. If you ever need the async path or `resolve_model_name`, pull them from git history.
+The copy is self-contained (no relative imports / `__file__` assumptions) — safe at the new path.
 - ⏳ **Stale benchmark docs** in `vlm-evaluation/docs/` flagged for archive/correction (see below).
 
 ## Stale docs found in `vlm-evaluation/docs/` (de-promote with the repo)
