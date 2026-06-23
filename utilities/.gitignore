@@ -1,0 +1,9 @@
+# _campaign/ = local backup/scratch dir — keep small scripts, exclude heavy/regenerable artifacts
+eval/_campaign/**/*.xlsx
+eval/_campaign/**/*.pkl
+eval/_campaign/**/*.json
+eval/_campaign/**/*.bak*
+eval/_campaign/**/*.csv
+# dated backups of already-tracked files (compile_eval_results.py.*, eval_master.csv.*, etc.)
+eval/_campaign/**/*.py.*
+eval/_campaign/**/*.csv.*
