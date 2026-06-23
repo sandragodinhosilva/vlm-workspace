@@ -58,6 +58,75 @@ ERA_FAMILIES = ("4b", "27b")  # only these families get split files in the new e
 # one row per (model_key, thinking); model_key = the served model basename / display name.
 # Column order = logical reading order: IDENTITY -> WHEN -> HEADLINE SCORES (benchmarks +
 # aux + visual-obs) -> AUX DETAIL -> TRAINING PROVENANCE -> SOURCE PROVENANCE (bookkeeping).
+# ---------------------------------------------------------------------------------------------------
+# FULL VO METRIC DETAIL BLOCK — mirrors visual_obs_sft_results_1105_formatted.csv's per-band metric
+# layout (cols 9-46), appended AFTER the provenance columns (defined BEFORE FIELDS because FIELDS
+# expands it). Emitted for BOTH single-stage (s1) and two-stage (s2); s2 is mostly blank until the
+# reasoner sweep fills it. Columns intentionally REPEAT the headline ones (Error-F1/Sample-F1/
+# Severity-Acc) so each block is a self-contained mirror of the formatted CSV's band.
+# Each entry: (suffix, header, source) where source is a metrics.* key OR a ("raw"/"per_sev", ...) tuple.
+# Layout MIRRORS visual_obs_sft_results_1105_formatted.csv EXACTLY, including the BLANK separator
+# columns between sub-blocks and the (unpopulated) "Variability / Avg Dist Exercise" column (which
+# the result JSON doesn't carry — kept blank to preserve the disposition). source: a metrics.* key
+# (×100 pct), a ("raw", key) tuple (no ×100: MAE/Pearson/Spearman), ("per_sev", level, kind), or
+# None for a blank separator / unpopulated column.
+_VO_BLOCK = [
+    # Error Detection (error-based)
+    ("err_acc",   "Acc",            "error_detection_accuracy"),
+    ("err_f1",    "F1 Score",       "error_detection_f1"),
+    ("err_prec",  "Precision",      "error_detection_precision"),
+    ("err_rec",   "Recall",         "error_detection_recall"),
+    ("_b1",       "",               None),   # blank separator
+    # Error Detection (sample-based)
+    ("samp_acc",  "Acc",            "sample_error_detection_accuracy"),
+    ("samp_f1",   "F1 Score",       "sample_error_detection_f1"),
+    ("samp_prec", "Precision",      "sample_error_detection_precision"),
+    ("samp_rec",  "Recall",         "sample_error_detection_recall"),
+    ("_b2",       "",               None),   # blank separator
+    # Variability (not in the result JSON — kept blank to mirror the formatted CSV)
+    ("var_dist",  "Avg Dist Exercise", None),
+    ("_b3",       "",               None),   # blank separator
+    # Error Severity
+    ("sev_acc",        "Acc",                 "overall_severity_accuracy"),
+    ("sev_acc_w1",     "Acc - within 1",      "overall_severity_within_1"),
+    ("sev_acc_non1",   "Acc (non-1)",         "overall_severity_accuracy_non1"),
+    ("sev_acc_non1_w1","Acc (non-1) - within 1","overall_severity_within_1_non1"),
+    ("sev_acc_1",   "Acc - 1",            ("per_sev", 1, "accuracy")),
+    ("sev_acc_1_w1","Acc - 1 (within 1)", ("per_sev", 1, "within_1")),
+    ("sev_acc_2",   "Acc - 2",            ("per_sev", 2, "accuracy")),
+    ("sev_acc_2_w1","Acc - 2 (within 1)", ("per_sev", 2, "within_1")),
+    ("sev_acc_3",   "Acc - 3",            ("per_sev", 3, "accuracy")),
+    ("sev_acc_3_w1","Acc - 3 (within 1)", ("per_sev", 3, "within_1")),
+    ("sev_acc_4",   "Acc - 4",            ("per_sev", 4, "accuracy")),
+    ("sev_acc_4_w1","Acc - 4 (within 1)", ("per_sev", 4, "within_1")),
+    ("sev_acc_5",   "Acc - 5",            ("per_sev", 5, "accuracy")),
+    ("sev_acc_5_w1","Acc - 5 (within 1)", ("per_sev", 5, "within_1")),
+    ("sev_mae",      "MAE",        ("raw", "overall_severity_mae")),       # MAE is NOT a pct → no ×100
+    ("sev_mae_non1", "MAE (non-1)",("raw", "overall_severity_mae_non1")),
+    ("_b4",       "",               None),   # blank separator
+    # Effectiveness Score
+    ("eff_acc",  "Score Acc",            "effectiveness_exact_match_rate"),
+    ("eff_mae",  "Score MAE",            ("raw", "effectiveness_mae")),
+    ("eff_pear", "Pearson Correlation",  ("raw", "effectiveness_correlation")),
+    ("eff_spear","Spearman Correlation", ("raw", "effectiveness_spearman_correlation")),
+    ("_b5",      "",                     None),   # blank separator
+    # Injury Risk Score
+    ("inj_acc",  "Score Acc",            "injury_risk_exact_match_rate"),
+    ("inj_mae",  "Score MAE",            ("raw", "injury_risk_mae")),
+    ("inj_pear", "Pearson Correlation",  ("raw", "injury_risk_correlation")),
+    ("inj_spear","Spearman Correlation", ("raw", "injury_risk_spearman_correlation")),
+]
+# Sub-band labels (row-1 band) for the detail block, keyed to the first field of each sub-group.
+_VO_BLOCK_SUBBANDS = {
+    "err_acc":  "{stage}: Error Detection (error-based)",
+    "samp_acc": "{stage}: Error Detection (sample-based)",
+    "var_dist": "{stage}: Variability",
+    "sev_acc":  "{stage}: Error Severity",
+    "eff_acc":  "{stage}: Effectiveness Score",
+    "inj_acc":  "{stage}: Injury Risk Score",
+}
+
+
 FIELDS = [
     # --- identity: who/what this row is (train_reasoning sits right before eval_thinking) ---
     "display", "model", "model_created", "owner", "is_baseline", "train_reasoning", "eval_thinking",
@@ -83,15 +152,28 @@ FIELDS = [
     # --- aux per-modality / per-task detail. Video splits by source: 3D MCQA (mcqa_video_3d_2705,
     # the harder spatial-reasoning set) vs non-3D (mcqa_video_1505). Combined = aux_video_acc. ---
     "aux_video_acc", "aux_video_3d", "aux_video_non3d", "aux_text_acc", "aux_image_composite",
-    "aux_image_dense_oks", "aux_image_task4_acc",
+    "aux_image_dense_oks", "aux_image_dense_other", "aux_image_task4_acc",
     "_spacer_aux",     # blank spacer column: aux │ ⎵ │ metadata/provenance
     # --- training provenance (train_reasoning moved up to identity) ---
     "train_group_id", "train_sample_count",
-    # --- source provenance / bookkeeping (last). Ordered to MATCH the results groups:
-    #     BENCHMARKS sources → VO sources → AUX sources. ---
+    "_spacer_prov_train",   # blank spacer: training provenance │ ⎵ │ source provenance
+    # --- source provenance / bookkeeping (last). Ordered to MATCH the results groups, with blank
+    #     spacers between provenance groups: BENCHMARKS │ ⎵ │ VO │ ⎵ │ AUX. ---
     "bench_method", "bench_source",
-    "vo_s1_source", "vo_s2_source", "vo_s2_reasoner", "vo_test_set",
+    "_spacer_prov_bench",   # blank spacer: benchmark provenance │ ⎵ │ VO provenance
+    "vo_s1_source", "vo_s2_source", "vo_s2_reasoner", "vo_s2_reasoner_thinking",
+    "vo_s2_eval_n", "vo_test_set",
+    "_spacer_prov_vo",      # blank spacer: VO provenance │ ⎵ │ AUX provenance
     "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source",
+    # --- FULL VO METRIC DETAIL (appended AFTER all metadata; mirrors the formatted_1105 CSV's
+    #     per-band metric block, for single-stage then two-stage). Repeats the headline cols on
+    #     purpose so each block is a self-contained mirror. s2 mostly blank until the reasoner sweep.
+    #     ONE blank spacer separates metadata from the detail block; each sub-band's first column
+    #     carries its band label (stage is in the "single-stage:"/"two-stage:" prefix) — no dead
+    #     label-only spacer columns. ---
+    "_spacer_detail",
+    *(f"vo_s1_blk_{suffix}" for suffix, _h, _src in _VO_BLOCK),
+    *(f"vo_s2_blk_{suffix}" for suffix, _h, _src in _VO_BLOCK),
 ]
 
 # Human-readable header labels for the CSV (so a paste into Excel reads cleanly). Internal field
@@ -105,25 +187,36 @@ HEADER_LABELS = {
     "bench_method": "Benchmark Scoring",
     # "single-stage" = model emits severity DIRECTLY in one call (no obs step); spelled out (not
     # "1-stage") so it can't be misread as "the stage-1 obs step" — single-stage SKIPS stage-1 obs.
-    "vo_s1_error_f1": "VO Error-F1 (single-stage)", "vo_s1_sample_f1": "VO Sample-F1 (single-stage)",
-    "vo_s1_severity_acc": "VO Severity Acc (single-stage)",
+    # NB: single-stage/two-stage/vs-GT are carried by the BAND row above — don't repeat in the label.
+    "vo_s1_error_f1": "VO Error-F1", "vo_s1_sample_f1": "VO Sample-F1",
+    "vo_s1_severity_acc": "VO Severity Acc",
     # "two-stage" = stage-1 obs -> stage-2 reasoner -> severity.
-    "vo_s2_error_f1": "VO Error-F1 (two-stage)", "vo_s2_sample_f1": "VO Sample-F1 (two-stage)",
-    "vo_s2_severity_acc": "VO Severity Acc (two-stage)",
-    "vo_agree_errf1": "VO Agree-F1 (vs GT)", "vo_agree_acc": "VO Agree-Acc (vs GT)",
-    "vo_agree_prec": "VO Agree-Prec (vs GT)", "vo_agree_rec": "VO Agree-Rec (vs GT)",
+    "vo_s2_error_f1": "VO Error-F1", "vo_s2_sample_f1": "VO Sample-F1",
+    "vo_s2_severity_acc": "VO Severity Acc",
+    "vo_agree_errf1": "VO Agree-F1", "vo_agree_acc": "VO Agree-Acc",
+    "vo_agree_prec": "VO Agree-Prec", "vo_agree_rec": "VO Agree-Rec",
     "aux_acc_weighted_3mod": "Aux 3-Mod Weighted",
     "aux_video_acc": "Aux Video (all)", "aux_video_3d": "Aux Video 3D", "aux_video_non3d": "Aux Video non-3D",
     "aux_text_acc": "Aux Text", "aux_image_composite": "Aux Image",
-    "aux_image_dense_oks": "Aux Image Dense OKS", "aux_image_task4_acc": "Aux Image Task4",
+    "aux_image_dense_oks": "Aux Image Dense OKS", "aux_image_dense_other": "Aux Image Dense (non-OKS)",
+    "aux_image_task4_acc": "Aux Image Task4",
     "train_group_id": "Train Group", "train_sample_count": "Train Samples",
     "aux_run_ts": "Aux Run TS", "aux_run_id": "Aux Run ID", "aux_run_dir": "Aux Run Dir",
     "aux_source": "Aux Source", "bench_source": "Benchmark Source",
     "vo_s1_source": "VO Source (single-stage)", "vo_s2_source": "VO Source (two-stage)",
-    "vo_s2_reasoner": "Stage2 Reasoner", "vo_test_set": "VO Test Set",
+    "vo_s2_reasoner": "Stage2 Reasoner", "vo_s2_reasoner_thinking": "Stage2 Reasoner Thinking",
+    "vo_s2_eval_n": "VO Eval N (eval/failed)", "vo_test_set": "VO Test Set",
     # blank spacer columns between metric groups (identity │ benchmarks │ VO │ aux │ metadata)
     "_spacer_identity": "", "_spacer_bench": "", "_spacer_vo": "", "_spacer_aux": "",
+    "_spacer_prov_bench": "", "_spacer_prov_vo": "", "_spacer_prov_train": "",
+    "_spacer_detail": "",
 }
+# Detail-block headers: the formatted-CSV column NAME (Acc/F1 Score/Precision/...) for each block
+# field, both stages. The stage is carried by the row-1 band (see GROUP_BANDS), so the column label
+# itself stays the bare formatted-CSV name (matching that CSV's disposition: repeated Acc/F1/etc.).
+for _pfx in ("vo_s1", "vo_s2"):
+    for _suffix, _hdr, _src in _VO_BLOCK:
+        HEADER_LABELS[f"{_pfx}_blk_{_suffix}"] = _hdr
 
 
 def _header(field: str) -> str:
@@ -140,12 +233,44 @@ GROUP_BANDS = {
     "vo_s2_error_f1": "Visual-obs: TWO-STAGE (stage-1 obs -> stage-2 reasoner)",
     "vo_agree_errf1": "Visual-obs: AGREEMENT vs human GT (stage-1 obs + rules)",
     "aux_acc_weighted_3mod": "Aux tasks",
+    # full VO detail block sub-bands (mirrors the formatted_1105 CSV's band groups), per stage
+    "_spacer_detail_s1": "── FULL VO DETAIL (single-stage) ──",
+    "_spacer_detail_s2": "── FULL VO DETAIL (two-stage; fills from reasoner sweep) ──",
 }
+for _pfx, _stage in (("vo_s1", "single-stage"), ("vo_s2", "two-stage")):
+    for _suffix, _subband in _VO_BLOCK_SUBBANDS.items():
+        GROUP_BANDS[f"{_pfx}_blk_{_suffix}"] = _subband.format(stage=_stage)
 
 
 def _band_row(fields):
     """Row-1 band labels keyed to the first field of each band (blank elsewhere)."""
     return [GROUP_BANDS.get(k, "") for k in fields]
+
+
+def _vo_block_fields(pfx):
+    """Field keys for one stage's detail block, e.g. vo_s1_blk_err_f1."""
+    return [f"{pfx}_blk_{suffix}" for suffix, _h, _src in _VO_BLOCK]
+
+
+def _write_vo_block(r, m, pfx):
+    """Populate one stage's full detail block from a metrics dict m into row r."""
+    per_sev = m.get("per_severity_level", {}) or {}
+    def _pct(v):
+        return round(v * 100, 2) if isinstance(v, (int, float)) else ""
+    def _raw(v):
+        return round(v, 4) if isinstance(v, (int, float)) else ""
+    for suffix, _h, src in _VO_BLOCK:
+        key = f"{pfx}_blk_{suffix}"
+        if src is None:
+            continue  # blank separator / unpopulated (e.g. Variability) — leave empty
+        if isinstance(src, str):
+            r[key] = _pct(m.get(src))
+        elif src[0] == "raw":
+            r[key] = _raw(m.get(src[1]))
+        elif src[0] == "per_sev":
+            _, level, kind = src
+            entry = per_sev.get(str(level)) or per_sev.get(level) or {}
+            r[key] = _pct(entry.get(kind))
 
 
 def _base_model(model: str, display: str = "") -> str:
@@ -583,6 +708,7 @@ def _rows():
                 r["aux_text_acc"] = _f(rec.get("acc_text"))
                 r["aux_image_composite"] = _f(rec.get("acc_image"))
                 r["aux_image_dense_oks"] = _f(rec.get("oks_image"))
+                r["aux_image_dense_other"] = (rec.get("image_dense_other") or "").strip()  # non-OKS dense metrics (task2 ExactMatch / task3a F1)
                 # task4a preferred, task4b fallback — but a genuine 0.0 on task4a is a REAL score,
                 # not "missing". `_f("0.0") or _f(task4b)` would coalesce that 0 away (falsy-zero bug),
                 # so test presence explicitly: use task4a iff it parsed to a number, else task4b.
@@ -835,12 +961,23 @@ def _rows():
             r[f"{pfx}sample_f1"] = vm("sample_error_detection_f1")
             r[f"{pfx}severity_acc"] = vm("overall_severity_accuracy")
             r[f"{pfx}source"] = vj.name
+            # full detail block (all formatted-CSV metrics) for this stage — appended after metadata
+            _write_vo_block(r, m, "vo_s2" if is_two else "vo_s1")
             # VO test-set path each eval ran on (1181-rep split) — read per-file, not hardcoded
             _tsd = str((d.get("metadata") or {}).get("test_dataset_dir", "")).strip()
             if _tsd and not r.get("vo_test_set"):
                 r["vo_test_set"] = _tsd
             if is_two:
-                r["vo_s2_reasoner"] = str((d.get("metadata") or {}).get("model", "")) or ""
+                _md2 = d.get("metadata") or {}
+                r["vo_s2_reasoner"] = str(_md2.get("model", "")) or ""
+                # VO eval completeness: N evaluated / N failed (surfaces clean 1181/0 vs a partial run).
+                _ev = _md2.get("evaluated_samples"); _fl = _md2.get("failed_samples")
+                if _ev is not None:
+                    r["vo_s2_eval_n"] = f"{_ev}/{_fl}" if _fl else str(_ev)
+                # Stage-2 REASONER thinking mode (distinct from the main model's Eval Thinking).
+                _st = _md2.get("served_thinking")
+                if _st is not None:
+                    r["vo_s2_reasoner_thinking"] = "on" if _st else "off"
 
         # ---- AGREEMENT vs HUMAN GT (separate family: agreement_*.json). The OLD formatted CSV's
         # "agreement with human annotations" band read error_relevant.vs_gt.a.overall (a = model
@@ -878,6 +1015,62 @@ def _rows():
             r["vo_agree_acc"] = am("accuracy")
             r["vo_agree_prec"] = am("precision")
             r["vo_agree_rec"] = am("recall")
+            # "Avg Dist Exercise" (the Variability column) = mean over per-exercise categorical
+            # index-distances between the model's answers and the reference (raw-answer agreement,
+            # a=model vs b=gt). Lower = closer. RAW (a distance, not a pct). It lives in the agreement
+            # JSON's raw-answer block, NOT metrics.*, so we fill the s1 detail block here. The column
+            # name says "Exercise" → mean OVER per-exercise distances (not the pooled overall).
+            try:
+                _pe = (ad.get("per_exercise") or {})
+                _dists = [v["categorical"]["mean_index_distance"] for v in _pe.values()
+                          if isinstance(v, dict) and isinstance(v.get("categorical"), dict)
+                          and isinstance(v["categorical"].get("mean_index_distance"), (int, float))]
+                if _dists:
+                    r["vo_s1_blk_var_dist"] = round(sum(_dists) / len(_dists), 4)
+            except Exception:
+                pass
+
+        # ---- ORACLE CEILING row(s) (user 2026-06-23): a DEDICATED reference row = the 397B oracle
+        # visual-obs scored vs HUMAN GT = the agreement side=b (b=oracle) constant. It's the upper
+        # bound the SFT models distil toward (Agree-F1 0.8608), NOT a deployable model — so it gets its
+        # OWN row, distinct from the 397B-plain row (side=a). Driven entirely by master_models.json
+        # entries carrying `oracle_ceiling: true` + `vo_agree_side` + `vo_agree_source` (no hardcoded
+        # model names here). Keyed on a synthetic path containing the entry's pattern so the allowlist
+        # keeps it. ----
+        try:
+            _cfg = json.loads(MODEL_ALLOWLIST.read_text()) if MODEL_ALLOWLIST.exists() else {}
+        except Exception:
+            _cfg = {}
+        for _e in _cfg.get("models", []):
+            if not _e.get("oracle_ceiling"):
+                continue
+            _side = (_e.get("vo_agree_side") or "b").strip()
+            _src = (_e.get("vo_agree_source") or "").strip()
+            _aj = VO_RUNS / _src if _src else None
+            if not _aj or not _aj.exists():
+                print(f"[oracle-ceiling] source missing for {_e.get('pattern')!r}: {_src} — skipped")
+                continue
+            try:
+                _ad = json.loads(_aj.read_text())
+                _ov = (((_ad.get("error_relevant") or {}).get("vs_gt") or {}).get(_side) or {}).get("overall") or {}
+            except Exception:
+                _ov = {}
+            if not _ov:
+                print(f"[oracle-ceiling] no vs_gt.{_side}.overall in {_src} — skipped")
+                continue
+            # synthetic key: a non-path string carrying the allowlist pattern so _match_allow keeps it
+            # and it never collides with a real served-checkpoint row.
+            _key = (_e["pattern"], "off")
+            _r = rows.setdefault(_key, {"model": _e["pattern"], "eval_thinking": "off", "owner": ""})
+            _r["display"] = _e.get("display", _e["pattern"])
+            def _am(k):
+                v = _ov.get(k)
+                return round(v * 100, 2) if isinstance(v, (int, float)) else ""
+            _r["vo_agree_errf1"] = _am("micro_f1")
+            _r["vo_agree_acc"] = _am("accuracy")
+            _r["vo_agree_prec"] = _am("precision")
+            _r["vo_agree_rec"] = _am("recall")
+            _r["vo_s1_source"] = f"{_src} (side={_side}, oracle ceiling)"
 
     # ---- FINALIZE: the two timestamps per row ----
     #  model_created = mtime of the served checkpoint (when the model was created/exported).

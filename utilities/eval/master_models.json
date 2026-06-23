@@ -71,6 +71,16 @@
       ]
     },
     {
+      "pattern": "ORACLE_CEILING_397B",
+      "display": "Oracle 397B visual-obs cat (ceiling)",
+      "train_reasoning": "NA",
+      "group": "oracle_397b",
+      "note": "CEILING/reference row: the 397B ORACLE visual-obs (categorical) scored vs HUMAN GT — the agreement side=b (b=oracle) constant present in every testonly agreement file. Agree-F1 0.8608 / Acc 0.9177 / Prec 0.8619 / Rec 0.8597. NOT a deployable model: it's the oracle-obs-vs-human upper bound the SFT models are distilled toward. Distinct from the 397B-plain row above (that's side=a, the model run plain, agree-F1 33.07).",
+      "oracle_ceiling": true,
+      "vo_agree_side": "b",
+      "vo_agree_source": "agreement_oracle_obs_cat_union5_step339_testonly_thinkoff.json"
+    },
+    {
       "pattern": "qwen35-4b-mix-12k-1506-sft-step1299",
       "display": "4B mix-12k-1506 SFT step1299",
       "train_reasoning": "no",
