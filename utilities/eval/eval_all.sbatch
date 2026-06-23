@@ -102,6 +102,7 @@ CMD=( /home/sgsilva/utilities/eval/eval_all.sh
 [[ -n "${MAX_LEN:-}" ]]         && CMD+=( --max-len "$MAX_LEN" )
 [[ -n "${SERVE_VENV:-}" ]]      && CMD+=( --serve-venv "$SERVE_VENV" )  # pmartins -> vlm-post-training-home-venv
 [[ "${KEEP_SERVER:-0}" == 1 ]]  && CMD+=( --keep-server )  # leave vLLM up after eval (reuse; rarely useful in sbatch since node frees at job end)
+[[ "${FULL_REBUILD:-0}" == 1 ]] && CMD+=( --full-rebuild )  # end-of-run board rebuild = --full-scan (after an exporter/compiler code change)
 [[ -n "${BENCH_MAX_TOKENS:-}" ]] && CMD+=( --bench-max-tokens "$BENCH_MAX_TOKENS" )  # cap thinkon runaways (8192) so Video-MME finishes in hours not days
 [[ -n "${BENCH_EXTRA:-}" ]]      && CMD+=( --bench-extra "$BENCH_EXTRA" )  # e.g. "--skip-videomme" (skip the slow runaway-tail benchmark)
 [[ -n "${TRAIN_GROUP_ID:-}" ]]  && CMD+=( --train-group-id "$TRAIN_GROUP_ID" )

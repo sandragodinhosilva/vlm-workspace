@@ -37,6 +37,7 @@ for a in "$@"; do
   case "$a" in
     --no-backup)   DO_BACKUP=0 ;;
     --incremental) SCAN_FLAG="" ;;
+    --full-scan|--full) SCAN_FLAG="--full-scan" ;;  # explicit (also the default); callers can pass it plainly
     *) echo "[rebuild_board] unknown arg: $a" >&2; exit 2 ;;
   esac
 done

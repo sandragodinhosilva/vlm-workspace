@@ -66,6 +66,9 @@ MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1
 THINKING=""; TRAIN_GROUP_ID=""; RUN_ID=""; TAG=""; TESTSET="1506"; MAX_SAMPLES=""
 BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""; BENCH_MAX_TOKENS=32768; BENCH_MAX_TOKENS_SET=0
 SERVE=0; TP=""; MAX_LEN=""; SERVE_WAIT=1800; KEEP_SERVER=0   # --serve: launch+teardown our own vLLM
+FULL_REBUILD=0   # --full-rebuild: end-of-run board rebuild uses --full-scan (picks up exporter/
+# compiler CODE changes); default is --incremental (fast; only the new run's rows land — correct
+# when only DATA changed, which is the common case).
 SERVE_VENV="/home/sgsilva/qwen3.5-serving-home-venv"   # --serve-venv override for ckpts needing another
 # stack (e.g. pmartins transformers-5.x 'TokenizersBackend' tokenizers -> vlm-post-training-home-venv)
 while [[ $# -gt 0 ]]; do
@@ -91,6 +94,7 @@ while [[ $# -gt 0 ]]; do
     --max-len) MAX_LEN="$2"; shift 2;;  # served max_model_len (default by base-model)
     --serve-wait) SERVE_WAIT="$2"; shift 2;;  # seconds to wait for server health (default 1800)
     --keep-server) KEEP_SERVER=1; shift;;  # leave OUR vLLM running after eval (reuse it; node frees only at job end)
+    --full-rebuild) FULL_REBUILD=1; shift;;  # end-of-run board rebuild = --full-scan (use after an exporter/compiler code change)
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -667,13 +671,14 @@ fi
 # the COMBINED matrix AND each per-base file (a multi-base export writes ONLY the combined file, so
 # the per-base files — which the compiler reads FIRST/PRIMARY — must be regenerated separately or
 # they go STALE and SHADOW the combined values), runs the staleness guard, then compiles. We use
-# --incremental here (per-run: only the new aux run lands). Backup IS taken (default): every eval
-# run snapshots the key CSVs to results/_backups/<ts>/ BEFORE touching them, so any board rebuild is
-# reversible and the AFTER diff shows exactly what the run changed. --full-scan (whole-matrix
-# rebuild, e.g. after an exporter code change) is the standalone `rebuild_board.sh` invocation.
-# See [[feedback_backup_before_mutating]].
-echo ""; echo ">>> Rebuilding aux eval_matrix + master board (rebuild_board.sh; backup + diff)"
-"$(dirname "$0")/rebuild_board.sh" --incremental \
+# Default --incremental (per-run: only the new aux run lands; fast). Pass --full-rebuild to this
+# script when an exporter/compiler CODE change must propagate to ALL rows (incremental reuses the
+# cache and would skip unchanged rows). Backup IS taken either way: every eval run snapshots the key
+# CSVs to results/_backups/<ts>/ BEFORE touching them, so any board rebuild is reversible and the
+# AFTER diff shows exactly what changed. See [[feedback_backup_before_mutating]].
+_rebuild_mode="--incremental"; [[ "$FULL_REBUILD" == 1 ]] && _rebuild_mode="--full-scan"
+echo ""; echo ">>> Rebuilding aux eval_matrix + master board (rebuild_board.sh $_rebuild_mode; backup + diff)"
+"$(dirname "$0")/rebuild_board.sh" $_rebuild_mode \
   && STAGE_RESULTS+=("board: OK (backed up) -> /mnt/data/sgsilva/results/master/eval_master.csv") \
   || STAGE_RESULTS+=("board: WARN/FAILED (matrix or compile issue — check rebuild_board output)")
 
