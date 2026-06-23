@@ -36,7 +36,7 @@ fi
 # ── literal paths (no $VAR-built training paths handed around) ────────────────
 PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
 VLM=/home/sgsilva/vlm-post-training
-SERVE=/home/sgsilva/vlm-evaluation/start_vllm_server.sh
+SERVE=/home/sgsilva/utilities/serve/start_vllm_server.sh
 MODELS=/mnt/data/sgsilva/models
 RESULTS=/mnt/data/sgsilva/results/visual_obs_runs
 SYMLINKS=/mnt/data/sgsilva/datasets/1105_test_processed_symlinks

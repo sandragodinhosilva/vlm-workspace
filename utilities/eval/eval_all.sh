@@ -139,7 +139,7 @@ if [[ "$SERVE" == 1 ]]; then
   SERVE_PORT="$(printf '%s' "$BASE_URL" | sed -E 's#https?://[^:/]+:?([0-9]*)/.*#\1#')"
   [[ -z "$SERVE_PORT" ]] && SERVE_PORT=8000
   [[ ! -d "$MODEL" ]] && { echo "ERROR: --serve needs a model PATH on disk (got: $MODEL)" >&2; exit 2; }
-  [[ -x /home/sgsilva/vlm-evaluation/start_vllm_server.sh ]] || { echo "ERROR: --serve needs start_vllm_server.sh (not found/executable at /home/sgsilva/vlm-evaluation/start_vllm_server.sh)" >&2; exit 2; }
+  [[ -x /home/sgsilva/utilities/serve/start_vllm_server.sh ]] || { echo "ERROR: --serve needs start_vllm_server.sh (not found/executable at /home/sgsilva/utilities/serve/start_vllm_server.sh)" >&2; exit 2; }
 fi
 
 # ---- LONG paths (>120 chars, e.g. external 225-char pmartins ckpts): serve+eval via a SHORT
@@ -255,7 +255,7 @@ if [[ "$SERVE" == 1 ]]; then
   # so the server registers a short id and every downstream filename stays under the 255-char limit.
   # own process group (setsid) so teardown can signal the whole vLLM tree, not just the launcher
   setsid env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV="$SERVE_VENV" \
-    /home/sgsilva/vlm-evaluation/start_vllm_server.sh "$SERVED_ID" "$TP" "$MAX_LEN" "$SERVE_PORT" \
+    /home/sgsilva/utilities/serve/start_vllm_server.sh "$SERVED_ID" "$TP" "$MAX_LEN" "$SERVE_PORT" \
     >"$SERVE_LOG" 2>&1 &
   OUR_SERVER_PID=$!
   echo "    server PID (process group): $OUR_SERVER_PID  — monitor: tail -f $SERVE_LOG"
@@ -363,6 +363,41 @@ PY
     done
     echo "    ↻ APPEND    /mnt/data/sgsilva/results/benchmarks/summary.csv  (+ summary_judge.csv if judged)"
     echo "                 ^ the BOARD MMMU/Video-MME/VSI source (compiler prefers summary_judge.csv) [via benchmarks/scripts/collect_results.py]"
+    # ---- POISONED-REUSE GUARD (2026-06-22): a prior run whose server died leaves prediction files
+    # that are 100% "Failed to obtain answer via API.". --reuse silently REUSES them, re-scores the
+    # all-failed predictions, and reports `benchmarks: OK` with ZERO valid rows — the board cell then
+    # goes (correctly) BLANK while the run looks successful (the 4B-baseline VSI carried this across 3
+    # runs: T20260618→20→21). Detect it BEFORE launch: any reuse-target *_score.xlsx that is
+    # >=90% API-failure → [FAIL] (delete the poisoned T*/ dir and re-run WITHOUT --reuse). [[feedback_eval_gotchas]]
+    _bench_disp="$(basename "${SERVED_ID:-${RUN_ID:-$MODEL}}")-think${THINKING}"
+    for _b in vsibench mmmu_val video_mme; do
+      _bdir="/mnt/data/sgsilva/results/benchmarks/$_b/$_bench_disp"
+      [[ -d "$_bdir" ]] || continue
+      _poison="$("$VPT_PY" - "$_bdir" <<'PY'
+import sys,glob,os
+try: import pandas as pd
+except Exception: sys.exit(0)   # can't check -> stay silent (don't false-FAIL)
+bdir=sys.argv[1]; FAIL="Failed to obtain answer via API"
+worst=None
+for f in glob.glob(os.path.join(bdir,"**","*_score.xlsx"),recursive=True)+glob.glob(os.path.join(bdir,"*_score.xlsx")):
+    try: df=pd.read_excel(f)
+    except Exception: continue
+    col="prediction" if "prediction" in df.columns else None
+    if not col or len(df)==0: continue
+    frac=df[col].astype(str).str.contains(FAIL,na=False).mean()
+    if worst is None or frac>worst[0]: worst=(frac,os.path.basename(f))
+if worst and worst[0]>=0.90:
+    print(f"{worst[0]*100:.0f} {worst[1]}")
+PY
+)"
+      if [[ -n "$_poison" ]]; then
+        echo "  [FAIL] benchmarks: POISONED reuse cache in $_bdir"
+        echo "         ${_poison%% *}% of predictions = 'Failed to obtain answer via API' (e.g. ${_poison#* })."
+        echo "         --reuse would re-score these failures as OK and leave the board cell BLANK."
+        echo "         FIX: rm -rf $_bdir/T*  then re-run the benchmark stage WITHOUT --reuse."
+        ok=0
+      fi
+    done
   fi
   if have_stage visualobs; then
     [[ -d "$VO_TEST" ]] && echo "  [ok]   visualobs: 1181-rep test dir present" || { echo "  [FAIL] visualobs test dir missing"; ok=0; }

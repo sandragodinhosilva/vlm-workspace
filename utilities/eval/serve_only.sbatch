@@ -53,4 +53,4 @@ echo "======================"
 
 # foreground: the server runs until the job walltime / scancel. No teardown — that's the point.
 exec env ENABLE_THINKING="$ENABLE_BIT" QWEN35_VENV="$SERVE_VENV" \
-  /home/sgsilva/vlm-evaluation/start_vllm_server.sh "$SERVED" "$TP" "$MAX_LEN" "$PORT"
+  /home/sgsilva/utilities/serve/start_vllm_server.sh "$SERVED" "$TP" "$MAX_LEN" "$PORT"

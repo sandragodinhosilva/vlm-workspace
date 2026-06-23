@@ -18,7 +18,7 @@
 #   1. Serve the reasoner on its OWN port (NOT localhost:8000 if that's the 397B):
 #        # pmartins sft2812 needs the vlm-post-training venv (TokenizersBackend):
 #        QWEN35_VENV=/home/sgsilva/vlm-post-training-home-venv \
-#        /home/sgsilva/vlm-evaluation/start_vllm_server.sh \
+#        /home/sgsilva/utilities/serve/start_vllm_server.sh \
 #          /mnt/data/pmartins/vlm_ckpts/.../step_2812/hf 4 65536 <PORT>
 #   2. Run the sweep:
 #        REASONER=/mnt/data/pmartins/vlm_ckpts/.../step_2812/hf \
@@ -52,6 +52,11 @@ EVAL_VO_PY="$VPT/eval/evaluate_vo.py"
 TEST_DIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test
 COMPILER=/home/sgsilva/utilities/eval/compile_eval_results.py
 MAX_TOKENS="${MAX_TOKENS:-16384}"
+# Client concurrency into evaluate.py. The default (10 for a --server-url run) overwhelms a HEAVY
+# thinkON 27B reasoner: 10 parallel long-trace generations saturate it, requests exceed the 3-retry
+# budget → "Failed to get response" (the 2026-06-22 sweep meltdown on the dedicated gpu:4 server).
+# Throttle to 4 by default; bump only if the server's num_requests_waiting stays ~0 under load.
+MAX_WORKERS="${MAX_WORKERS:-4}"
 TAG_SUFFIX="${REASONER_TAG:+_${REASONER_TAG}}"
 
 : "${REASONER:?set REASONER=<served stage-2 reasoner ckpt path>}"
@@ -130,6 +135,24 @@ for entry in "${MAP[@]}"; do
     n_skip=$((n_skip+1)); continue
   fi
   out="$VO_RUNS/stage2_${out_stem}_${think}${TAG_SUFFIX}.json"
+  # PREFLIGHT (2026-06-22): per-obs, show how many samples WILL be recomputed (universe − already
+  # done) WITHOUT running anything. universe = reps in the obs file; done = per_sample_results in the
+  # existing stage2 (a --resume run re-queries only the missing/previously-failed ones). Read-only.
+  if [[ "${PREFLIGHT:-0}" == 1 ]]; then
+    "$PY" - "$obs_file" "$out" "$obs_stem" <<'PY'
+import json,sys,os
+obs_f,out_f,stem=sys.argv[1],sys.argv[2],sys.argv[3]
+d=json.load(open(obs_f)); universe=sum(1 for s in d.values() if isinstance(s,dict)
+            for k in s if "repetition" in k.lower())
+done=0; failed=0
+if os.path.exists(out_f):
+    o=json.load(open(out_f)); done=len(o.get("per_sample_results") or [])
+    failed=(o.get("metadata") or {}).get("failed_samples",0)
+todo=universe-done
+print(f"    PREFLIGHT {stem:40s} universe={universe:5d}  done={done:5d}  TO_RECOMPUTE={todo:5d}  (prev_failed={failed})")
+PY
+    continue
+  fi
   # REPLACE mode: copy the existing old-reasoner base + _v2 into the v1 backup BEFORE overwriting.
   if [[ -z "$TAG_SUFFIX" && "${DRYRUN:-0}" != 1 ]]; then
     for old in "$VO_RUNS/stage2_${out_stem}_${think}.json" "$VO_RUNS/stage2_${out_stem}_${think}_v2.json"; do
@@ -144,18 +167,38 @@ for entry in "${MAP[@]}"; do
         --two-stage --precomputed-visual-obs "$obs_file"
         --model "$REASONER" --server-url "$REASONER_URL"
         --max-tokens "$MAX_TOKENS"
+        --max-workers "$MAX_WORKERS"
         --output-file "$out" --resume )
   if [[ "${DRYRUN:-0}" == 1 ]]; then
     printf '    DRYRUN: '; printf '%q ' "${cmd[@]}"; echo; continue
   fi
-  if ( cd "$VPT" && "${cmd[@]}" ); then
-    # verify completeness: evaluated_samples must be 1181
-    n=$("$PY" -c "import json,sys;print(json.load(open('$out')).get('metadata',{}).get('evaluated_samples','?'))" 2>/dev/null)
-    echo "    -> evaluated_samples=$n (expect 1181)"
-    [[ "$n" == 1181 ]] || echo "    [WARN] not 1181 — re-run with --resume to top off before trusting."
-    n_ok=$((n_ok+1)); outputs+=("$out")
+  # RESUME-UNTIL-COMPLETE (2026-06-22): transient server-overload failures (cold/contended
+  # reasoner → "Failed to get response" / a length-capped runaway → "Failed to parse scores")
+  # are NOT persisted to per_sample_results, so each --resume re-queries ONLY the missing/failed
+  # samples (evaluate.py:2419 — failures go to failed_samples[], never to existing_results). We
+  # want a FULL 1181 eval, so loop --resume until evaluated_samples==1181 or attempts exhaust.
+  # Convergence guard: if an attempt adds ZERO new samples (n unchanged), stop — a stuck obs
+  # won't loop forever (distinct sentinel, never a silent <1181 pass). [[feedback_eval_gotchas]]
+  attempts="${RESUME_ATTEMPTS:-6}"; n=0; prev=-1; a=0
+  while (( a < attempts )); do
+    a=$((a+1))
+    echo "    [resume attempt $a/$attempts] (have $n/1181)"
+    ( cd "$VPT" && "${cmd[@]}" ) || echo "    [warn] evaluate.py returned non-zero on attempt $a (partial save still topped off below)"
+    n=$("$PY" -c "import json;print(json.load(open('$out')).get('metadata',{}).get('evaluated_samples',0))" 2>/dev/null || echo 0)
+    fl=$("$PY" -c "import json;print(json.load(open('$out')).get('metadata',{}).get('failed_samples',0))" 2>/dev/null || echo 0)
+    echo "    -> evaluated_samples=$n  failed=$fl  (expect 1181/0)"
+    [[ "$n" == 1181 ]] && break
+    if [[ "$n" == "$prev" ]]; then
+      echo "    [STUCK] attempt $a added 0 new samples (n=$n) — server may be down or these reps consistently fail. Stopping retries for this obs."
+      break
+    fi
+    prev="$n"
+  done
+  if [[ "$n" == 1181 ]]; then
+    echo "    [OK] $obs_stem complete (1181)"; n_ok=$((n_ok+1)); outputs+=("$out")
   else
-    echo "    [FAIL] evaluate.py errored for $obs_stem"; n_fail=$((n_fail+1))
+    echo "    [INCOMPLETE] $obs_stem stalled at $n/1181 after $a attempts — NOT counting as done (re-run later against a warm server to top off)."
+    n_fail=$((n_fail+1))
   fi
   echo
 done

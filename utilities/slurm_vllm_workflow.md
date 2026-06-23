@@ -31,16 +31,16 @@ srun --nodes=1 \
      --job-name=sftvlm \
      --pty bash -i 
 
-NUM_GPUS=2
+NUM_GPUS=4
 srun --nodes=1 \
      --gres=gpu:${NUM_GPUS} \
      -c $((24*NUM_GPUS)) \
      --mem=$((311*NUM_GPUS))G \
-     --job-name=sam3d \
-     --nodelist=worker-21 \
+     --job-name=eval1 \
+     --nodelist=worker-7 \
      --pty bash -i 
 
-ENABLE_THINKING=1 /home/sgsilva/vlm-evaluation/start_vllm_server.sh \
+ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh \
     /mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-step339 \
     2 262144 7861
 ```
@@ -152,7 +152,7 @@ Common `Reason` codes:
 
 ## 5. Serving a vLLM model
 
-Script: `/home/sgsilva/vlm-evaluation/start_vllm_server.sh`
+Script: `/home/sgsilva/utilities/serve/start_vllm_server.sh`
 
 Signature:
 ```
@@ -161,7 +161,7 @@ start_vllm_server.sh <model> <tensor_parallel_size> <max_model_len> <port>
 
 Example — Qwen 3.5 27B with thinking mode on 2 GPUs:
 ```bash
-ENABLE_THINKING=1 /home/sgsilva/vlm-evaluation/start_vllm_server.sh \
+ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh \
     qwen3.5-27b 2 262144 8000
 ```
 
@@ -234,7 +234,7 @@ srun --nodes=1 --exclude=worker-30,worker-31 \
 
 # Inside the allocation
 echo "Job: $SLURM_JOB_ID  Node: $SLURMD_NODENAME"
-ENABLE_THINKING=1 /home/sgsilva/vlm-evaluation/start_vllm_server.sh \
+ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh \
     qwen3.5-27b ${NUM_GPUS} 262144 8000
 ```
 
@@ -293,11 +293,11 @@ Red flags:
    sftvlm   # full 8-GPU node
    # server 1 on GPUs 0-3
    ENABLE_THINKING=1 QWEN35_VENV=/home/sgsilva/vlm-post-training-home-venv \
-     CUDA_VISIBLE_DEVICES=0,1,2,3 /home/sgsilva/vlm-evaluation/start_vllm_server.sh \
+     CUDA_VISIBLE_DEVICES=0,1,2,3 /home/sgsilva/utilities/serve/start_vllm_server.sh \
      <ckpt_A> 4 65536 8011 &
    # server 2 on GPUs 4-7
    ENABLE_THINKING=1 QWEN35_VENV=/home/sgsilva/vlm-post-training-home-venv \
-     CUDA_VISIBLE_DEVICES=4,5,6,7 /home/sgsilva/vlm-evaluation/start_vllm_server.sh \
+     CUDA_VISIBLE_DEVICES=4,5,6,7 /home/sgsilva/utilities/serve/start_vllm_server.sh \
      <ckpt_B> 4 65536 8012 &
    ```
    Then run two eval clients (one per port) at `--max-workers 16`.
