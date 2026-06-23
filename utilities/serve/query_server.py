@@ -223,6 +223,11 @@ MODELS = {
 # Default sampling parameters
 DEFAULT_MAX_TOKENS = 32768
 DEFAULT_TEMPERATURE = 0
+# Anti-runaway stop sequences: thinkON reasoners occasionally collapse into a single repeated
+# punctuation token and generate to max_tokens (verified 2026-06-23). 8 consecutive identical
+# punctuation chars never occur in a legitimate answer, so stopping on them only truncates the
+# degenerate tail (clean responses are byte-identical with/without). Override via env if needed.
+RUNAWAY_STOP = os.environ.get("RUNAWAY_STOP", "!!!!!!!!,????????,........,--------").split(",")
 
 
 def encode_images_to_video(image_paths: List[Path], fps: float = 1.0, output_path: str = None, mirror: bool = False) -> str:
@@ -508,6 +513,11 @@ def query_with_vllm_direct(
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            # Anti-runaway stop: the thinkON reasoner occasionally collapses into a single-token
+            # wall (e.g. "!!!!!!!!...") and burns to max_tokens (verified 2026-06-23, ~50x wasted
+            # compute per runaway). 8 consecutive identical punctuation chars never occur in a real
+            # answer, so this only truncates the degenerate tail — clean responses are untouched.
+            "stop": RUNAWAY_STOP,
         }
         if extra_body:
             kwargs["extra_body"] = extra_body
@@ -650,7 +660,10 @@ def query_with_litellm(
             "temperature": temperature,
             "api_base": api_base,
             "api_key": "EMPTY",
-            "timeout": timeout
+            "timeout": timeout,
+            # Anti-runaway stop (see _make_request above): cut the thinkON single-token "!!!!!!!!"
+            # collapse so a runaway dies at ~hundreds of tokens, not max_tokens. Harmless to real text.
+            "stop": RUNAWAY_STOP,
         }
 
         # Add optional sampling parameters if specified

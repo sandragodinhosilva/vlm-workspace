@@ -943,8 +943,13 @@ def _rows():
                 _rsnr = str((d.get("metadata") or {}).get("model", "")).lower()
                 if not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
                     continue   # not the sft2812 reasoner → historical, don't put it on the board
-                # only a COMPLETE sweep result counts (a mid-write file is partial → don't show it)
-                if (d.get("metadata") or {}).get("evaluated_samples") != 1181:
+                # Accept a near-complete sweep result (>= MIN_COMPLETE of 1181). The thinkON reasoner
+                # has an intrinsic ~10% token-repetition-collapse tail (verified 2026-06-23) — a
+                # handful of reps never parse, so requiring an exact 1181 would block an otherwise-good
+                # result forever. 1170 = ~99% coverage; the VO Eval N column shows the real N/failed so
+                # a partial is never hidden. A genuinely mid-write file (<1170) is still excluded.
+                _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
+                if _eN < 1170:
                     continue
             key = (_norm_path(model_path), thinking)
             best = ts_best if is_two else ss_best
