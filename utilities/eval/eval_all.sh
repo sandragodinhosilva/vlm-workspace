@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # eval_all.sh — modular eval driver for an ALREADY-SERVED model.
 #
-# Runs any subset of: aux (multimodal aux-tasks), benchmarks (VSI-Bench/MMMU/Video-MME),
+# Runs any subset of: aux (multimodal aux-tasks), benchmarks (VSI-Bench/MMMU/Video-MME/IFBench),
 # visualobs (visual-obs single-stage). Each stage uses its OWN venv and writes to its OWN
 # canonical results root; this script only orchestrates. The model server (and, for two-stage
 # visual-obs, a separate reasoner) must already be up — pass --base-url.
@@ -196,10 +196,11 @@ fi
 [[ "$THINKING" == on || "$THINKING" == off ]] || { echo "ERROR: --thinking must be on|off" >&2; exit 2; }
 
 # AUTO-CAP benchmark max-tokens for thinkON: a thinkon-27B rambles to max_tokens on hard MMMU/
-# Video-MME items (~30min/sample at 32768 → Video-MME ≈ days, ~27% non-responses). If the user
-# didn't pass --bench-max-tokens explicitly, drop the default 32768 → 16384 when thinking=on so
-# runaways fail fast (~2-4min) while real answers (well under 16384) are untouched. Explicit
-# --bench-max-tokens always wins. thinkOFF keeps the full budget.
+# Video-MME/IFBench items (~30min/sample at 32768 → Video-MME ≈ days, ~27% non-responses; IFBench's
+# long-output constraints — "≥170 unique words" etc — are also a slow tail). If the user didn't pass
+# --bench-max-tokens explicitly, drop the default 32768 → 16384 when thinking=on so runaways fail
+# fast (~2-4min) while real answers (well under 16384) are untouched. Explicit --bench-max-tokens
+# always wins. thinkOFF keeps the full budget (IFBench's slow tail is then the pole — expect it).
 if [[ "$BENCH_MAX_TOKENS_SET" == 0 && "$THINKING" == on ]]; then
   BENCH_MAX_TOKENS=16384
   echo "==> thinkON + no explicit --bench-max-tokens: auto-capping benchmarks to $BENCH_MAX_TOKENS (runaway guard)"
@@ -365,8 +366,9 @@ PY
     for _b in mmmu_val video_mme vsibench; do
       echo "    + RESULT    /mnt/data/sgsilva/results/benchmarks/$_b/<display>/   (+ ${_b}_judged/ if --judge-*)"
     done
+    echo "    + RESULT    /mnt/data/sgsilva/results/benchmarks/ifbench/<display>/   (text-only, RULE-scored — NO judge/_judged)"
     echo "    ↻ APPEND    /mnt/data/sgsilva/results/benchmarks/summary.csv  (+ summary_judge.csv if judged)"
-    echo "                 ^ the BOARD MMMU/Video-MME/VSI source (compiler prefers summary_judge.csv) [via benchmarks/scripts/collect_results.py]"
+    echo "                 ^ the BOARD MMMU/Video-MME/VSI/IF-Bench source (compiler prefers summary_judge.csv) [via benchmarks/scripts/collect_results.py]"
     # ---- POISONED-REUSE GUARD (2026-06-22): a prior run whose server died leaves prediction files
     # that are 100% "Failed to obtain answer via API.". --reuse silently REUSES them, re-scores the
     # all-failed predictions, and reports `benchmarks: OK` with ZERO valid rows — the board cell then
@@ -623,7 +625,15 @@ fi
 
 # ---------------- benchmarks (LAST — slowest, most likely to be cut short) ----------------
 if have_stage benchmarks; then
-  echo ""; echo ">>> STAGE: benchmarks (VSI-Bench / MMMU-val / Video-MME)"
+  echo ""; echo ">>> STAGE: benchmarks (VSI-Bench / MMMU-val / Video-MME / IFBench)"
+  # --max-samples does NOT apply here: run_eval.py / VLMEvalKit has no sample-limit flag, so the
+  # benchmarks stage ALWAYS runs the full sets. Warn loudly rather than silently ignoring the cap
+  # (a silent no-op once made a "smoke" run execute all 300 IFBench prompts). [[feedback_no_silent_fail]]
+  if [[ -n "$MAX_SAMPLES" ]]; then
+    echo "  ⚠ --max-samples=$MAX_SAMPLES is IGNORED for benchmarks (run_eval.py has no sample cap)." >&2
+    echo "    The benchmarks stage runs FULL sets. To smoke-test cheaply, use --stages aux (cap applies there)" >&2
+    echo "    or run a single short benchmark via --skip-* for the long ones." >&2
+  fi
   reason_bool="$([[ "$THINKING" == on ]] && echo true || echo false)"
   # display = basename of SERVED_ID (the short symlink for long paths) — UNIQUE per run. Using the
   # raw $MODEL basename would be 'hf' for every pmartins '.../step_N/hf', colliding all their
@@ -659,7 +669,7 @@ PY
   fi
   [[ -n "$BENCH_EXTRA" ]] && bargs+=( $BENCH_EXTRA )
   ( cd "$BENCH_DIR" && "${bargs[@]}" ) \
-    && STAGE_RESULTS+=("benchmarks: OK -> $BENCH_DIR/results/{vsibench,mmmu_val,video_mme}/$disp/") \
+    && STAGE_RESULTS+=("benchmarks: OK -> $BENCH_DIR/results/{vsibench,mmmu_val,video_mme,ifbench}/$disp/") \
     || STAGE_RESULTS+=("benchmarks: FAILED")
   rm -f "$cfg"
 fi
