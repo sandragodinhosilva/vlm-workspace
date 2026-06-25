@@ -41,7 +41,14 @@ _substep() {
   local log="$1" stage="$2"
   case "$stage" in
     aux)        grep -oE 'Running (video|text|image)[ a-zA-Z]*' "$log" 2>/dev/null | tail -1;;
-    benchmarks) grep -oE '\[(RUN|SKIP)\] (VSI-Bench|MMMU|Video-MME)[^]]*|MMMU_DEV_VAL\] Sample [0-9]+|Video-MME' "$log" 2>/dev/null | tail -1;;
+    benchmarks)
+      # Prefer the latest [RUN] line (the benchmark actually executing) so a [SKIP] line
+      # (e.g. "[SKIP] Video-MME" on an IFBench-only run) never masquerades as the live sub-step.
+      local sub
+      sub="$(grep -oE '\[RUN\] (VSI-Bench|MMMU|Video-MME|IFBench)[^]]*' "$log" 2>/dev/null | tail -1)"
+      [[ -z "$sub" ]] && sub="$(grep -oE 'MMMU_DEV_VAL\] Sample [0-9]+|IFBench prompt-level' "$log" 2>/dev/null | tail -1)"
+      [[ -z "$sub" ]] && sub="$(grep -oE '\[SKIP\] (VSI-Bench|MMMU|Video-MME|IFBench)[^]]*' "$log" 2>/dev/null | tail -1)"
+      echo "$sub";;
     agreement)  grep -oE 'step [12]/2|Processing: [^ ]+' "$log" 2>/dev/null | tail -1;;
   esac
 }
@@ -54,11 +61,26 @@ _eta_min() {
   local log="$1" stage="$2" base="$3" think="$4"
   local order=(serving preflight aux visualobs agreement benchmarks DONE)
   # per-stage typical minutes [thinkoff]:  aux scales hugely with thinkON
-  local m_serve=4 m_pre=1 m_vo=8 m_agr=18 m_bench_novmme=45
+  local m_serve=4 m_pre=1 m_vo=8 m_agr=18
   local m_aux; if [[ "$think" == on ]]; then m_aux=$([[ "$base" == *27b* ]] && echo 250 || echo 165); else m_aux=$([[ "$base" == *27b* ]] && echo 12 || echo 10); fi
-  # Video-MME present? (only known once benchmarks logs it; assume present unless SKIP seen)
-  local vmme=60; grep -q "SKIP] Video-MME" "$log" 2>/dev/null && vmme=0
-  local m_bench=$(( m_bench_novmme + vmme ))
+  # benchmarks budget = sum of the benchmarks that will ACTUALLY run. Each is subtracted when
+  # SKIPPED (via --skip-* / [SKIP] in the log) — so an IFBench-only run (3 skips) budgets ~5min,
+  # NOT the full ~75min. Typical thinkoff mins: VSI 12, MMMU 15, Video-MME 60, IFBench 5.
+  local b_vsi=12 b_mmmu=15 b_vmme=60 b_ifb=5
+  grep -qE "SKIP] VSI-Bench|--skip-vsibench" "$log" 2>/dev/null && b_vsi=0
+  grep -qE "SKIP] MMMU|--skip-mmmu"          "$log" 2>/dev/null && b_mmmu=0
+  grep -qE "SKIP] Video-MME|--skip-videomme" "$log" 2>/dev/null && b_vmme=0
+  grep -qE "SKIP] IFBench|--skip-ifbench"    "$log" 2>/dev/null && b_ifb=0
+  local m_bench=$(( b_vsi + b_mmmu + b_vmme + b_ifb ))
+  # Authoritative override: VLMEvalKit's run_api logs "Total datasets: N" = how many benchmarks it
+  # ACTUALLY loaded (after --skip-*). N=1 with an "IFBench" inference line ⇒ an IFBench-only run, so
+  # budget ~5min even when the cmd-line skip flags are absent from the log (pre-fix LOG_CMD). NOTE:
+  # the stage BANNER always lists all 4 names, so we must NOT use a negative VSI/MMMU/VideoMME match
+  # here — "Total datasets: 1" + an IFBench inference/pipeline line is the unambiguous signal.
+  if grep -q "Total datasets: 1" "$log" 2>/dev/null \
+     && grep -qE "(-+ IFBench -+|\[IFBench\]|IFBench: (Pending|Running))" "$log" 2>/dev/null; then
+    m_bench=$b_ifb
+  fi
   declare -A dur=( [serving]=$m_serve [preflight]=$m_pre [aux]=$m_aux [visualobs]=$m_vo [agreement]=$m_agr [benchmarks]=$m_bench )
   # Only count stages this run actually requested (--stages). visualobs implies agreement
   # (eval_all runs agreement after visualobs). serving/preflight always run.

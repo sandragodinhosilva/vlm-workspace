@@ -11,6 +11,8 @@ Usage:
 """
 
 import base64
+import json
+import os
 import re
 import subprocess
 import tempfile
@@ -29,11 +31,16 @@ DEFAULT_MAX_TOKENS = 8192
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_THINK = True  # request thinking by default (model-dependent)
 
+# Temp mp4s go to sgsilva tmp, NOT the shared /tmp (output-locations rule).
+TMP_DIR = "/mnt/data/sgsilva/tmp"
+os.makedirs(TMP_DIR, exist_ok=True)
+
 WORKER_NODES = [f"worker-{i}" for i in range(32)]  # worker-0 … worker-31
 
 # Session dataset root — all sessions (10k + 1805) live under 10k/all
 SESSION_ROOT = Path("/mnt/data/shared/vlm/data/10k/all")
 VLLM_PORT = 8000
+VLLM_PORTS = [8000, 8001, 8002, 8003]  # scan a small range so non-8000 servers show up
 SCAN_TIMEOUT = 2.0  # seconds per node
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -145,7 +152,7 @@ def build_rep_video(session_id: str, rep_name: str) -> tuple[str | None, str]:
     if not frame_arrays:
         return None, f"Could not read any frames from {rep_dir}"
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir="/tmp")
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=TMP_DIR)
     tmp.close()
     import imageio.v3 as iio
     iio.imwrite(tmp.name, frame_arrays, fps=fps, codec="libx264")
@@ -154,6 +161,90 @@ def build_rep_video(session_id: str, rep_name: str) -> tuple[str | None, str]:
 
 
 # ── dataset loader helpers ────────────────────────────────────────────────────
+
+# EXP-B reasoning-trace prompts (the *_gtobs.txt the teacher uses). Loading one
+# into the editable Prompt box lets you tweak it live and re-run gemini to see how
+# the wording changes the trace — iterate on the prompt without regenerating.
+REASONING_VARIANTS_DIR = Path(
+    "/home/sgsilva/vlm-post-training/prompts/dataset_creation/add_reasoning_severity_v3_variants")
+# The 3 ENFORCED GT-obs prompts (the EXP-B goal: trace must CITE the obs) first,
+# then the 3 plain gtobs adaptations. (pmartins' originals omitted — not obs-conditioned.)
+# All are {task_section}-style, so they load the same way.
+REASONING_VARIANTS = [
+    "default_gtobs_ondemand.txt",   # video-primary, consult VObs only on doubt (B-ondemand)
+    "default_gtobs_enforced.txt", "more_natural_gtobs_enforced.txt", "without_sections_gtobs_enforced.txt",
+    "default_gtobs.txt", "more_natural_gtobs.txt", "without_sections_gtobs.txt",
+]
+
+
+def _strip_prompt_scaffolding(content: str) -> str:
+    """Strip the ===/PROMPT/Source/Purpose header + TEMPLATE VARIABLES footer
+    documentation so only the instruction body is sent to the teacher (mirrors
+    prompt_loader.load_prompt). Falls back to the raw text if no scaffolding."""
+    eq = "=" * 80
+    m = re.search(rf"{eq}\n.*?{eq}\n\n(.*?)\n\n{eq}\nTEMPLATE VARIABLES:", content, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # header but no footer: drop the leading ===…=== doc block if present
+    m2 = re.search(rf"^{eq}\n.*?{eq}\n+(.*)$", content, re.DOTALL)
+    if m2:
+        return m2.group(1).strip()
+    return content.strip()
+
+
+def build_reasoning_prompt(dataset_path: str, row_index: int, variant: str) -> tuple[str, str]:
+    """Build the EXP-B reasoning-trace prompt for a row: fill the chosen *_gtobs.txt
+    {task_section} with the stage-2 question (user turn) + the GT answer as
+    <correct_answer>. Returns (prompt, status). Mirrors gen_stage2_severity_traces.py."""
+    try:
+        ds = load_dataset_cached(dataset_path.strip())
+        row = ds[int(row_index)]
+        user = row["messages"][1]["content"]
+        gt = row["messages"][-1]["content"]
+        gt = re.sub(r"<think>.*?</think>\s*", "", gt, flags=re.DOTALL).strip()
+        # {task_section} must be DATA ONLY (exercise_description + visual_observations
+        # + the response format), NOT the stage-2 user-turn PREAMBLE ("You are an
+        # expert physiotherapy assistant…"), which conflicts with the *_gtobs.txt
+        # prompt's own "You are a reasoning trace generator…" framing. Strip the
+        # preamble: keep from the first <exercise_description> onward.
+        idx = user.find("<exercise_description>")
+        data = user[idx:] if idx != -1 else user
+        task_section = f"{data}\n\n<correct_answer>\n{gt}\n</correct_answer>"
+        tmpl = _strip_prompt_scaffolding((REASONING_VARIANTS_DIR / variant).read_text())
+        prompt = tmpl.replace("{task_section}", task_section)
+        return prompt, f"Loaded reasoning prompt ({variant}) for row {int(row_index)} — edit + Run gemini"
+    except Exception as e:
+        return "", f"ERROR building reasoning prompt: {type(e).__name__}: {e}"
+
+
+APP_DATASETS_DIR = Path("/mnt/data/sgsilva/datasets/app_video_datasets")
+# Datasets pinned to the TOP of the dropdown. The *_reasoning_sample sets (with
+# generated <think> traces) come FIRST — those are the ones to inspect; the plain
+# *_enforced/_soft sets are the no-reasoning Phase-1 inputs (empty <think>).
+PINNED_DATASETS = [
+    "/mnt/data/sgsilva/datasets/app_video_datasets/expb_stage2_reasoning_sample",
+    "/mnt/data/sgsilva/datasets/app_video_datasets/expb_stage2_reasoning_sample_soft",
+    "/mnt/data/sgsilva/datasets/app_video_datasets/expb_stage2_enforced",
+    "/mnt/data/sgsilva/datasets/app_video_datasets/expb_stage2_soft",
+]
+
+
+def _is_hf_dataset(p: Path) -> bool:
+    return (p / "dataset_info.json").exists() or (p / "state.json").exists()
+
+
+def list_app_datasets() -> list[str]:
+    """Dropdown choices: pinned EXP-B sets first, then everything else in
+    app_video_datasets/ by mtime (newest first). Returns full paths."""
+    pinned = [d for d in PINNED_DATASETS if Path(d).exists()]
+    others = []
+    if APP_DATASETS_DIR.exists():
+        cand = [p for p in APP_DATASETS_DIR.iterdir()
+                if p.is_dir() and _is_hf_dataset(p) and str(p) not in pinned]
+        cand.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        others = [str(p) for p in cand]
+    return pinned + others
+
 
 _ds_cache: dict = {}  # path → loaded dataset
 
@@ -247,7 +338,7 @@ def _frames_to_video(frames: list, fps: float) -> str | None:
     if not frame_arrays:
         return None
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir="/tmp")
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=TMP_DIR)
     tmp.close()
     import imageio.v3 as iio
     iio.imwrite(tmp.name, frame_arrays, fps=float(fps), codec="libx264")
@@ -267,16 +358,77 @@ def _parse_obs_lines(text: str) -> dict[int, str]:
     return {int(n): " ".join(ans.split()) for n, ans in numbered}
 
 
+def _parse_severity_block(text: str) -> tuple[dict, dict]:
+    """Parse a stage-2 bracket answer → ({error_name: severity}, {Effectiveness:n, 'Injury Risk':n}).
+    Errors come from the [ERRORS] block; scores from [SCORES]."""
+    errs, scores = {}, {}
+    eblk = text.split("[ERRORS]", 1)[-1].split("[SCORES]", 1)[0] if "[ERRORS]" in text else ""
+    for line in eblk.strip().splitlines():
+        if ":" in line:
+            k, v = line.rsplit(":", 1)
+            m = re.search(r"\d+", v)
+            if m:
+                errs[k.strip()] = int(m.group())
+    sblk = text.split("[SCORES]", 1)[-1].split("[FEEDBACK]", 1)[0] if "[SCORES]" in text else ""
+    for label in ("Effectiveness", "Injury Risk"):
+        m = re.search(rf"{label}:\s*(\d+)", sblk, re.IGNORECASE)
+        if m:
+            scores[label] = int(m.group(1))
+    return errs, scores
+
+
+def score_severity(pred: str, gt: str) -> tuple[str, float]:
+    """Score a stage-2 [ERRORS]/[SCORES] prediction vs GT: per-error exact-match +
+    MAE, plus Effectiveness/Injury exact. Returns (formatted_diff, error_exact_ratio)."""
+    gt_err, gt_sc = _parse_severity_block(gt)
+    pr_err, pr_sc = _parse_severity_block(pred)
+    if not gt_err:
+        return "GT has no [ERRORS] block — cannot score", 0.0
+
+    rows, exact, shared_abs, n_shared = [], 0, 0, 0
+    for name in gt_err:
+        g = gt_err[name]
+        if name in pr_err:
+            p = pr_err[name]
+            n_shared += 1
+            d = abs(g - p)
+            shared_abs += d
+            if d == 0:
+                exact += 1
+            icon = "✓" if d == 0 else ("≈" if d == 1 else "✗")
+            rows.append(f"{icon} {name}: GT {g}  PRED {p}  (Δ{d})")
+        else:
+            rows.append(f"· {name}: GT {g}  PRED (missing)")
+    exact_ratio = exact / len(gt_err)
+    mae = (shared_abs / n_shared) if n_shared else None
+    sc_rows = []
+    for label in ("Effectiveness", "Injury Risk"):
+        g, p = gt_sc.get(label), pr_sc.get(label)
+        hit = "✓" if (g is not None and g == p) else "✗"
+        sc_rows.append(f"{hit} {label}: GT {g}  PRED {p}")
+
+    header = (f"Severity: {exact}/{len(gt_err)} exact ({exact_ratio*100:.0f}%)"
+             + (f", err-MAE {mae:.2f}" if mae is not None else "")
+             + f", {n_shared}/{len(gt_err)} errors parsed\n"
+             + "  ".join(sc_rows) + "\n" + "─"*60 + "\n")
+    return header + "\n".join(rows), exact_ratio
+
+
 def score_vo(pred: str, gt: str) -> tuple[str, float]:
     """
-    Score a VO prediction against GT by exact-match per numbered line.
-    Returns (formatted_diff, agreement_ratio).
+    Score a prediction vs GT. Auto-detects the task by GT format:
+      - stage-2 severity ([ERRORS] bracket) → score_severity
+      - stage-1 visual-obs (numbered [VISUAL OBSERVATIONS]) → exact-match per line
+    Returns (formatted_diff, ratio).
     """
+    if "[ERRORS]" in gt:
+        return score_severity(pred, gt)
+
     pred_lines = _parse_obs_lines(pred)
     gt_lines   = _parse_obs_lines(gt)
 
     if not gt_lines:
-        return "GT has no numbered lines — cannot score", 0.0
+        return "GT has no numbered lines or [ERRORS] block — cannot score", 0.0
 
     all_keys = sorted(set(gt_lines) | set(pred_lines))
     matches = 0
@@ -295,8 +447,20 @@ def score_vo(pred: str, gt: str) -> tuple[str, float]:
     return header + "\n\n".join(rows), ratio
 
 
+_flip_cache: dict = {}  # (source_path, source_mtime) -> flipped mp4 path
+
+
 def _flip_video(video_path: str) -> str | None:
-    """Horizontally flip all frames of a video, return path to new /tmp mp4."""
+    """Horizontally flip a video → mp4. CACHED by (source path, mtime): re-running
+    with only the prompt changed reuses the existing flip instead of rebuilding."""
+    try:
+        key = (video_path, os.path.getmtime(video_path))
+    except OSError:
+        key = (video_path, 0)
+    cached = _flip_cache.get(key)
+    if cached and os.path.exists(cached):
+        return cached
+
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     frames = []
@@ -308,10 +472,11 @@ def _flip_video(video_path: str) -> str | None:
     cap.release()
     if not frames:
         return None
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir="/tmp")
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=TMP_DIR)
     tmp.close()
     import imageio.v3 as iio
     iio.imwrite(tmp.name, frames, fps=fps, codec="libx264")
+    _flip_cache[key] = tmp.name
     return tmp.name
 
 
@@ -324,6 +489,74 @@ def _split_think(text: str) -> tuple[str, str]:
 
 
 # ── inference ─────────────────────────────────────────────────────────────────
+
+EVAL_VENV_PY = "/home/sgsilva/vlm-post-training-home-venv/bin/python"
+VERTEX_HELPER = str(Path(__file__).parent / "_vertex_call.py")
+METRICS_HELPER = str(Path(__file__).parent / "_severity_metrics.py")
+
+
+def _canonical_metrics(pairs: list) -> str:
+    """Run eval.compute_severity_metrics over accumulated (gt, pred) pairs via the
+    eval venv (this app's venv lacks sklearn). Returns a formatted block."""
+    if not pairs:
+        return "(no scored reps yet — run on rows with a stage-2 GT)"
+    import subprocess
+    try:
+        p = subprocess.run([EVAL_VENV_PY, METRICS_HELPER], input=json.dumps(pairs),
+                           capture_output=True, text=True, timeout=60)
+        if p.returncode != 0:
+            return f"metrics error: {p.stderr[-300:] or p.stdout[-300:]}"
+        m = json.loads(p.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        return f"metrics error: {type(e).__name__}: {e}"
+    pct = lambda v: f"{v*100:.1f}%" if isinstance(v, (int, float)) else "—"
+    g = m.get
+    return (
+        f"CANONICAL BOARD METRICS over {m.get('n')} scored rep(s):\n"
+        f"{'─'*56}\n"
+        f"Error-detection : F1 {pct(g('error_detection_f1'))}  "
+        f"P {pct(g('error_detection_precision'))}  R {pct(g('error_detection_recall'))}  "
+        f"Acc {pct(g('error_detection_accuracy'))}\n"
+        f"Sample-level F1 : {pct(g('sample_error_detection_f1'))}\n"
+        f"Severity Acc    : exact {pct(g('overall_severity_accuracy'))}  "
+        f"within-1 {pct(g('overall_severity_within_1'))}  "
+        f"non-1 {pct(g('overall_severity_accuracy_non1'))}\n"
+        f"Effectiveness   : exact {pct(g('effectiveness_exact_match_rate'))}  MAE {g('effectiveness_mae')}\n"
+        f"Injury Risk     : exact {pct(g('injury_risk_exact_match_rate'))}  MAE {g('injury_risk_mae')}"
+    )
+
+
+def _run_vertex(model_name, prompt, image_file, video_file, system_prompt,
+                max_tokens, temperature, max_frames):
+    """Route a gemini/Vertex call through the eval venv (this app's venv lacks
+    the GCloud SDK). Returns (thinking, answer, status)."""
+    import subprocess, os
+    req = {
+        "model": model_name,
+        "prompt": prompt,
+        "system": system_prompt.strip() or None,
+        "max_tokens": int(max_tokens),
+        "temperature": float(temperature),
+    }
+    # gemini takes a single video file (not extracted frames); pass the path.
+    if video_file is not None:
+        req["video_path"] = str(video_file)
+    elif image_file is not None:
+        req["image_paths"] = [str(image_file)]
+    env = dict(os.environ)
+    env.setdefault("GOOGLE_APPLICATION_CREDENTIALS",
+                   "/home/sgsilva/swordhealth-ai-research-af166b5009eb.json")
+    env.setdefault("VERTEXAI_PROJECT", "swordhealth-ai-research")
+    try:
+        p = subprocess.run([EVAL_VENV_PY, VERTEX_HELPER], input=json.dumps(req),
+                           capture_output=True, text=True, timeout=300, env=env)
+        if p.returncode != 0:
+            return "", "", f"ERROR (vertex subprocess): {p.stderr[-400:] or p.stdout[-400:]}"
+        out = json.loads(p.stdout.strip().splitlines()[-1])
+        return out.get("thinking", ""), out.get("content", ""), out.get("status", "OK")
+    except Exception as e:
+        return "", "", f"ERROR (vertex): {type(e).__name__}: {e}"
+
 
 def run_query(
     server_url: str,
@@ -340,10 +573,19 @@ def run_query(
     """Returns (thinking_trace, answer, status)."""
     if not prompt.strip():
         return "", "", "ERROR: prompt is empty"
+    if not model_name or not str(model_name).strip():
+        return "", "", "ERROR: no model selected — scan the cluster and click 'Use selected', or type a model name (e.g. 'gemini-3-flash-preview' for Vertex)"
+
+    # ── Vertex / gemini branch ─────────────────────────────────────────────
+    # gemini models run via the eval venv (this app's venv lacks the GCloud SDK);
+    # server_url is ignored. Trigger on a gemini/vertex model name.
+    _m = str(model_name).strip()
+    if "gemini" in _m.lower() or _m.startswith("vertex_ai/"):
+        return _run_vertex(_m, prompt, image_file, video_file, system_prompt,
+                           max_tokens, temperature, max_frames)
+
     if not server_url.strip():
         return "", "", "ERROR: server URL is empty"
-    if not model_name or not str(model_name).strip():
-        return "", "", "ERROR: no model selected — scan the cluster and click 'Use selected', or type a model name manually"
 
     # Build content list
     content: list[dict] = []
@@ -425,24 +667,44 @@ def fetch_models(server_url: str) -> tuple[list[str], str]:
         return [], f"ERROR: {e}"
 
 
+# Vertex/gemini models — always selectable in the dropdown (no server needed).
+GEMINI_MODELS = ["gemini-3-flash-preview", "gemini-3.1-pro-preview"]
+
+
 def refresh_models(server_url: str):
     models, status = fetch_models(server_url)
-    choices = models if models else []
-    value = choices[0] if choices else ""
+    # Always offer the gemini models too — they route via Vertex, no server.
+    choices = list(GEMINI_MODELS) + [m for m in models if m not in GEMINI_MODELS]
+    value = (models[0] if models else GEMINI_MODELS[0])
+    if not models:
+        status = (status or "") + "  (server has no models — gemini still available)"
     return gr.update(choices=choices, value=value), status
 
 
 # ── cluster scan ──────────────────────────────────────────────────────────────
 
-def _get_vllm_owner(node: str) -> str:
-    """SSH to node and return the user running vLLM, or '?' on failure."""
+def _get_vllm_owner(node: str, port: int = VLLM_PORT) -> str:
+    """SSH to node and return the user OWNING the server on this PORT.
+
+    A node can host several vLLM servers on different ports (e.g. worker-30 with
+    jmendon on :8000 and sgsilva on :8001), so resolve the owner of the process
+    actually LISTENING on `port` — not just the first vllm process on the node.
+    """
     import subprocess
+    # Find the PID listening on :port (ss → PID), then its user (ps -o user=).
+    # Fall back to a node-wide vllm grep only if the port lookup yields nothing.
+    cmd = (
+        f"pid=$(ss -ltnp 2>/dev/null | grep ':{port} ' "
+        f"| sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | head -1); "
+        f"u=$([ -n \"$pid\" ] && ps -o user= -p \"$pid\" 2>/dev/null | tr -d ' '); "
+        f"if [ -n \"$u\" ]; then echo \"$u\"; "
+        f"else ps aux | grep vllm | grep -v grep | awk '{{print $1}}' | head -1; fi"
+    )
     try:
         result = subprocess.run(
             ["ssh", "-o", "ConnectTimeout=2", "-o", "StrictHostKeyChecking=no",
-             "-o", "BatchMode=yes", node,
-             "ps aux | grep vllm | grep -v grep | awk '{print $1}' | head -1"],
-            capture_output=True, text=True, timeout=4,
+             "-o", "BatchMode=yes", node, cmd],
+            capture_output=True, text=True, timeout=5,
         )
         owner = result.stdout.strip()
         return owner if owner else "?"
@@ -450,16 +712,16 @@ def _get_vllm_owner(node: str) -> str:
         return "?"
 
 
-def _probe_node(node: str) -> tuple[str, list[str], str] | None:
-    """Return (node, [model_ids], owner) if a vLLM server is live on that node, else None."""
-    url = f"http://{node}:{VLLM_PORT}/v1/models"
+def _probe_node(node: str, port: int = VLLM_PORT) -> tuple[str, int, list[str], str] | None:
+    """Return (node, port, [model_ids], owner) if a vLLM server is live, else None."""
+    url = f"http://{node}:{port}/v1/models"
     try:
         r = requests.get(url, timeout=SCAN_TIMEOUT)
         if r.status_code == 200:
             data = r.json()
             models = [m["id"] for m in data.get("data", [])]
-            owner = _get_vllm_owner(node)
-            return node, models, owner
+            owner = _get_vllm_owner(node, port)
+            return node, port, models, owner
     except Exception:
         pass
     return None
@@ -473,8 +735,9 @@ def scan_cluster() -> tuple[str, list, list[str]]:
     choices: "worker-N | owner | <model name>" — shown in dropdown
     """
     results = []
-    with ThreadPoolExecutor(max_workers=16) as pool:
-        futures = {pool.submit(_probe_node, node): node for node in WORKER_NODES}
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        futures = {pool.submit(_probe_node, node, port): (node, port)
+                   for node in WORKER_NODES for port in VLLM_PORTS}
         for fut in as_completed(futures):
             r = fut.result()
             if r is not None:
@@ -483,37 +746,43 @@ def scan_cluster() -> tuple[str, list, list[str]]:
     if not results:
         return "No vLLM servers found on worker-0 … worker-31", [], []
 
-    results.sort(key=lambda x: int(x[0].split("-")[1]))
+    results.sort(key=lambda x: (int(x[0].split("-")[1]), x[1]))
 
     lines = []
     choices = []
-    for node, models, owner in results:
-        url = f"http://{node}:{VLLM_PORT}"
+    for node, port, models, owner in results:
+        # only annotate the port when it's not the default, to keep labels clean
+        port_tag = "" if port == VLLM_PORT else f":{port}"
         for mid in models:
             short = mid.split("/")[-1]  # short name for display
-            label = f"{node} | {owner} | {short}"
+            label = f"{node}{port_tag} | {owner} | {short}"
             choices.append(label)
-            lines.append(f"✓ {node}  [{owner}]  {short}")
+            lines.append(f"✓ {node}:{port}  [{owner}]  {short}")
 
     summary = f"Found {len(results)} live server(s):\n" + "\n".join(lines)
     return summary, results, choices
 
 
 def apply_scan_selection(selected: str, scan_results: list) -> tuple[str, str]:
-    """Given a selection 'worker-N | owner | short_name', return (server_url, full_model_id)."""
+    """Given a selection 'worker-N[:PORT] | owner | short_name', return (server_url, full_model_id)."""
     if not selected or not scan_results:
         return "", ""
     parts = [p.strip() for p in selected.split("|")]
     if len(parts) < 3:
         return "", ""
-    node_part = parts[0]
+    node_part = parts[0]            # "worker-N" or "worker-N:PORT"
     short = parts[2]
-    for node, models, owner in scan_results:
-        if node == node_part:
+    if ":" in node_part:
+        sel_node, sel_port = node_part.split(":", 1)
+        sel_port = int(sel_port)
+    else:
+        sel_node, sel_port = node_part, VLLM_PORT
+    for node, port, models, owner in scan_results:
+        if node == sel_node and port == sel_port:
             for mid in models:
                 if mid.split("/")[-1] == short:
-                    return f"http://{node}:{VLLM_PORT}", mid
-            return f"http://{node}:{VLLM_PORT}", models[0] if models else ""
+                    return f"http://{node}:{port}", mid
+            return f"http://{node}:{port}", models[0] if models else ""
     return "", ""
 
 
@@ -541,6 +810,7 @@ def build_ui():
         # state: list of (node, [model_ids]) from last scan — must live inside Blocks
         scan_state = gr.State([])
         activity_log = gr.State([])
+        metrics_pairs = gr.State([])   # accumulated [{gt, pred}] for canonical metrics
 
         gr.Markdown("# VLM Vibe Tester\nSend text / image / video to any vLLM-served model and inspect the output.")
 
@@ -565,9 +835,11 @@ def build_ui():
                 )
                 model_name = gr.Dropdown(
                     label="Model name (or path)",
-                    choices=[],
-                    value="",
+                    choices=list(GEMINI_MODELS),   # gemini selectable on load (no server needed)
+                    value=GEMINI_MODELS[0],
                     allow_custom_value=True,
+                    info="Gemini models route via Vertex (Server URL ignored). "
+                         "Scan the cluster + Refresh to add served vLLM models.",
                 )
                 with gr.Row():
                     refresh_btn = gr.Button("Refresh models", size="sm")
@@ -579,14 +851,30 @@ def build_ui():
 
                 with gr.Group():
                     gr.Markdown("**Load from dataset** — pre-fills prompt + video from an HF Arrow dataset row")
+                    with gr.Row():
+                        dataset_dd = gr.Dropdown(
+                            label="Pick a dataset (app_video_datasets/ — EXP-B on top)",
+                            choices=list_app_datasets(),
+                            value=(list_app_datasets()[0] if list_app_datasets() else None),
+                            scale=5, allow_custom_value=True,
+                        )
+                        ds_refresh_btn = gr.Button("↻", size="sm", scale=1)
+                        app_refresh_btn = gr.Button("🔄 Refresh app", size="sm", scale=2)
                     dataset_path = gr.Textbox(
-                        label="Dataset path",
-                        placeholder="/mnt/data/shared/vlm/data/human_annotation_datasets/1805_not_reviewed_visual_obs/1805_oracle_obs_sft_train_categorical",
+                        label="Dataset path (or type any HF Arrow path)",
+                        value=(list_app_datasets()[0] if list_app_datasets() else ""),
+                        placeholder="/mnt/data/shared/vlm/data/...",
                         lines=1,
                     )
                     with gr.Row():
                         row_index = gr.Number(label="Row index", value=0, precision=0)
                         load_sample_btn = gr.Button("Load sample", size="sm")
+                    with gr.Row():
+                        reasoning_variant_dd = gr.Dropdown(
+                            label="Reasoning prompt variant",
+                            choices=REASONING_VARIANTS, value=REASONING_VARIANTS[0], scale=3)
+                        load_reasoning_prompt_btn = gr.Button(
+                            "Load reasoning prompt → Prompt box", size="sm", scale=2)
                     gt_answer = gr.Textbox(label="Ground-truth answer (from dataset)", lines=4, interactive=False)
                     dataset_status = gr.Textbox(label="", show_label=False, interactive=False)
 
@@ -644,7 +932,12 @@ def build_ui():
                 gr.Markdown("### Output")
                 run_status = gr.Textbox(label="Status", interactive=False)
                 answer_out = gr.Textbox(label="Answer", lines=12, interactive=False)
-                score_out = gr.Textbox(label="VO score vs GT (auto when GT is loaded)", lines=10, interactive=False)
+                score_out = gr.Textbox(label="Score vs GT (this rep)", lines=8, interactive=False)
+                metrics_out = gr.Textbox(
+                    label="Canonical board metrics (accumulates across runs)",
+                    lines=8, interactive=False,
+                    value="(no scored reps yet — run on rows with a stage-2 GT)")
+                metrics_reset_btn = gr.Button("Reset accumulated metrics", size="sm")
                 thinking_out = gr.Textbox(label="Thinking trace", lines=12, interactive=False)
 
         gr.Markdown("---")
@@ -674,7 +967,9 @@ def build_ui():
             url, mid = apply_scan_selection(selected, results)
             status = f"Using {url}  model: {mid}" if mid else "ERROR: nothing selected"
             log = _append(log, f"→ Selected: {selected}", f"  server={url}  model={mid}")
-            return url, gr.update(choices=[mid] if mid else [], value=mid), status, _render(log), log
+            # keep gemini selectable alongside the picked served model
+            choices = ([mid] if mid else []) + list(GEMINI_MODELS)
+            return url, gr.update(choices=choices, value=mid or GEMINI_MODELS[0]), status, _render(log), log
 
         use_btn.click(
             fn=_use_selected,
@@ -722,12 +1017,61 @@ def build_ui():
             log = _append(log, f"  {status}")
             if video_path:
                 log = _append(log, f"  video built: {video_path}")
-            return sys_p or DEFAULT_SYS, user_p, gt, video_path, need_flip, status, _render(log), log
+            # If the assistant turn carries a STORED reasoning trace (generated
+            # dataset: <think>…non-empty…</think>), split it so the trace shows in
+            # the Thinking box and only the answer stays in the GT box.
+            stored_think = ""
+            t, a = _split_think(gt)
+            if t:
+                stored_think = t
+                gt = a
+                log = _append(log, f"  stored <think> trace: {len(t)} chars")
+            return (sys_p or DEFAULT_SYS, user_p, gt, video_path, need_flip,
+                    stored_think, status, _render(log), log)
 
         load_sample_btn.click(
             fn=_load_sample,
             inputs=[dataset_path, row_index, activity_log],
-            outputs=[system_prompt, prompt, gt_answer, video_input, flip_video, dataset_status, log_box, activity_log],
+            outputs=[system_prompt, prompt, gt_answer, video_input, flip_video,
+                     thinking_out, dataset_status, log_box, activity_log],
+        )
+
+        # "Load reasoning prompt": fill the editable Prompt box with the *_gtobs.txt
+        # reasoning prompt for this row + load the video, so you can tweak the prompt
+        # and Run gemini-flash to see the resulting trace. Also blanks the system box
+        # (the reasoning prompt is self-contained).
+        def _load_reasoning_prompt(path, idx, variant, log):
+            prompt_text, status = build_reasoning_prompt(path, int(idx), variant)
+            log = _append(log, f"→ {status}")
+            _sp, _up, _gt, video_path, need_flip, _st = load_sample(path, int(idx))
+            return "", prompt_text, video_path, need_flip, status, _render(log), log
+
+        load_reasoning_prompt_btn.click(
+            fn=_load_reasoning_prompt,
+            inputs=[dataset_path, row_index, reasoning_variant_dd, activity_log],
+            outputs=[system_prompt, prompt, video_input, flip_video,
+                     dataset_status, log_box, activity_log],
+        )
+
+        # dataset dropdown → fill the path box; refresh ↻ → re-scan app_video_datasets/
+        dataset_dd.change(fn=lambda p: p or "", inputs=[dataset_dd], outputs=[dataset_path])
+        ds_refresh_btn.click(
+            fn=lambda: gr.update(choices=list_app_datasets(),
+                                 value=(list_app_datasets()[0] if list_app_datasets() else None)),
+            inputs=[], outputs=[dataset_dd],
+        )
+
+        # 🔄 Refresh app: CLEAR the dataset cache (so an overwritten dataset reloads
+        # fresh, not the stale cached copy) + re-scan the dropdown, then reload the
+        # current row.
+        app_refresh_btn.click(
+            fn=lambda: (_ds_cache.clear(), gr.update(choices=list_app_datasets()))[1],
+            inputs=[], outputs=[dataset_dd],
+        ).then(
+            fn=_load_sample,
+            inputs=[dataset_path, row_index, activity_log],
+            outputs=[system_prompt, prompt, gt_answer, video_input, flip_video,
+                     thinking_out, dataset_status, log_box, activity_log],
         )
 
         def _refresh_models(url, log):
@@ -744,7 +1088,7 @@ def build_ui():
 
         def _run_query(server_url, model_name, prompt, image_file, video_file,
                        system_prompt, max_tokens, temperature, enable_thinking,
-                       max_frames, flip, gt, log):
+                       max_frames, flip, gt, log, pairs):
             # Apply horizontal flip if requested
             flipped_video = None
             if video_file and flip:
@@ -761,9 +1105,10 @@ def build_ui():
                 server_url, model_name, prompt, image_file, effective_video,
                 system_prompt, max_tokens, temperature, enable_thinking, max_frames,
             )
+            pairs = list(pairs or [])
             if status.startswith("ERROR"):
                 log = _append(log, f"  ✗ {status}")
-                return thinking, answer, "", status, _render(log), log
+                return thinking, answer, "", _canonical_metrics(pairs), status, _render(log), log, pairs
 
             log = _append(log, f"  ✓ {status}")
             if answer:
@@ -775,9 +1120,13 @@ def build_ui():
             score_text = ""
             if gt and gt.strip() and answer:
                 score_text, ratio = score_vo(answer, gt)
-                log = _append(log, f"  VO score: {ratio*100:.1f}%")
+                log = _append(log, f"  score: {ratio*100:.1f}%")
+                # accumulate stage-2 (gt, pred) for canonical pooled metrics
+                if "[ERRORS]" in gt:
+                    pairs.append({"gt": gt, "pred": answer})
 
-            return thinking, answer, score_text, status, _render(log), log
+            metrics_text = _canonical_metrics(pairs)
+            return thinking, answer, score_text, metrics_text, status, _render(log), log, pairs
 
         submit_btn.click(
             fn=_run_query,
@@ -785,9 +1134,14 @@ def build_ui():
                 server_url, model_name, prompt,
                 image_input, video_input,
                 system_prompt, max_tokens, temperature,
-                enable_thinking, max_frames, flip_video, gt_answer, activity_log,
+                enable_thinking, max_frames, flip_video, gt_answer, activity_log, metrics_pairs,
             ],
-            outputs=[thinking_out, answer_out, score_out, run_status, log_box, activity_log],
+            outputs=[thinking_out, answer_out, score_out, metrics_out, run_status, log_box, activity_log, metrics_pairs],
+        )
+
+        metrics_reset_btn.click(
+            fn=lambda: ([], "(reset — no scored reps)"),
+            inputs=[], outputs=[metrics_pairs, metrics_out],
         )
 
     return demo

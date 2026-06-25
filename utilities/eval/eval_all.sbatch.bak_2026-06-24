@@ -33,29 +33,7 @@
 #
 # Required env: MODEL, BASE_MODEL, STAGES, THINKING (on|off — must match the SFT target).
 # aux stage also needs TRAIN_GROUP_ID + RUN_ID. Optional: TP, MAX_LEN, PORT, MAX_SAMPLES,
-# JUDGE_BASE_URL, JUDGE_MODEL, SERVE_WAIT, TESTSET, BENCH_MAX_TOKENS, BENCH_EXTRA.
-#
-# ⚠ THIS SCRIPT IS ENV-DRIVEN, NOT FLAG-DRIVEN. Pass config as ENV VARS (STAGES=..., not --stages).
-#   A missing required var fails in <10s at the :? guard below (no GPU wasted) — but DON'T guess the
-#   command: the canonical, copy-paste form lives in the /eval-vlm skill. Use it.
-#
-# OPTIONAL vo_s2 chain (the two-stage board value, which eval_all.sh does NOT produce on its own):
-#   set WITH_VO_S2=1 ONLY_STEM=<unique obs-stem substring, e.g. aux12k-union-reasoning-sft-step4125>
-#   → after the stages, serves the sft2812 reasoner (thinkON, REASONER_PORT default 8150) and sweeps
-#   ONLY that model's obs → vo_s2 → auto-recompiles master. Override REASONER / REASONER_PORT if needed.
-#   GPU handling (fixed 2026-06-25): the reasoner TP auto-derives from THIS job's allocation
-#   (CUDA_VISIBLE_DEVICES count → REASONER_TP, override with REASONER_TP=N); before serving it WAITS
-#   up to 120s for the just-torn-down model server's GPU memory to release, then serves with
-#   ALLOW_BUSY_GPUS=1 (safe — the only "busy" device is our own draining alloc, never a co-tenant).
-#   So request the SAME --gres for the reasoner as the eval used (gpu:4 for 27B); no separate node.
-#
-# CANONICAL 5-axis thinkON 27B example (mirror this EXACTLY; only change MODEL/RUN_ID/group/ONLY_STEM):
-#   cd /home/sgsilva/vlm-post-training && unset PORT
-#   MODEL=/mnt/data/sgsilva/models/<ckpt> BASE_MODEL=qwen3.5-27b STAGES=aux,visualobs,benchmarks \
-#   THINKING=on TRAIN_GROUP_ID=<group> RUN_ID=<run>_thinkon BENCH_MAX_TOKENS=32768 \
-#   WITH_VO_S2=1 ONLY_STEM=<unique-substring> \
-#   /home/sgsilva/utilities/eval/sbatch_eval_all.sh --gres=gpu:4 --job-name=eval-27b-<short>
-# (thinkOFF: THINKING=off, drop BENCH_MAX_TOKENS; 4 axes only: drop WITH_VO_S2 + ONLY_STEM.)
+# JUDGE_BASE_URL, JUDGE_MODEL, SERVE_WAIT, TESTSET.
 set -uo pipefail
 
 # ---- required ----
@@ -139,72 +117,5 @@ echo "  exec: ${CMD[*]}"
 echo "==========================="
 "${CMD[@]}"
 RC=$?
-echo "===== eval_all.sbatch done (rc=$RC) — model server torn down by eval_all --serve ====="
-
-# ---- OPTIONAL vo_s2 chain (set WITH_VO_S2=1) — the two-stage board value. eval_all does NOT
-#      produce vo_s2 (it needs a separate sft2812-reasoner sweep over the saved stage-1 obs). When
-#      requested, serve the reasoner here (model server already down → GPUs free) and sweep ONLY this
-#      model's obs; reasoner_sweep auto-recompiles the master. Reads obs from disk, so model server
-#      is NOT needed. Off by default — nothing changes for existing runs. ----
-if [[ "$RC" == 0 && "${WITH_VO_S2:-0}" == 1 ]]; then
-  : "${ONLY_STEM:?WITH_VO_S2=1 needs ONLY_STEM=<unique obs-stem substring, e.g. aux12k-union-reasoning-sft-step4125>}"
-  REASONER="${REASONER:-/mnt/data/pmartins/vlm_ckpts/sft_qwen_35_27b_1805_not_reviewed_diverse_reasoning_merged_rep_fe_comparison_3_mix_reas_12k_full_2005/step_2812/hf}"
-  REASONER_PORT="${REASONER_PORT:-8150}"  # OUTSIDE the model's 8000-8099 job-id-port band (no collision)
-
-  # ---- GPU/worker handling (rewritten 2026-06-25) ----------------------------------------
-  # The reasoner runs in THIS job's SLURM allocation, so nvidia-smi only sees OUR --gres GPUs.
-  # Three things bit us before (job 99326): (1) TP hardcoded 4 — must match the allocation;
-  # (2) the model server we just tore down hadn't released its GPU memory yet, so the serve
-  # preflight saw "3/4 free" and refused; (3) no busy-tolerant fallback even though the GPUs
-  # are OURS. Fix: derive TP from the allocation, WAIT for our own teardown to settle, then
-  # allow-busy (the only "busy" device is our draining server, never another user).
-  # Derive TP from the GPUs SLURM gave us (CUDA_VISIBLE_DEVICES count), default 4.
-  REASONER_TP="${REASONER_TP:-}"
-  if [[ -z "$REASONER_TP" ]]; then
-    if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-      REASONER_TP=$(awk -F, '{print NF}' <<<"$CUDA_VISIBLE_DEVICES")
-    elif [[ -n "${SLURM_GPUS_ON_NODE:-}" ]]; then
-      REASONER_TP="$SLURM_GPUS_ON_NODE"
-    else
-      REASONER_TP=4
-    fi
-  fi
-  # Wait for OUR just-torn-down model server's GPU memory to actually free (teardown is async;
-  # vLLM can hold 200GB+ for tens of seconds after SIGTERM). Poll nvidia-smi until the max
-  # used-MiB across our visible GPUs drops below 5 GB, or 120s elapse — THEN serve.
-  echo "===== WITH_VO_S2: waiting for prior server's GPU memory to release (TP=$REASONER_TP) ====="
-  for s in $(seq 1 24); do
-    maxused=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -1)
-    maxused="${maxused:-0}"
-    if [[ "$maxused" -lt 5000 ]]; then echo "  GPUs settled (max ${maxused} MiB used) after $((s*5))s"; break; fi
-    [[ "$s" == 24 ]] && echo "  ⚠ GPUs still show ${maxused} MiB after 120s — proceeding with ALLOW_BUSY_GPUS (our own draining alloc)"
-    sleep 5
-  done
-
-  echo "===== WITH_VO_S2: serving reasoner $REASONER on :$REASONER_PORT (TP=$REASONER_TP, thinkON) ====="
-  # ALLOW_BUSY_GPUS=1 is SAFE here: this is our dedicated SLURM allocation — any residual "busy"
-  # reading is our own draining server, never a co-tenant. (We waited above; this is the backstop.)
-  ALLOW_BUSY_GPUS=1 ENABLE_THINKING=1 QWEN35_VENV=/home/sgsilva/vlm-post-training-home-venv \
-    /home/sgsilva/utilities/serve/start_vllm_server.sh "$REASONER" "$REASONER_TP" 65536 "$REASONER_PORT" &
-  RPID=$!
-  trap 'kill "$RPID" 2>/dev/null' EXIT INT TERM
-  for i in $(seq 1 150); do
-    curl -sf "http://localhost:$REASONER_PORT/v1/models" >/dev/null 2>&1 && { echo "  reasoner up (${i}x10s)"; break; }
-    # if the server proc died (e.g. OOM at this TP), stop waiting the full 25 min
-    kill -0 "$RPID" 2>/dev/null || { echo "  ⚠ reasoner process exited early (PID $RPID gone)"; break; }
-    sleep 10
-  done
-  if curl -sf "http://localhost:$REASONER_PORT/v1/models" >/dev/null 2>&1; then
-    echo "===== WITH_VO_S2: reasoner_sweep ONLY=$ONLY_STEM (vo_s2 → auto-recompile master) ====="
-    REASONER="$REASONER" REASONER_URL="http://localhost:$REASONER_PORT/v1" ONLY="$ONLY_STEM" \
-      /home/sgsilva/utilities/eval/reasoner_sweep.sh
-    RC=$?
-    echo "===== WITH_VO_S2: reasoner_sweep rc=$RC ====="
-  else
-    echo "  ⚠ reasoner never came up — vo_s2 SKIPPED (aux/bench/vo_s1/agree already done)." >&2
-    RC=3
-  fi
-fi
-
-echo "===== eval_all.sbatch FINISHED (rc=$RC) — node releasing ====="
+echo "===== eval_all.sbatch done (rc=$RC) — server torn down by eval_all --serve; node releasing ====="
 exit $RC

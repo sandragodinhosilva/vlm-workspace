@@ -271,7 +271,18 @@ ALREADY_EXPORTED_DIRS=()
 
 for RESULT_DIR in $RESULT_DIRS; do
     DIR_NAME=$(basename "$RESULT_DIR")
-    
+
+    # SAFETY GUARD: never touch an archive/ path. This script only ever exports+deletes step_*
+    # result dirs under $BASE_DIR/{results,checkpoints,...} (see resolve_results_dir) — it does NOT
+    # target /mnt/data/sgsilva/archive/. This guard makes that guarantee explicit so a future
+    # RESULTS_DIR override can't redirect a `rm -rf` into the archive tree.
+    case "$RESULT_DIR" in
+        */archive/*|*/archive)
+            echo -e "${YELLOW}  ⏭ Skipping archive path (never delete archive): $RESULT_DIR${NC}"
+            continue
+            ;;
+    esac
+
     # Check if directory has checkpoints
     CHECKPOINT_COUNT=$(find "$RESULT_DIR" -maxdepth 1 -type d -name "step_*" | wc -l)
     
@@ -396,8 +407,15 @@ elif [ "$DRY_RUN" = true ]; then
     echo -e "${YELLOW}[DRY-RUN] Would delete: $RESULTS_DIR${NC}"
     echo "  Size that would be freed: $RESULTS_SIZE"
 else
+    # SAFETY GUARD: never delete an archive/ path (see the per-dir guard above).
+    case "$RESULTS_DIR" in
+        */archive/*|*/archive)
+            echo -e "${RED}✗ Refusing to delete an archive path: $RESULTS_DIR${NC}"
+            exit 1
+            ;;
+    esac
     RESULTS_SIZE=$(du -sh "$RESULTS_DIR" | cut -f1)
-    
+
     # Double-check before deletion
     echo -e "${YELLOW}⚠ About to delete: $RESULTS_DIR${NC}"
     echo "  Size to be freed: $RESULTS_SIZE"

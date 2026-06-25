@@ -17,13 +17,14 @@
 | SFT data browser | `sft-data-vlm/app.py` | 7866 | `vlm-post-training-home-venv` | Browse and QC text-based SFT datasets (5 MCQA families) from Thrive VLM database | 2026-02-27 | 2026-04-09 | 6 | ✓ |
 | LLM-FMS viewer | `vlm-post-training/web/llm_fms_viewer.py` | 7867 | `vlm-post-training-home-venv` | Inspect image-based LLM-FMS SFT rows: image + prompt + target + metadata | 2026-05-22 | 2026-05-22 | 2 | ✓ |
 | Multimodal eval comparer | `vlm-post-training/web/multimodal_compare_app.py` | 7868 | `vlm-post-training-home-venv` | Side-by-side multimodal eval run comparison with COCO keypoint overlay | 2026-04-21 | 2026-04-21 | 2 | ⚠ hardcoded default dirs stale |
-| Reas-mix inspector | `vlm-post-training/aux_tasks/sft/inspect_reas2_mix_gradio.py` | 7869 | `browser-app-home-venv` | Quick inspector for the reas2 merged reasoning mix: filter by modality/judge verdict | 2026-04-21 | 2026-04-21 | 1 | ✓ |
+| Reas-mix inspector | `vlm-post-training/aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py` | 7869 | `browser-app-home-venv` | Quick inspector for the reas2 merged reasoning mix: filter by modality/judge verdict | 2026-04-21 | 2026-04-21 | 1 | ✓ |
 | Prejudge viewer | `video-sft-vlm/prejudge_viewer.py` | 7870 | `video-sft-vlm-home-venv` | Inspect LLM prejudge smoke verdicts alongside video frames and post-hoc labels | 2026-06-17 | 2026-06-17 | 1 | ✓ new |
 | Mesh viewer | `video-sft-vlm/mesh_viewer.py` | 7871 | `video-sft-vlm-home-venv` | Browse SAM-3D-Body overlay videos: mesh render + interactive 3D skeleton + angle signals | 2026-06-17 | 2026-06-17 | 1 | ✓ new |
 | SAM3D sword viewer | `vlm-post-training/…/sam3d_pilot/sword_viewer.py` | 7872 | `video-sft-vlm-home-venv` | Browse SWORD SAM-3D pipeline outputs: 2D overlay + interactive 3D skeleton + mesh | 2026-05-13 | 2026-05-13 | 1 | ✓ fixed (was broken venv) |
 | GRPO dashboard | `nemo-rl-vlm/tools/grpo_dashboard.py` | 7873 | `vlm-post-training-home-venv` | Explore and compare GRPO training runs: reward curves, task breakdowns | 2026-06-01 | 2026-06-03 | 4 | ✓ fixed (was broken venv) |
 | Reasoning-trace prompt editor | `vlm-post-training/web/reasoning_trace_prompt_app.py` | 7860 | `vlm-post-training-home-venv` | Iterate on reasoning-trace prompts with inline editing + live VLM calls for testing | 2026-05-22 | 2026-05-28 | 3 | ⚠ one default dataset path missing |
 | Claude usage tracker | `utilities/apps/claude-tracker.py` | 8080 | system python3 | Local dashboard for Claude Code token usage and cost estimates | — | — | — | ✓ |
+| VLM vibe tester | `utilities/apps/vibe_test.py` | 7874 | `video-sft-vlm-home-venv` | Free-form inference playground: text/image/video → any served vLLM **or Vertex/gemini** model; cluster scan, dataset dropdown, stage-2 canonical metrics vs GT | 2026-06 | 2026-06-24 | — | ✓ active |
 
 ---
 
@@ -194,7 +195,7 @@ lsof -ti:7861 | xargs -r kill -9
 
 ### 3.9 Reas-Mix Inspector
 
-**Path:** `/home/sgsilva/vlm-post-training/aux_tasks/sft/inspect_reas2_mix_gradio.py`  
+**Path:** `/home/sgsilva/vlm-post-training/aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py`  
 **Port:** 7869  
 **Venv:** `/home/sgsilva/browser-app-home-venv/bin/python`  
 **Input:** `--root <merged_mix_dir>` CLI arg, passed via registry `args:` block.
@@ -290,6 +291,42 @@ lsof -ti:7861 | xargs -r kill -9
 
 ---
 
+### 3.16 VLM Vibe Tester
+
+**Path:** `/home/sgsilva/utilities/apps/vibe_test.py`  
+**Port:** 7874  
+**Venv:** `video-sft-vlm-home-venv`  
+**Goal:** Free-form inference playground — send any text / image / video to any served model and
+inspect the answer + thinking trace. Used heavily for the EXP-B stage-2 template + teacher comparison.
+
+**Inputs / features:**
+- **Model source:** *Scan cluster* probes worker-0…31 on **ports 8000–8003** (not just 8000) and
+  lists every live vLLM server with the **port-specific owner** (so two servers on one node are
+  attributed correctly). Pick + *Use selected*, OR type a model name manually.
+- **Vertex / gemini:** type a gemini model (`gemini-3-flash-preview`, `gemini-3.1-pro-preview`) and
+  the call routes through the eval venv (`_vertex_call.py`) — the app venv lacks the GCloud SDK.
+  Server URL is ignored for gemini; video is sent as a single mp4 (genai SDK).
+- **Dataset dropdown:** lists HF Arrow datasets under `app_video_datasets/` (EXP-B sets pinned on
+  top), fills the path box, builds the rep video, and loads system/user/assistant. A **stored
+  `<think>` trace** (generated dataset) is split into the Thinking box; the bracket answer stays in GT.
+- **Scoring:** auto-detects the GT format — stage-2 `[ERRORS]` → severity scoring; stage-1 numbered
+  `[VISUAL OBSERVATIONS]` → per-line match. A **Canonical board metrics** box accumulates (gt,pred)
+  across runs and computes the eval's own `compute_severity_metrics` (Error-F1/P/R/Acc, severity
+  acc exact/within-1/non-1, eff/injury) via `_severity_metrics.py` in the eval venv. Reset button clears.
+
+**Helper scripts (same dir):** `_vertex_call.py` (Vertex calls in the eval venv),
+`_severity_metrics.py` (canonical metrics in the eval venv).
+
+**Launch:**
+```bash
+~/utilities/apps/launch_app.sh vibe-test
+```
+
+**History:** improvements 2026-06-24 (this session) — multi-port scan, port-specific owner, dataset
+dropdown, Vertex/gemini routing, stage-2 severity scoring + canonical board metrics, stored-trace split.
+
+---
+
 ## 4. Stale Entries in commands.txt — Audit (All Fixed)
 
 | Issue | Fix applied |
@@ -334,7 +371,7 @@ lsof -ti:7861 | xargs -r kill -9
 | 7873 | GRPO dashboard | ✓ `grpo_dashboard.py` |
 | 8080 | Claude usage tracker | — (already unique) |
 
-All 15 apps can now run concurrently without port management overhead.
+All 16 apps can now run concurrently without port management overhead.
 
 ---
 
@@ -372,7 +409,7 @@ Registry-based script. Features as of 2026-06-17:
 - Kills the old process on the port before starting
 - Launches in named tmux window inside persistent `app` session on login-1
 - Prints full banner: label, goal, script, venv, port, browser URL, logs command
-- `--list` to see all 15 apps + ports
+- `--list` to see all 16 apps + ports
 - `--status` to see which apps are currently running (SSHes to login-1 from worker)
 - Health-check after launch: polls the app for up to 30s and reports ready/failed
 
@@ -392,13 +429,13 @@ Registry-based script. Features as of 2026-06-17:
 
 ### 6.4 Fixed-Port Discipline — **IMPLEMENTED** (9 files updated)
 
-Code defaults updated so all 15 apps have unique ports and can run concurrently:
+Code defaults updated so all 16 apps have unique ports and can run concurrently:
 - `vlm-post-training/web/browser-app/config.py`: `7862` → `7863`
 - `vlm-post-training/web/human_visual_obs_compare_app.py`: `7863` → `7865`
 - `sft-data-vlm/app.py`: `7863` → `7866`
 - `vlm-post-training/web/llm_fms_viewer.py`: `7864` → `7867`
 - `vlm-post-training/web/multimodal_compare_app.py`: `7862` → `7868`
-- `vlm-post-training/aux_tasks/sft/inspect_reas2_mix_gradio.py`: `7863` → `7869`
+- `vlm-post-training/aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py`: `7863` → `7869`
 - `video-sft-vlm/mesh_viewer.py`: `7863` → `7871`
 - `vlm-post-training/…/sam3d_pilot/sword_viewer.py`: `7862` → `7872`
 - `nemo-rl-vlm/tools/grpo_dashboard.py`: `7863` → `7873`
@@ -477,7 +514,7 @@ All app tooling consolidated under `~/utilities/apps/`:
 | File | Purpose |
 |------|---------|
 | `launch_app.sh` | Launcher: single command to start any app |
-| `apps_registry.yaml` | Registry of all 15 apps: name → repo, script, port, venv, env vars |
+| `apps_registry.yaml` | Registry of all 16 apps: name → repo, script, port, venv, env vars |
 | `make_app_video_dataset.py` | Convert HF dataset to `*_browse.jsonl` for the video-sft app |
 | `claude-tracker.py` | Claude Code token/cost tracker dashboard |
 | `README.md` | Quick-start guide for the apps/ subdir |
@@ -524,7 +561,7 @@ All app tooling consolidated under `~/utilities/apps/`:
 - `/home/sgsilva/vlm-post-training/web/comparison_app.py` — older same-member video comparison, superseded by multimodal_compare_app.py
 - `/home/sgsilva/4D-Humans/gradio_app.py` — upstream 4D-Humans repo demo, not Sandra's code
 - `/home/sgsilva/vlm-post-training/aux_tasks/transcripts/scripts/app.py` — narrow transcript inspection tool
-- `/home/sgsilva/vlm-post-training/aux_tasks/sft/inspect_reas_judged_mix_gradio.py` — variant of the reas-mix inspector for judged data
+- `/home/sgsilva/vlm-post-training/aux_tasks/sft/inspect/inspect_reas_judged_mix_gradio.py` — variant of the reas-mix inspector for judged data
 
 ---
 

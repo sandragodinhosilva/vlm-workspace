@@ -144,15 +144,30 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
   that gap is filled by the unified master below.
 - **Required:** `--train-group-id` + `--run-id` (driver hard-errors otherwise for non-baseline).
 
-### 2. benchmarks — general public benchmarks (VSI-Bench / MMMU-val / Video-MME)
+### 2. benchmarks — general public benchmarks (VSI-Bench / MMMU-val / Video-MME / IFBench)
 - **Driver:** `/home/sgsilva/benchmarks/scripts/run_eval.py` (SIBench-VSR + VLMEvalKit)
+- **IFBench (4th benchmark, added 2026-06-24)** — `allenai/IFBench_test` (300 prompts, instruction
+  following / general non-vision capability; the OOD generalization set). **Text-only +
+  RULE-SCORED (NO judge)**: deterministic checkers vendored verbatim from upstream into
+  `VLMEvalKit/vlmeval/dataset/utils/ifbench/` (parity-verified ±0 vs upstream run_eval.py by
+  `benchmarks/scripts/test_ifbench_parity.py`). Headline = **prompt-level LOOSE accuracy**. Runs
+  via `--data IFBench` like MMMU/Video-MME; skip with `--skip-ifbench`. Two load-bearing rules:
+  (a) NO `--custom-prompt qwen3` / `\boxed{}` wrapper (corrupts format constraints); (b) thinking
+  models have their `<think>…</think>` stripped before scoring (in `IFBenchDataset.evaluate`).
+  Data → `LMUData/IFBench/IFBench_test.jsonl`; deps (emoji, syllapy + NLTK corpora) in the
+  VLMEvalKit venv (see `requirements-ifbench.txt`). NON-responses count as legit fails (no
+  `_valid()` drop in the collector). The interpretation caveat: numbers are LOW (4B lands ~low)
+  and n=300 is small — don't read single-digit deltas as regressions without the per-category
+  breakdown in `summary_expanded.csv`. Use IFBench as the "did visual SFT/GRPO regress general
+  instruction-following" sentinel.
 - **venv:** `/home/sgsilva/benchmarks/SIBench-VSR/.venv` (+ VLMEvalKit/.venv)
 - **Config:** a JSON with `reasoning: true|false` + `model` = served path + `display_name`.
   The harness HARD-FAILS if the served thinking mode ≠ config `reasoning`. `eval_all.sh`
   auto-generates a TEMP config from `--model` + thinking and deletes it after — no committed
   config per checkpoint is needed. (The pre-written `configs/qwen35-*.json` files are the older
   manual workflow; you don't author them when driving via `eval_all.sh`.)
-- **Per-run output:** `/mnt/data/sgsilva/results/benchmarks/{vsibench,mmmu_val,video_mme}[_judged]/<model>/`
+- **Per-run output:** `/mnt/data/sgsilva/results/benchmarks/{vsibench,mmmu_val,video_mme,ifbench}[_judged]/<model>/`
+  (ifbench has NO `_judged` tree — rule-scored)
   (moved here 2026-06-17 from `benchmarks/results/`; old path back-compat-symlinked so the
   collectors/rescorers that still hardcode `/home/sgsilva/benchmarks/results` keep resolving)
 - **Skip/resume:** per benchmark — complete result file → SKIP; partial → RESUME (`--reuse` /
@@ -171,7 +186,8 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
 - **Collector:** `benchmarks/scripts/collect_results.py` + `collect_results_expanded.py`
   (AUTO-RUN inside run_eval.py) → `/mnt/data/sgsilva/results/benchmarks/summary.csv`, `summary_expanded.csv`,
   `summary_judge.csv`, `summary_expanded_judge.csv` (cols: Model, Reasoning, MMMU-val,
-  Video-MME, VSI-Bench, Test set Acc).
+  Video-MME, VSI-Bench, IF-Bench, Test set Acc). IF-Bench flows into the master CSV as `IF_Bench`
+  under the "General benchmarks" band, `bench_method` cell = `IFB=rule` (never judged/parsable).
 - **Judge rescore (parsing-rescue, OPTIONAL but recommended):** `--judge-base-url` +
   `--judge-model` → `rescore_{mmmu,videomme,vsibench}.py`. It re-scores right-but-unparsed
   answers (model wrote `\boxed{X}` or prose the regex missed) → writes `*_judged/` +

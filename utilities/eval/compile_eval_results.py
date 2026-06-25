@@ -134,8 +134,8 @@ FIELDS = [
     "last_eval_ts",
     # --- headline scores: the numbers you scan first ---
     "_spacer_identity",   # blank spacer column: identity │ ⎵ │ benchmarks
-    #   general benchmarks (+ per-cell scoring method: parsable / judged / raw)
-    "MMMU_val", "Video_MME", "VSI_Bench",
+    #   general benchmarks (+ per-cell scoring method: parsable / judged / raw / rule)
+    "MMMU_val", "Video_MME", "VSI_Bench", "IF_Bench",
     "_spacer_bench",   # blank spacer column: benchmarks │ ⎵ │ VO
     #   visual-obs detection/severity — kept in TWO non-comparable column sets (Audit 2026-06-22 F3):
     #   s1 = SINGLE-STAGE (model emits severity directly; populated by eval_all.sh visualobs);
@@ -184,6 +184,7 @@ HEADER_LABELS = {
     "owner": "Owner", "is_baseline": "Baseline?", "train_reasoning": "Trained w/ Reasoning",
     "eval_thinking": "Eval Thinking", "last_eval_ts": "Last Eval",
     "MMMU_val": "MMMU-val", "Video_MME": "Video-MME", "VSI_Bench": "VSI-Bench",
+    "IF_Bench": "IF-Bench",
     "bench_method": "Benchmark Scoring",
     # "single-stage" = model emits severity DIRECTLY in one call (no obs step); spelled out (not
     # "1-stage") so it can't be misread as "the stage-1 obs step" — single-stage SKIPS stage-1 obs.
@@ -599,7 +600,7 @@ def _bench_display_to_path() -> dict[str, str]:
     required for the join — this works for any benchmark result, eval_all-driven or not.)"""
     out: dict[str, str] = {}
     bench_results = BENCH_RESULTS
-    for bench in ("mmmu_val", "video_mme", "vsibench",
+    for bench in ("mmmu_val", "video_mme", "vsibench", "ifbench",
                   "mmmu_val_judged", "video_mme_judged", "vsibench_judged"):
         bdir = bench_results / bench
         if not bdir.is_dir():
@@ -819,6 +820,7 @@ def _rows():
                     except ValueError:
                         return ""
                 mmmu, vmme, vsi = num("MMMU-val"), num("Video-MME"), num("VSI-Bench")
+                ifb = num("IF-Bench")
                 # which summary file is this? raw=non-responses counted wrong; judged=LLM-judged
                 method = "judged" if "judge" in bench_csv.name.lower() else "raw"
                 meth = dict(_kv.split("=", 1) for _kv in (r.get("bench_method") or "").split(";") if "=" in _kv)
@@ -826,6 +828,11 @@ def _rows():
                 if mmmu != "": r["MMMU_val"] = mmmu; meth["MMMU"] = method
                 if vmme != "": r["Video_MME"] = vmme; meth["VMME"] = method
                 if vsi != "": r["VSI_Bench"] = vsi; meth["VSI"] = method
+                # IFBench is rule-scored (deterministic checkers) — method is ALWAYS "rule",
+                # never judged/parsable, and it is NEVER added to the _parsable_bench_acc loop
+                # below (that loop drops non-responses, which for a rule-scored benchmark are
+                # legitimate fails — dropping them would inflate the score).
+                if ifb != "": r["IF_Bench"] = ifb; meth["IFB"] = "rule"
                 src = r.get("bench_source") or ""
                 srcs = [src, bench_csv.name]
                 # OVERRIDE with parsable-only accuracy (exclude 'Failed to obtain answer' non-

@@ -105,7 +105,9 @@ done
 # so on/off runs of one model never collapse to one log name. LOG_CMD records the REAL invocation
 # (model/stages/thinking/tp), not the bare $0, so the log header is reproducible.
 _run_name="eval_all_${TAG:-${RUN_ID:-notag}}_think${THINKING:-NA}_$(echo "$STAGES" | tr ',' '-')"
-LOG_CMD="$0 --model $MODEL --base-model $BASE_MODEL --stages $STAGES --thinking ${THINKING:-NA} --base-url $BASE_URL${TP:+ --tp $TP}${RUN_ID:+ --run-id $RUN_ID}"
+# Record --bench-extra too: its --skip-* flags are the signal eval_status.sh uses to know WHICH
+# benchmarks actually run (e.g. an IFBench-only run skips VSI/MMMU/Video-MME) → correct ETA.
+LOG_CMD="$0 --model $MODEL --base-model $BASE_MODEL --stages $STAGES --thinking ${THINKING:-NA} --base-url $BASE_URL${TP:+ --tp $TP}${RUN_ID:+ --run-id $RUN_ID}${BENCH_EXTRA:+ --bench-extra \"$BENCH_EXTRA\"}"
 export LOG_CMD
 LOG=$(log_start eval "$_run_name")
 # Tee stdout+stderr to BOTH the dated $LOG and the original fds, so the SLURM .out/.err still

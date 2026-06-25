@@ -28,7 +28,7 @@ srun --nodes=1 \
      --gres=gpu:${NUM_GPUS} \
      -c $((24*NUM_GPUS)) \
      --mem=$((311*NUM_GPUS))G \
-     --job-name=sftvlm \
+     --job-name=27b \
      --pty bash -i 
 
 NUM_GPUS=4
