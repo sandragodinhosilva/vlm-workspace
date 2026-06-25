@@ -44,15 +44,13 @@ CACHE_DIRS = [
 
 VENV_DIRS = [
     (DATA / "VLMEvalKit" / ".venv", "VLMEvalKit virtual environment"),
-    (DATA / "SIBench-VSR" / ".venv", "SIBench-VSR virtual environment"),
-    (DATA / "nvidia-rl" / "venvs", "nvidia-rl GRPO venvs"),
-    (DATA / "data-tuning" / "venv", "data-tuning virtual environment"),
+    # NOTE: SIBench-VSR, nvidia-rl, data-tuning venvs removed — no longer present on disk
 ]
 
 MODEL_DIRS = [
-    (DATA / "vlm-evaluation" / "kimi-serving", "Kimi model serving files"),
     (DATA / "vlm-evaluation" / "results" / "archive", "Archived evaluation results"),
     (DATA / "vlm-evaluation" / "results" / "backups", "Evaluation result backups"),
+    # NOTE: vlm-evaluation/kimi-serving removed — no longer present on disk
 ]
 
 

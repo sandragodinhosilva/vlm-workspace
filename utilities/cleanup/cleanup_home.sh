@@ -126,7 +126,22 @@ fi
 echo
 
 # ──────────────────────────────────────────────────────────────────────────
-echo "[3] Heavy data/output dirs — MOVE to $MNT_DIR (symlink left behind)"
+echo "[3] Log archive — cold-archived pre-reorganization logs (safe to delete)"
+# ──────────────────────────────────────────────────────────────────────────
+LOG_ARCHIVE="/mnt/data/sgsilva/logs/_archive"
+if [ -d "$LOG_ARCHIVE" ]; then
+  echo "  Total: $(sz "$LOG_ARCHIVE")"
+  for sub in "$LOG_ARCHIVE"/*/; do
+    [ -d "$sub" ] && echo "    $(sz "$sub")  $(basename "$sub")"
+  done
+  delete_dir "$LOG_ARCHIVE" "pre-reorganization log archive (cold, git-independent)"
+else
+  echo "  [skip] $LOG_ARCHIVE — not present"
+fi
+echo
+
+# ──────────────────────────────────────────────────────────────────────────
+echo "[4] Heavy data/output dirs — MOVE to $MNT_DIR (symlink left behind)"
 echo "    Code stays in /home; only large data/results relocate."
 # ──────────────────────────────────────────────────────────────────────────
 # Model outputs -> results dir, per project convention.
