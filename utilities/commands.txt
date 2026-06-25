@@ -181,3 +181,40 @@ JUDGE / DATA OPS  (wrap in clog; see CLAUDE.md logging rules)
 SIBench-VSR/.venv/bin/python scripts/run_judge_all.py --judge-base-url http://localhost:8000/v1 --judge-model Qwen/Qwen3.5-4B
 # tmux for long judge/serve sessions
 tmux attach -t judge2
+
+
+CLUSTER VIEW  (gpuq + friends — tools in ~/utilities/slurm/, shortcuts in ~/.bashrc)
+-----------------------------------------------------------------------------------
+# gpuq — pretty slurm queue + per-node GPU table; SSH-probes nvidia-smi to flag ROGUE GPUs
+#        (◆ = busy per nvidia-smi but NO slurm job claims it → node is NOT really free).
+#        Lives at ~/utilities/slurm/gpuq, symlinked into ~/.local/bin so it's a bare command.
+gpuq                                  # full view: slurm + ssh rogue-probe
+gpuq --no-probe                       # slurm-only, fast, no ssh (no rogue detection)
+gpuq --extra dev01,dev02              # also probe non-slurm nodes
+gpuq --timeout 5                      # bump ssh connect timeout (default 3s)
+NO_COLOR=1 gpuq                       # disable color
+gq                                    # alias: FORCE_COLOR=1 watch -c -n5 gpuq  (live; Ctrl+C to quit)
+
+# freenode — just the truly-clean idle nodes (slurm idle AND no rogue ◆). Use BEFORE pinning.
+freenode
+
+# rogue_nodes — comma list of nodes busy off-scheduler RIGHT NOW (fallback worker-30,31 if gpuq down).
+#   sftvlm / nodestart now exclude this LIVE set instead of a hardcoded 30,31 (auto-frees them when clean).
+rogue_nodes
+sftvlm                                # srun full node, --exclude "$(rogue_nodes)", job sft-vlm
+nodestart myrun                       # same, custom job-name
+
+# myjobs — your slurm jobs + last log line of each running job (PROGRESS, not just "RUNNING").
+myjobs                                # ~/utilities/slurm/myjobs.sh
+myjobs -n 3                           # last 3 log lines per job
+
+# gpuwho — what's eating a node's GPUs: pid -> user -> gpu-mem, tags (you)/(someone else).
+#          Use when gpuq shows a rogue ◆ and you want to know whose it is. READ-ONLY, never kills.
+gpuwho worker-30                       # ~/utilities/slurm/gpuwho.sh
+gpuwho worker-30 worker-31
+
+# (older, still-useful) coarser views:
+nodecheck                              # sinfo + scontrol gpu lines (alias)
+status                                 # alias: bash ~/utilities/slurm/status.sh (vLLM + slurm jobs + /home; --full for concurrency)
+squeue -la                             # plain: your jobs
+sinfo -t idle                          # free nodes per slurm (does NOT catch rogue — prefer freenode)

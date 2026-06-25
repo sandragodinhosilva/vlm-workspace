@@ -12,11 +12,16 @@ exporter, checkpoint-cleanup Python, model-naming doc) live in
 
 ---
 
-## Cluster / status
+## Cluster view (`slurm/`)
+
+All cluster-state tools. See [`slurm/README.md`](slurm/README.md) for the full table; bashrc shortcuts (`gq`, `freenode`, `myjobs`, `gpuwho`, `rogue_nodes`) in `~/.bashrc`; copy-paste recipes in [`commands.txt`](commands.txt) → CLUSTER VIEW.
 
 | Script | What it does | Run on | Interpreter / venv |
 | --- | --- | --- | --- |
-| [`status.sh`](status.sh) | One-shot cluster state: vLLM servers (SSHes into all running job nodes, shows model + max_len), SLURM jobs coloured by state. `--full` adds vLLM concurrency + KV-cache metrics. | login node or any worker | bash |
+| [`slurm/gpuq`](slurm/gpuq) | Pretty slurm queue + per-node GPU table; SSH-probes `nvidia-smi` to flag **rogue** GPUs (busy off-scheduler, no slurm job). Symlinked into `~/.local/bin` → bare command `gpuq`. `--no-probe` for fast slurm-only. | login node or any worker | python3 (stdlib) |
+| [`slurm/myjobs.sh`](slurm/myjobs.sh) | Your slurm jobs + last log line of each running job (progress, not just "RUNNING"). `-n N` for N lines. | any | bash |
+| [`slurm/gpuwho.sh`](slurm/gpuwho.sh) | What's eating a node's GPUs: pid → user → gpu-mem, tags `(you)` / `(someone else)`. Read-only; never kills. | any | bash + ssh |
+| [`slurm/status.sh`](slurm/status.sh) | One-shot cluster state: vLLM servers (SSHes into all running job nodes, shows model + max_len), SLURM jobs coloured by state. `--full` adds vLLM concurrency + KV-cache metrics. | login node or any worker | bash |
 
 ---
 
@@ -80,7 +85,7 @@ exporter, checkpoint-cleanup Python, model-naming doc) live in
 | Doc | Contents |
 | --- | --- |
 | [`eval/EVAL_README.md`](eval/EVAL_README.md) | Full eval toolkit doc: `eval_all.sh` flags, stage details, gotchas, output layout. |
-| [`slurm_vllm_workflow.md`](slurm_vllm_workflow.md) | SLURM + vLLM serving workflow notes (srun details, serving recipes). |
+| [`slurm/slurm_vllm_workflow.md`](slurm/slurm_vllm_workflow.md) | SLURM + vLLM serving workflow notes (srun details, serving recipes). |
 | [`apps/apps_registry.yaml`](apps/apps_registry.yaml) | Registry of all Gradio inspection apps: name → repo, script, port, venv, env vars. Edit here to add/change an app. |
 | [`MODEL_NAMING_CONVENTION.md`](MODEL_NAMING_CONVENTION.md) | Canonical model export naming rules (stem, branch token, runtype, step, thinking flag). |
 | [`CHANGELOG.md`](CHANGELOG.md) | History of changes to cleanup scripts and training run inventory. |

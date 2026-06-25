@@ -1,0 +1,598 @@
+#!/usr/bin/env python3
+"""gpuq — pretty Slurm queue + per-node GPU layout.
+
+Shows each GPU node with which slots are busy, the user/job using them, and
+the node's state. Cross-checks slurm's accounting with nvidia-smi over SSH
+to flag "rogue" usage — GPUs in use without a slurm job claiming them
+(common on dev nodes, or when someone bypasses the scheduler).
+
+Usage:
+    ./gpuq.py                          # default: slurm + ssh probe
+    ./gpuq.py --no-probe               # slurm only, no ssh
+    ./gpuq.py --extra dev01,dev02      # also include nodes outside slurm
+    ./gpuq.py --timeout 5              # bump ssh timeout
+    watch -c -n2 ./gpuq.py             # live refresh
+    NO_COLOR=1 ./gpuq.py               # disable color
+
+Requires: scontrol on PATH, ssh access to nodes for probe. Stdlib only.
+"""
+
+import argparse
+import concurrent.futures
+import os
+import re
+import subprocess
+import sys
+
+# ─── ANSI ─────────────────────────────────────────────────────────────
+RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
+RED, GREEN, YELLOW = "\033[31m", "\033[32m", "\033[33m"
+MAGENTA, CYAN, GRAY = "\033[35m", "\033[36m", "\033[90m"
+
+USE_COLOR = (
+    os.environ.get("NO_COLOR") is None
+    and (os.environ.get("FORCE_COLOR") or sys.stdout.isatty())
+)
+
+
+def c(text, *codes):
+    if not USE_COLOR:
+        return text
+    return "".join(codes) + text + RESET
+
+
+# ─── width helpers (ANSI-aware) ────────────────────────────────────────
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def visible_len(s):
+    """Length of s as it would render in the terminal (no color codes)."""
+    return len(ANSI_RE.sub("", s))
+
+
+def vpad(s, width, side="right"):
+    """Pad s to `width` visible columns. side='right' = pad on the right (ljust)."""
+    deficit = width - visible_len(s)
+    if deficit <= 0:
+        return s
+    return s + " " * deficit if side == "right" else " " * deficit + s
+
+
+# ─── parsing ──────────────────────────────────────────────────────────
+def run(cmd):
+    return subprocess.check_output(cmd, text=True)
+
+
+KV_RE = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\S*)')
+
+
+def parse_kv(line):
+    """Parse 'Key1=val1 Key2=val2 ...' from scontrol -o output."""
+    out = {}
+    for m in KV_RE.finditer(line):
+        v = m.group(2)
+        if v.startswith('"'):
+            v = v[1:-1]
+        out[m.group(1)] = v
+    return out
+
+
+def parse_gpu_count(gres_str):
+    """'gpu:a100:8' or 'gpu:8,...' → (type|None, count). 0 if no gpu."""
+    if not gres_str or gres_str in ("(null)", "N/A"):
+        return None, 0
+    # strip (IDX:...) and (S:...) parentheticals
+    s = re.sub(r"\([^)]*\)", "", gres_str)
+    for part in s.split(","):
+        bits = part.split(":")
+        if bits and bits[0] == "gpu":
+            if len(bits) >= 3 and bits[2].isdigit():
+                return bits[1], int(bits[2])
+            if len(bits) == 2 and bits[1].isdigit():
+                return None, int(bits[1])
+    return None, 0
+
+
+def parse_idx(gres_used):
+    """Extract the busy GPU indices from 'gpu:a100:3(IDX:0-2)'."""
+    m = re.search(r"IDX:([0-9,\-]+)", gres_used or "")
+    if not m:
+        return set()
+    idx = set()
+    for part in m.group(1).split(","):
+        if "-" in part:
+            a, b = part.split("-")
+            idx.update(range(int(a), int(b) + 1))
+        elif part:
+            idx.add(int(part))
+    return idx
+
+
+def parse_tres_gpu(tres):
+    """Count GPUs from a TRES string like 'cpu=8,mem=16G,gres/gpu=4'.
+    Also matches the typed form 'gres/gpu:a100=4' that some clusters emit.
+    Reliable across slurm versions regardless of how the user requested gpus."""
+    if not tres:
+        return 0
+    # Prefer the untyped summary if present; otherwise fall back to the typed entry.
+    m = re.search(r"gres/gpu=(\d+)", tres)
+    if not m:
+        m = re.search(r"gres/gpu:[^=,]+=(\d+)", tres)
+    return int(m.group(1)) if m else 0
+
+
+def parse_tres_gpu_type(tres):
+    """Extract gpu type from 'gres/gpu:a100=8'-style TRES entries."""
+    if not tres:
+        return None
+    m = re.search(r"gres/gpu:([^=,]+)=\d+", tres)
+    return m.group(1) if m else None
+
+
+def split_top_commas(s):
+    """Split on commas not inside [brackets]."""
+    depth, last, out = 0, 0, []
+    for i, ch in enumerate(s):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            out.append(s[last:i])
+            last = i + 1
+    out.append(s[last:])
+    return out
+
+
+def expand_nodelist(s):
+    """node[01-03,07] → [node01, node02, node03, node07]."""
+    if not s:
+        return []
+    if "[" not in s:
+        return [s]
+    result = []
+    for piece in split_top_commas(s):
+        m = re.match(r"([^\[]+)\[([^\]]+)\](.*)$", piece)
+        if not m:
+            result.append(piece)
+            continue
+        prefix, rngs, suffix = m.groups()
+        for r in rngs.split(","):
+            if "-" in r:
+                a, b = r.split("-")
+                w = len(a)
+                for i in range(int(a), int(b) + 1):
+                    result.append(f"{prefix}{str(i).zfill(w)}{suffix}")
+            else:
+                result.append(f"{prefix}{r}{suffix}")
+    return result
+
+
+# ─── data ─────────────────────────────────────────────────────────────
+def fetch_nodes():
+    out = run(["scontrol", "-o", "show", "node"])
+    nodes = {}
+    for line in out.splitlines():
+        d = parse_kv(line)
+        if "NodeName" not in d:
+            continue
+        # Counts come from TRES — reliable. GresUsed is only for IDX positions.
+        gtotal = parse_tres_gpu(d.get("CfgTRES", ""))
+        if gtotal == 0:
+            continue  # skip non-GPU nodes
+        gused = parse_tres_gpu(d.get("AllocTRES", ""))
+        # Type: prefer the typed TRES entry, fall back to Gres string
+        gtype = (
+            parse_tres_gpu_type(d.get("CfgTRES", ""))
+            or parse_gpu_count(d.get("Gres", ""))[0]
+            or "gpu"
+        )
+        # CPU info — CPUEfctv is the allocatable count (CPUTot minus reserved cores)
+        def _int(x):
+            try: return int(x)
+            except (TypeError, ValueError): return 0
+        cpu_used = _int(d.get("CPUAlloc"))
+        cpu_total = _int(d.get("CPUEfctv")) or _int(d.get("CPUTot"))
+        # Memory is reported in MB by scontrol
+        mem_used = _int(d.get("AllocMem"))
+        mem_total = _int(d.get("RealMemory"))
+        nodes[d["NodeName"]] = {
+            "state": d.get("State", "?").split("+")[0].lower(),
+            "type": gtype,
+            "total": gtotal,
+            "used": gused,
+            "idx": parse_idx(d.get("GresUsed", "")),
+            "cpu_used": cpu_used,
+            "cpu_total": cpu_total,
+            "mem_used": mem_used,
+            "mem_total": mem_total,
+            "jobs": [],
+        }
+    return nodes
+
+
+def job_gpu_count(d):
+    """Extract GPU count for a job from whichever TRES field is populated.
+    scontrol's field names vary: jobs usually have AllocTRES/ReqTRES,
+    while some versions also expose a plain TRES."""
+    for field in ("AllocTRES", "TRES", "ReqTRES"):
+        n = parse_tres_gpu(d.get(field, ""))
+        if n:
+            return n
+    # Last-ditch fallback: TresPerNode is the raw --gres / --gpus-per-node value,
+    # in 'gpu:a100:4' or 'gpu:4' form rather than 'gres/gpu=4'.
+    for field in ("TresPerNode", "TresPerJob", "TresPerTask"):
+        v = d.get(field, "")
+        if not v or v == "(null)":
+            continue
+        for part in re.sub(r"\([^)]*\)", "", v).split(","):
+            bits = part.split(":")
+            if bits and bits[0] == "gpu":
+                for b in reversed(bits):
+                    if b.isdigit():
+                        return int(b)
+    return 0
+
+
+# Job states that still hold node resources (not just RUNNING).
+# Slurm marks a node 'allocated' while jobs sit in any of these.
+ACTIVE_JOB_STATES = {
+    "RUNNING", "COMPLETING", "CONFIGURING", "SUSPENDED", "RESIZING", "STOPPED",
+}
+
+
+def fetch_jobs(nodes):
+    """Pull active jobs from scontrol so we get TRES, not the unreliable %b field."""
+    try:
+        out = run(["scontrol", "-o", "show", "job"])
+    except subprocess.CalledProcessError:
+        return
+    for line in out.splitlines():
+        d = parse_kv(line)
+        # JobState can be compound like "RUNNING+SPECIAL_EXIT" — keep the head.
+        state = d.get("JobState", "").split("+")[0]
+        if state not in ACTIVE_JOB_STATES:
+            continue
+        jid = d.get("JobId", "")
+        # Tag non-RUNNING states so the user can see "oh, that's a completing job"
+        if state != "RUNNING":
+            jid = f"{jid}*{state[:3].lower()}"
+        user = d.get("UserId", "").split("(")[0]  # strip the (uid) suffix
+        jgpus = job_gpu_count(d)
+        rtime = d.get("RunTime", "")
+        for n in expand_nodelist(d.get("NodeList", "")):
+            if n in nodes:
+                nodes[n]["jobs"].append((jid, user, jgpus, rtime))
+
+
+def fetch_reservations(nodes):
+    """Annotate nodes that are inside an active reservation (admin maintenance,
+    draining, etc). These hold resources without a job to attribute to."""
+    try:
+        out = run(["scontrol", "-o", "show", "reservation"])
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    for line in out.splitlines():
+        d = parse_kv(line)
+        name = d.get("ReservationName")
+        if not name:
+            continue
+        for n in expand_nodelist(d.get("Nodes", "")):
+            if n in nodes:
+                nodes[n].setdefault("reservations", []).append(name)
+
+
+# ─── render ───────────────────────────────────────────────────────────
+def state_color(s):
+    if "idle" in s:
+        return GREEN
+    if "mix" in s:
+        return YELLOW
+    if "alloc" in s:
+        return MAGENTA
+    if any(x in s for x in ("down", "drain", "fail", "err", "boot", "resv")):
+        return RED
+    return GRAY
+
+
+USED_CH = "●"   # slurm-allocated
+ROGUE_CH = "◆"  # in use per nvidia-smi but no slurm job
+FREE_CH = "○"
+
+# Heuristic for "in use" from nvidia-smi: above either threshold counts as busy.
+PROBE_MEM_MB = 200      # >200 MB of memory used
+PROBE_UTIL_PCT = 5      # >5% utilization
+
+SSH_OPTS = [
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "LogLevel=ERROR",
+]
+
+
+def probe_node(host, timeout):
+    """SSH to host, run nvidia-smi, return (total_gpus, busy_idx_set, type_name).
+
+    Returns None on any failure (no ssh, no nvidia-smi, timeout, etc).
+    """
+    cmd = [
+        "ssh", "-o", f"ConnectTimeout={int(timeout)}", *SSH_OPTS, host,
+        "nvidia-smi --query-gpu=index,memory.used,utilization.gpu,name "
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout + 5
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+
+    total = 0
+    busy = set()
+    name = None
+    for line in r.stdout.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 4:
+            continue
+        try:
+            idx = int(parts[0])
+            mem_mb = float(parts[1])
+            util = float(parts[2])
+        except ValueError:
+            continue
+        total += 1
+        if mem_mb > PROBE_MEM_MB or util > PROBE_UTIL_PCT:
+            busy.add(idx)
+        if name is None:
+            # turn 'NVIDIA H100 80GB HBM3' → 'h100_80gb_hbm3' to match slurm style
+            name = re.sub(r"^nvidia[\s_-]+", "", parts[3].lower())
+            name = re.sub(r"\s+", "_", name)
+    return total, busy, name
+
+
+def probe_all(hosts, timeout):
+    """Probe many hosts in parallel. Returns dict host -> result-or-None."""
+    if not hosts:
+        return {}
+    out = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as ex:
+        futs = {ex.submit(probe_node, h, timeout): h for h in hosts}
+        for fut in concurrent.futures.as_completed(futs):
+            out[futs[fut]] = fut.result()
+    return out
+
+
+def gpu_dots(d):
+    """3-state per-GPU bar: slurm-allocated / rogue / free."""
+    n = d["total"]
+    slurm_idx = d["idx"]
+    rogue_idx = d.get("rogue") or set()
+
+    # If slurm gave us positions for all its allocations, render by position.
+    if slurm_idx or rogue_idx:
+        return "".join(
+            c(USED_CH, RED) if i in slurm_idx
+            else c(ROGUE_CH, YELLOW) if i in rogue_idx
+            else c(FREE_CH, GREEN)
+            for i in range(n)
+        )
+    # Fallback: no position info anywhere — fill from the left.
+    return (c(USED_CH, RED) * d["used"]) + (c(FREE_CH, GREEN) * (n - d["used"]))
+
+
+BAR_INNER_WIDTH = 8
+BAR_USED_CH = "█"
+BAR_FREE_CH = "░"
+BAR_TOTAL_WIDTH = BAR_INNER_WIDTH  # no caps in this style
+
+
+def pct_bar(used, total, width=BAR_INNER_WIDTH):
+    """Fixed-width fill bar colored by saturation. Useful for spotting nodes
+    where GPUs look free but every CPU or every GB is taken."""
+    if total <= 0:
+        return c("─" * width, GRAY)
+    pct = used / total
+    filled = max(0, min(width, round(pct * width)))
+    if used > 0 and filled == 0:
+        filled = 1
+    if used < total and filled == width:
+        filled = width - 1
+    color = RED if pct >= 0.9 else YELLOW if pct >= 0.5 else GREEN
+    return c(BAR_USED_CH * filled, color) + c(BAR_FREE_CH * (width - filled), GRAY)
+
+
+def fmt_mem(mb):
+    """Compact memory string. Input is MB (what scontrol reports)."""
+    if mb <= 0:
+        return "0"
+    gb = mb / 1024
+    if gb >= 1000:
+        return f"{gb / 1024:.1f}T"
+    return f"{gb:.0f}G"
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Pretty slurm queue + per-node GPU view with rogue detection."
+    )
+    p.add_argument("--no-probe", action="store_true",
+                   help="Skip nvidia-smi/ssh cross-check (slurm-only, faster)")
+    p.add_argument("--extra", default="",
+                   help="Comma-separated nodes outside slurm to also include "
+                        "(e.g. dev01,dev02). Requires probe.")
+    p.add_argument("--timeout", type=float, default=3.0,
+                   help="SSH connect timeout per node in seconds (default 3)")
+    return p.parse_args()
+
+
+def print_squeue_listing():
+    """Print a plain squeue view at the top of the dashboard, with node info.
+
+    Widths are minimums — slurm pads but never truncates, so keep them tight
+    enough that the full row fits in a typical terminal without wrapping.
+    Bump Name if your longest job name doesn't fit.
+    """
+    try:
+        out = run([
+            "squeue",
+            "--Format=JobID:10,Name:60,Partition:12,State:10,NodeList:30",
+        ])
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    print(out.rstrip())
+    print()  # blank line between the listing and the dashboard
+
+
+def main():
+    args = parse_args()
+
+    print_squeue_listing()
+
+    nodes = fetch_nodes()
+    fetch_jobs(nodes)
+    fetch_reservations(nodes)
+
+    extras = [n.strip() for n in args.extra.split(",") if n.strip()]
+    do_probe = not args.no_probe or extras  # extras imply probe
+
+    # Probe slurm-known nodes for rogue usage + any extras for everything.
+    if do_probe:
+        targets = list(nodes.keys()) + extras
+        probed = probe_all(targets, args.timeout)
+
+        for name, result in probed.items():
+            if result is None:
+                continue
+            ptotal, pbusy, pname = result
+            if name in nodes:
+                # Slurm node: derive rogue = busy - slurm_allocated
+                d = nodes[name]
+                d["rogue"] = pbusy - d["idx"] if d["idx"] else (
+                    # no IDX from slurm — best-effort: any busy slot beyond
+                    # what slurm counts as used is rogue
+                    set(list(pbusy)[d["used"]:]) if len(pbusy) > d["used"] else set()
+                )
+            else:
+                # Extra node: synthesize a slurm-less entry
+                nodes[name] = {
+                    "state": "extern",
+                    "type": pname or "gpu",
+                    "total": ptotal,
+                    "used": 0,
+                    "idx": set(),
+                    "rogue": pbusy,
+                    "cpu_used": 0,
+                    "cpu_total": 0,
+                    "mem_used": 0,
+                    "mem_total": 0,
+                    "jobs": [],
+                }
+
+    if not nodes:
+        print("no GPU nodes found", file=sys.stderr)
+        return 1
+
+    def jid_num(j):
+        m = re.match(r"\d+", j[0])
+        return int(m.group()) if m else 0
+
+    def node_key(name):
+        d = nodes[name]
+        jobs = d["jobs"]
+        state = d["state"]
+        # Bucket 0: allocated/mixed but no visible jobs — the suspicious ones,
+        #           pin them to the top so they don't hide at the bottom.
+        # Bucket 1: nodes with jobs — sorted by lowest job id.
+        # Bucket 2: truly idle / down / drained — at the bottom, alphabetical.
+        if not jobs and any(k in state for k in ("alloc", "mix", "resv", "compl")):
+            return (0, name)
+        if jobs:
+            return (1, min(jid_num(j) for j in jobs))
+        return (2, name)
+
+    # ─── fixed column widths so rows never shift ───────────────────────
+    # If your cluster has names/types longer than these, bump the constants.
+    W_NODE  = max(10, max(len(n) for n in nodes) + 1)
+    W_STATE = 12
+    W_GPUS  = max((d["total"] for d in nodes.values()), default=8)  # max GPU count
+    W_GRATIO = 8       # e.g. "0+3/8 "
+    W_CRATIO = 9       # e.g. "192/192 "
+    W_MRATIO = 11      # e.g. "2.4T/2.4T "
+    W_TYPE  = max(22, max(len(d["type"]) for d in nodes.values()) + 2)
+    GAP = "  "
+
+    # ─── header row ────────────────────────────────────────────────────
+    header_parts = [
+        vpad("NODE",  W_NODE),
+        vpad("STATE", W_STATE),
+        vpad("GPUS",  W_GPUS + 1 + W_GRATIO),
+        vpad("CPU",   BAR_TOTAL_WIDTH + 1 + W_CRATIO),
+        vpad("MEM",   BAR_TOTAL_WIDTH + 1 + W_MRATIO),
+        vpad("TYPE",  W_TYPE),
+        "JOBS",
+    ]
+    print(c(GAP.join(header_parts), BOLD, DIM))
+
+    # ─── data rows ─────────────────────────────────────────────────────
+    any_rogue = False
+    for name in sorted(nodes, key=node_key):
+        d = nodes[name]
+        d["jobs"].sort(key=jid_num)
+        rogue_n = len(d.get("rogue") or set())
+        any_rogue = any_rogue or rogue_n > 0
+
+        gratio = (
+            f"{d['used']}+{c(str(rogue_n), YELLOW)}/{d['total']}"
+            if rogue_n else f"{d['used']}/{d['total']}"
+        )
+        cratio = f"{d['cpu_used']}/{d['cpu_total']}"
+        mratio = f"{fmt_mem(d['mem_used'])}/{fmt_mem(d['mem_total'])}"
+
+        # GPU dots: pad with spaces to the max GPU count so columns align
+        # across nodes with different GPU counts.
+        dots = gpu_dots(d) + " " * max(0, W_GPUS - d["total"])
+
+        cells = [
+            vpad(c(name, BOLD),                              W_NODE),
+            vpad(c(d["state"], state_color(d["state"])),     W_STATE),
+            vpad(dots + " " + gratio,                        W_GPUS + 1 + W_GRATIO),
+            vpad(pct_bar(d["cpu_used"], d["cpu_total"]) + " " + cratio.rjust(W_CRATIO),
+                 BAR_TOTAL_WIDTH + 1 + W_CRATIO),
+            vpad(pct_bar(d["mem_used"], d["mem_total"]) + " " + mratio.rjust(W_MRATIO),
+                 BAR_TOTAL_WIDTH + 1 + W_MRATIO),
+            vpad(c(d["type"], DIM),                          W_TYPE),
+        ]
+        line = GAP.join(cells)
+
+        # JOBS column: variable, sits at the right edge.
+        if d["jobs"]:
+            line += GAP + GAP.join(
+                f"{c(jid, CYAN)} {user} {c(f'[{g}g {t}]', DIM)}"
+                for jid, user, g, t in d["jobs"]
+            )
+        for res in d.get("reservations", []):
+            line += GAP + c(f"[reservation:{res}]", MAGENTA)
+        print(line)
+
+    if any_rogue:
+        print(
+            c(f"\n{ROGUE_CH} = in use per nvidia-smi but no slurm job claims it",
+              DIM, YELLOW),
+            file=sys.stderr,
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except FileNotFoundError as e:
+        print(f"missing command: {e}", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"slurm error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
