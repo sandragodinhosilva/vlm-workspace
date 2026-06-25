@@ -88,6 +88,8 @@ apps:
     port: 7865
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
     # Add --results "label=path" args at launch time.
+    # RAW-browse mode (no model needed): --raw-cohort <processed-dir> indexes every rep's
+    #   annotation.json directly (e.g. 1806_after_format_review_processed). See /apps SKILL.md.
 
   reasoning-prompt:
     label: "Reasoning-trace prompt editor — TUNE dataset-GENERATION prompts (4 task formatters)"
