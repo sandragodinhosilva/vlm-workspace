@@ -14,6 +14,14 @@
 #   ./cleanup_home.sh --run --yes     # skip the per-section confirmation prompt
 #   VLLM_KEEP_DAYS=14 ./cleanup_home.sh --run   # keep vllm compiles newer than N days (default 21)
 #
+# SECTION SELECTION: by default ALL sections run. Pass any of the flags below
+# to run ONLY the selected sections (combine freely):
+#   --caches   [1] regenerable caches & temp (.gradio_temp, .nv, .triton, uv, ...)
+#   --vllm     [2] vLLM compile-cache prune (older than VLLM_KEEP_DAYS)
+#   --logs     [3] cold log archive delete
+#   --move     [4] move heavy data dirs to /mnt (+ symlink back)
+# e.g.  ./cleanup_home.sh --run --vllm --move   # only prune vllm + move data dirs
+#
 set -euo pipefail
 source /home/sgsilva/utilities/logs-utils/log_run.sh
 
@@ -24,14 +32,22 @@ VLLM_KEEP_DAYS="${VLLM_KEEP_DAYS:-21}"      # vllm compile cache entries older t
 
 DRY_RUN=1
 ASSUME_YES=0
+declare -A WANT=()                          # populated by section flags; empty => run all
 for arg in "$@"; do
   case "$arg" in
     --run) DRY_RUN=0 ;;
     --yes|-y) ASSUME_YES=1 ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    --caches) WANT[caches]=1 ;;
+    --vllm)   WANT[vllm]=1 ;;
+    --logs)   WANT[logs]=1 ;;
+    --move)   WANT[move]=1 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) echo "unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
+
+# run_section <key> -> 0 (yes) if no section flags given, or this one was selected
+run_section() { [ "${#WANT[@]}" -eq 0 ] || [ -n "${WANT[$1]:-}" ]; }
 
 if [ "$DRY_RUN" -eq 0 ]; then
     _CLEANUP_LOG=$(log_start misc "cleanup_home")
@@ -92,6 +108,7 @@ echo "Current /home/sgsilva total: $(sz "$HOME_DIR")"
 echo
 
 # ──────────────────────────────────────────────────────────────────────────
+if run_section caches; then
 echo "[1] Regenerable caches & temp — safe to delete (rebuilt automatically)"
 # ──────────────────────────────────────────────────────────────────────────
 delete_dir "$HOME_DIR/.gradio_temp"      "Gradio temp files"
@@ -102,8 +119,10 @@ delete_dir "$HOME_DIR/.cache/uv"         "uv package cache"
 delete_dir "$HOME_DIR/.cache/flashinfer" "FlashInfer cache"
 delete_dir "$HOME_DIR/.cache/torch"      "torch cache"
 echo
+fi
 
 # ──────────────────────────────────────────────────────────────────────────
+if run_section vllm; then
 echo "[2] vLLM compile cache — prune entries older than ${VLLM_KEEP_DAYS} days"
 echo "    (vLLM recompiles on demand; recent entries kept warm)"
 # ──────────────────────────────────────────────────────────────────────────
@@ -124,8 +143,10 @@ else
   echo "  [skip] no vllm compile cache present"
 fi
 echo
+fi
 
 # ──────────────────────────────────────────────────────────────────────────
+if run_section logs; then
 echo "[3] Log archive — cold-archived pre-reorganization logs (safe to delete)"
 # ──────────────────────────────────────────────────────────────────────────
 LOG_ARCHIVE="/mnt/data/sgsilva/logs/_archive"
@@ -139,8 +160,10 @@ else
   echo "  [skip] $LOG_ARCHIVE — not present"
 fi
 echo
+fi
 
 # ──────────────────────────────────────────────────────────────────────────
+if run_section move; then
 echo "[4] Heavy data/output dirs — MOVE to $MNT_DIR (symlink left behind)"
 echo "    Code stays in /home; only large data/results relocate."
 # ──────────────────────────────────────────────────────────────────────────
@@ -151,6 +174,7 @@ move_dir "$HOME_DIR/vlm-post-training/aux_tasks" "$MNT_DIR/vlm-post-training"
 move_dir "$HOME_DIR/vlm-post-training/archive"   "$MNT_DIR/vlm-post-training"
 move_dir "$HOME_DIR/benchmarks"                  "$MNT_DIR"
 echo
+fi
 
 echo "Done. /home/sgsilva total now: $(sz "$HOME_DIR")"
 if [ "$DRY_RUN" -eq 1 ]; then
