@@ -13,7 +13,7 @@
 #   7866  sft-data            sft-data-vlm/app.py
 #   7867  llm-fms             web/llm_fms_viewer.py
 #   7868  multimodal-compare  web/multimodal_compare_app.py
-#   7869  reas-inspector      aux_tasks/sft/inspect_reas2_mix_gradio.py
+#   7869  reas-inspector      aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py
 #   7870  prejudge-viewer     video-sft-vlm/prejudge_viewer.py
 #   7871  mesh-viewer         video-sft-vlm/mesh_viewer.py
 #   7872  sword-viewer        sam3d_pilot/sword_viewer.py
@@ -21,12 +21,18 @@
 #   7874  vibe-test           utilities/apps/vibe_test.py
 #   8080  claude-tracker      utilities/apps/claude-tracker.py
 
+# Entries are grouped into 6 WORKSTREAMS (banner comments below). Each entry also
+# carries a `workstream:` field so the grouping is machine-readable, not just visual.
+#   General · Visual Observations · Aux Tasks · 3D · Training · Utilities
+
 apps:
 
-  # ── Video / MCQA browsing ──────────────────────────────────────────────────
+  # ══ GENERAL ════════════════════════════════════════════════════════════════
+  #   Cross-cutting browse + live-inference tools, not tied to one task family.
 
   video-sft:
     label: "Video SFT browser (MCQA)"
+    workstream: General
     goal: "Browse generated MCQA video samples; inspect exercise types, tier, messages. Quick-load dropdown switches datasets without restart."
     repo: /home/sgsilva/video-sft-vlm
     script: app.py
@@ -37,54 +43,9 @@ apps:
     env:
       DEFAULT_JSONL: /mnt/data/sgsilva/datasets/app_video_datasets/1805_merged_reasoning_v2_browse.jsonl
 
-  mesh-viewer:
-    label: "Mesh viewer (SAM-3D overlays)"
-    goal: "Browse SAM-3D-Body overlay videos: mesh render + interactive 3D skeleton + angle signals."
-    repo: /home/sgsilva/video-sft-vlm
-    script: mesh_viewer.py
-    port: 7871
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
-
-  prejudge-viewer:
-    label: "Prejudge viewer (LLM prejudge smoke)"
-    goal: "Inspect LLM prejudge smoke verdicts alongside video frames and post-hoc labels."
-    repo: /home/sgsilva/video-sft-vlm
-    script: prejudge_viewer.py
-    port: 7870
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
-
-  sword-viewer:
-    label: "SWORD SAM-3D viewer (pipeline outputs)"
-    goal: "Browse SWORD SAM-3D pipeline outputs: 2D overlay + interactive 3D skeleton + mesh."
-    repo: /home/sgsilva/vlm-post-training/aux_tasks/video_tasks/video_mcqa/sam3d_pilot
-    script: sword_viewer.py
-    port: 7872
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
-
-  # ── Text / SFT data ────────────────────────────────────────────────────────
-
-  sft-data:
-    label: "SFT data browser (text MCQA)"
-    goal: "Browse and QC text-based SFT datasets (5 MCQA families) from the Thrive VLM database."
-    repo: /home/sgsilva/sft-data-vlm
-    script: app.py
-    port: 7866
-    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
-
-  # ── Monitoring & results ───────────────────────────────────────────────────
-
-  monitoring:
-    label: "Monitoring dashboard (datasets / training / eval)"
-    goal: "Pipeline health dashboard — datasets, training metrics, and eval results in one view."
-    repo: /home/sgsilva/monitoring-app
-    script: app.py
-    port: 7861
-    venv: /home/sgsilva/browser-app-home-venv/bin/python
-
-  # ── Dataset browsers ──────────────────────────────────────────────────────
-
   browser:
     label: "Dataset browser (image / video / text tabs)"
+    workstream: General
     goal: "Multi-tab browser for all post-training datasets: image, video, text, and reasoning tabs."
     repo: /home/sgsilva/vlm-post-training/web/browser-app
     script: app.py
@@ -93,23 +54,23 @@ apps:
     env:
       BROWSER_MIXED_ROOT: /mnt/data/shared/vlm/data/merged_aux_datasets/reas2_mix_image10k_text5k_video10k_0804
 
-  reas-inspector:
-    label: "Reas-mix inspector (reas2 merged mix)"
-    goal: "Quick inspector for the reas2 merged reasoning mix: filter by modality and judge verdict."
-    repo: /home/sgsilva/vlm-post-training/aux_tasks/sft
-    script: inspect_reas2_mix_gradio.py
-    port: 7869
-    venv: /home/sgsilva/browser-app-home-venv/bin/python
-    args:
-      - --root
-      - /mnt/data/shared/vlm/data/merged_aux_datasets/reas2_mix_image10k_text5k_video10k_0804
-      - --host
-      - 0.0.0.0
+  vibe-test:
+    label: "VLM vibe tester — FREE-FORM live inference on ANY served model (play with prompts)"
+    workstream: General
+    goal: "Free-form inference playground: send ANY text / image / video to any live vLLM server (cluster scan, ports 8000-8003) OR Vertex/gemini, inspect answer + thinking trace, score vs GT (canonical severity board). Use to PLAY WITH PROMPTS / verify a model's reasoning LIVE. NOT for tuning dataset-generation prompts (that's reasoning-prompt)."
+    repo: /home/sgsilva/utilities/apps
+    script: vibe_test.py
+    port: 7874
+    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
 
-  # ── Visual-obs comparison ─────────────────────────────────────────────────
+  # ══ VISUAL OBSERVATIONS ════════════════════════════════════════════════════
+  #   VO eval-output comparison + tuning the prompts that generate VO datasets.
+  #   NOTE: vo-severity + vo-compare are slated to merge into one 2-tab app
+  #   (vo-inspector) — deferred 2026-06-25; kept as 2 entries until then.
 
   vo-severity:
     label: "VO severity comparator (single-stage A vs B)"
+    workstream: Visual Observations
     goal: "Compare two single/two-stage eval runs side-by-side: per-rep error detection + video."
     repo: /home/sgsilva/vlm-post-training
     script: web/single_stage_compare_app.py
@@ -120,6 +81,7 @@ apps:
 
   vo-compare:
     label: "VO stage-1 comparator (side-by-side observations)"
+    workstream: Visual Observations
     goal: "Side-by-side visual observations across multiple VLMs vs human ground-truth."
     repo: /home/sgsilva/vlm-post-training
     script: web/human_visual_obs_compare_app.py
@@ -127,18 +89,30 @@ apps:
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
     # Add --results "label=path" args at launch time.
 
-  # ── Reasoning / prompt tooling ────────────────────────────────────────────
-
   reasoning-prompt:
-    label: "Reasoning-trace prompt editor (live VLM calls)"
-    goal: "Iterate on reasoning-trace prompts with inline editing + live VLM calls for rapid testing."
+    label: "Reasoning-trace prompt editor — TUNE dataset-GENERATION prompts (4 task formatters)"
+    workstream: Visual Observations
+    goal: "Iterate on the add_reasoning_* TEACHER prompts that BUILD reasoning datasets, across all 4 task formatters (rep_severity / full_exercise / visual_obs / two-video comparison), with on-disk {task_section} substitution + live teacher call + A/B/C/D variant sweep + stored-trace variant-compare. NOT a free-form playground — for that use vibe-test."
     repo: /home/sgsilva/vlm-post-training/web
     script: reasoning_trace_prompt_app.py
     port: 7860
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
+  # ══ AUX TASKS ══════════════════════════════════════════════════════════════
+  #   Text/image SFT data QC + the reas2 mix + multimodal keypoint eval.
+
+  sft-data:
+    label: "SFT data browser (text MCQA)"
+    workstream: Aux Tasks
+    goal: "Browse and QC text-based SFT datasets (5 MCQA families) from the Thrive VLM database."
+    repo: /home/sgsilva/sft-data-vlm
+    script: app.py
+    port: 7866
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+
   llm-fms:
     label: "LLM-FMS viewer (image+text SFT rows)"
+    workstream: Aux Tasks
     goal: "Inspect image-based LLM-FMS SFT rows: image + prompt + target + metadata."
     repo: /home/sgsilva/vlm-post-training
     script: web/llm_fms_viewer.py
@@ -146,36 +120,86 @@ apps:
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
     # Pass --dataset /path/to/hf at launch time.
 
+  reas-inspector:
+    label: "Reas-mix inspector (reas2 merged mix)"
+    workstream: Aux Tasks
+    goal: "Quick inspector for the reas2 merged reasoning mix: filter by modality and judge verdict."
+    repo: /home/sgsilva/vlm-post-training/aux_tasks/sft
+    script: inspect/inspect_reas2_mix_gradio.py
+    port: 7869
+    venv: /home/sgsilva/browser-app-home-venv/bin/python
+    args:
+      - --root
+      - /mnt/data/shared/vlm/data/merged_aux_datasets/reas2_mix_image10k_text5k_video10k_0804
+      - --host
+      - 0.0.0.0
+
   multimodal-compare:
     label: "Multimodal eval comparer (keypoint side-by-side)"
+    workstream: Aux Tasks
     goal: "Side-by-side multimodal eval run comparison with COCO keypoint overlay."
     repo: /home/sgsilva/vlm-post-training
     script: web/multimodal_compare_app.py
     port: 7868
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
-  # ── Training monitoring ───────────────────────────────────────────────────
+  prejudge-viewer:
+    label: "Prejudge viewer (LLM prejudge smoke)"
+    workstream: Aux Tasks
+    goal: "Inspect LLM prejudge smoke verdicts alongside video frames and post-hoc labels."
+    repo: /home/sgsilva/video-sft-vlm
+    script: prejudge_viewer.py
+    port: 7870
+    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+
+  # ══ 3D ═════════════════════════════════════════════════════════════════════
+  #   SAM-3D mesh/pose inspection.
+
+  mesh-viewer:
+    label: "Mesh viewer (SAM-3D overlays)"
+    workstream: 3D
+    goal: "Browse SAM-3D-Body overlay videos: mesh render + interactive 3D skeleton + angle signals."
+    repo: /home/sgsilva/video-sft-vlm
+    script: mesh_viewer.py
+    port: 7871
+    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+
+  sword-viewer:
+    label: "SWORD SAM-3D viewer (pipeline outputs)"
+    workstream: 3D
+    goal: "Browse SWORD SAM-3D pipeline outputs: 2D overlay + interactive 3D skeleton + mesh."
+    repo: /home/sgsilva/vlm-post-training/aux_tasks/video_tasks/video_mcqa/sam3d_pilot
+    script: sword_viewer.py
+    port: 7872
+    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+
+  # ══ TRAINING ═══════════════════════════════════════════════════════════════
+  #   Training-run dashboards (GRPO; SFT later).
 
   grpo-dashboard:
     label: "GRPO training dashboard"
+    workstream: Training
     goal: "Explore and compare GRPO training runs: reward curves and task breakdowns."
     repo: /home/sgsilva/nemo-rl-vlm
     script: tools/grpo_dashboard.py
     port: 7873
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
-  vibe-test:
-    label: "VLM vibe tester (free-form text / image / video)"
-    goal: "Interactive inference playground: send any text, image, or video to a vLLM-served model and inspect the answer + thinking trace."
-    repo: /home/sgsilva/utilities/apps
-    script: vibe_test.py
-    port: 7874
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+  # ══ UTILITIES ══════════════════════════════════════════════════════════════
+  #   Infra / health / cost dashboards — meta-tooling, not per-task browsers.
 
-  # ── Utilities ─────────────────────────────────────────────────────────────
+  monitoring:
+    label: "Monitoring dashboard (datasets / training / eval)"
+    workstream: Utilities
+    goal: "Pipeline health dashboard — datasets, training metrics, and eval results in one view."
+    repo: /home/sgsilva/monitoring-app
+    script: app.py
+    port: 7861
+    venv: /home/sgsilva/browser-app-home-venv/bin/python
 
   claude-tracker:
     label: "Claude usage tracker (token cost dashboard)"
+    workstream: Utilities
     goal: "Local dashboard for Claude Code token usage and cost estimates across sessions."
     repo: /home/sgsilva/utilities/apps
     script: claude-tracker.py
