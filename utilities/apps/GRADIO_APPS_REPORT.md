@@ -21,7 +21,7 @@
 | Prejudge viewer | `video-sft-vlm/prejudge_viewer.py` | 7870 | `video-sft-vlm-home-venv` | Inspect LLM prejudge smoke verdicts alongside video frames and post-hoc labels | 2026-06-17 | 2026-06-17 | 1 | ✓ new |
 | Mesh viewer | `video-sft-vlm/mesh_viewer.py` | 7871 | `video-sft-vlm-home-venv` | Browse SAM-3D-Body overlay videos: mesh render + interactive 3D skeleton + angle signals | 2026-06-17 | 2026-06-17 | 1 | ✓ new |
 | SAM3D sword viewer | `vlm-post-training/…/sam3d_pilot/sword_viewer.py` | 7872 | `video-sft-vlm-home-venv` | Browse SWORD SAM-3D pipeline outputs: 2D overlay + interactive 3D skeleton + mesh | 2026-05-13 | 2026-05-13 | 1 | ✓ fixed (was broken venv) |
-| GRPO dashboard | `nemo-rl-vlm/tools/grpo_dashboard.py` | 7873 | `vlm-post-training-home-venv` | Explore and compare GRPO training runs: reward curves, task breakdowns | 2026-06-01 | 2026-06-03 | 4 | ✓ fixed (was broken venv) |
+| GRPO dashboard | `utilities/apps/grpo_dashboard.py` (moved 06-26) | 7873 | `vlm-post-training-home-venv` | Explore and compare GRPO training runs: reward curves, task breakdowns | 2026-06-01 | 2026-06-03 | 4 | ✓ fixed (was broken venv) |
 | Reasoning-trace prompt editor | `vlm-post-training/web/reasoning_trace_prompt_app.py` | 7860 | `vlm-post-training-home-venv` | Iterate on reasoning-trace prompts with inline editing + live VLM calls for testing | 2026-05-22 | 2026-05-28 | 3 | ⚠ one default dataset path missing |
 | Claude usage tracker | `utilities/apps/claude-tracker.py` | 8080 | system python3 | Local dashboard for Claude Code token usage and cost estimates | — | — | — | ✓ |
 | VLM vibe tester | `utilities/apps/vibe_test.py` | 7874 | `video-sft-vlm-home-venv` | Free-form inference playground: text/image/video → any served vLLM **or Vertex/gemini** model; cluster scan, dataset dropdown, stage-2 canonical metrics vs GT | 2026-06 | 2026-06-24 | — | ✓ active |
@@ -93,7 +93,7 @@ lsof -ti:7861 | xargs -r kill -9
 - **Quick-load dropdown** (added 2026-06-17): auto-scans `app_video_datasets/`, sorted by mtime. Select from dropdown to reload without restarting.
 
 **Input schema:** `app_video_datasets/*.jsonl` — rows with `video`, `messages`, `metadata` fields.  
-**How inputs are created:** `~/utilities/apps/make_app_video_dataset.py --source <hf> --name <n>`
+**How inputs are created:** `~/utilities/apps/scripts/make_app_video_dataset.py --source <hf> --name <n>`
 
 **Launch:**
 ```bash
@@ -251,10 +251,11 @@ lsof -ti:7861 | xargs -r kill -9
 
 ### 3.13 GRPO Dashboard
 
-**Path:** `/home/sgsilva/nemo-rl-vlm/tools/grpo_dashboard.py`  
+**Path:** `/home/sgsilva/utilities/apps/grpo_dashboard.py` (moved out of `nemo-rl-vlm/tools/` 2026-06-26 — self-contained, no `nemo_rl` imports; moved so SWORD-repo resets can't wipe the local **Live Status** tab)  
 **Port:** 7873  
 **Venv:** `/home/sgsilva/vlm-post-training-home-venv/bin/python` (fixed from `.venv` which had no gradio)  
-**Input:** `--logs-dir` → default `/mnt/data/sgsilva/logs/grpo_logs/` (EXISTS ✓). Globs `*/reward_details.json`.
+**Input:** `--logs-dir` → default `/mnt/data/sgsilva/logs/grpo_logs/` (EXISTS ✓). Reads per-exp `train_data_step*.jsonl` + `val_data_step0.jsonl` + node logs.  
+**Live Status tab (2026-06-26):** lists every run the moment it launches — phase, val@start accuracy (bar to beat), train-steps-done, live log tail — BEFORE step 1 makes it appear in *Compare Runs*.
 
 **Launch:**
 ```bash
@@ -526,7 +527,7 @@ All app tooling consolidated under `~/utilities/apps/`:
 
 | App | Input data | How it's created |
 |-----|-----------|-----------------|
-| Video SFT browser | `app_video_datasets/*.jsonl` | `~/utilities/apps/make_app_video_dataset.py --source <hf> --name <name>` |
+| Video SFT browser | `app_video_datasets/*.jsonl` | `~/utilities/apps/scripts/make_app_video_dataset.py --source <hf> --name <name>` |
 | Monitoring dashboard | Results CSVs + experiments CSV | Written by results pipeline (`build_results_csv.py`) |
 | SFT data browser | HF text MCQA datasets | `sft-data-vlm/generate_text_sft_datasets.py` |
 | Dataset browser | HF aux datasets (image/video/text) | Various dataset-builder scripts in `vlm-post-training/aux_tasks/` |

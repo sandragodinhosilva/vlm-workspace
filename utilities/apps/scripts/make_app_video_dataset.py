@@ -25,7 +25,7 @@ WHAT IT HANDLES:
 
 USAGE:
   /home/sgsilva/vlm-post-training-home-venv/bin/python \
-    /home/sgsilva/utilities/apps/make_app_video_dataset.py \
+    /home/sgsilva/utilities/apps/scripts/make_app_video_dataset.py \
     --source /mnt/data/sgsilva/datasets/<hf_dataset> \
     --name   <name>           # -> /mnt/data/sgsilva/datasets/app_video_datasets/<name>_browse.jsonl
 

@@ -181,9 +181,9 @@ apps:
   grpo-dashboard:
     label: "GRPO training dashboard"
     workstream: Training
-    goal: "Explore and compare GRPO training runs: reward curves and task breakdowns."
-    repo: /home/sgsilva/nemo-rl-vlm
-    script: tools/grpo_dashboard.py
+    goal: "Explore and compare GRPO training runs: reward curves, task breakdowns, + Live Status (pre-step-1 phase/val@start/log tail)."
+    repo: /home/sgsilva/utilities/apps
+    script: grpo_dashboard.py
     port: 7873
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 

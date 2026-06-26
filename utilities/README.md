@@ -52,7 +52,7 @@ All cluster-state tools. See [`slurm/README.md`](slurm/README.md) for the full t
 | Script | What it does | Run on | Interpreter / venv |
 | --- | --- | --- | --- |
 | [`apps/launch_app.sh`](apps/launch_app.sh) | Launch any Gradio inspection app by name. Kills the old process on the port, launches with the correct venv + env vars, prints the browser URL. Registry in [`apps/apps_registry.yaml`](apps/apps_registry.yaml). | login node | bash + system python3 |
-| [`apps/make_app_video_dataset.py`](apps/make_app_video_dataset.py) | Convert any HF dataset to a `*_browse.jsonl` for the video-sft-vlm browse app. Writes to `app_video_datasets/`. See its `--help`. | any | `vlm-post-training-home-venv/bin/python` |
+| [`apps/scripts/make_app_video_dataset.py`](apps/scripts/make_app_video_dataset.py) | Convert any HF dataset to a `*_browse.jsonl` for the video-sft-vlm browse app. Writes to `app_video_datasets/`. See its `--help`. | any | `vlm-post-training-home-venv/bin/python` |
 | [`apps/claude-tracker.py`](apps/claude-tracker.py) | Local dashboard for Claude Code token usage and cost estimation. Reads `~/.claude/` transcript JSONLs. | any | system python3 |
 
 ---

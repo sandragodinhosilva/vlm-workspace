@@ -1,0 +1,256 @@
+{
+  "archived": [
+    {
+      "task": "*",
+      "variant": "quick_t1c_step1352"
+    },
+    {
+      "task": "*",
+      "variant": "quick_t1c_v6_step987"
+    },
+    {
+      "task": "*",
+      "variant": "quick_t2_step1352"
+    },
+    {
+      "task": "*",
+      "variant": "quick_t3d_step1352"
+    },
+    {
+      "task": "*",
+      "variant": "quick_t4v62_step1352"
+    },
+    {
+      "task": "*",
+      "variant": "qwen3-vl-4b-baseline"
+    },
+    {
+      "task": "archive",
+      "variant": "archive_v1_tentative"
+    },
+    {
+      "task": "archive",
+      "variant": "archive_v3_tentative"
+    },
+    {
+      "task": "archive",
+      "variant": "cache"
+    },
+    {
+      "task": "archive",
+      "variant": "keypoint_qa_v5_full"
+    },
+    {
+      "task": "archive",
+      "variant": "keypoint_qa_v5_pilot"
+    },
+    {
+      "task": "archive",
+      "variant": "keypoint_qa_v5_pilot_30pct_backup_20260205_211819"
+    },
+    {
+      "task": "archive",
+      "variant": "keypoint_qa_v5_test_10samples"
+    },
+    {
+      "task": "archive",
+      "variant": "mcqa_v4"
+    },
+    {
+      "task": "archive",
+      "variant": "mixed_v2_phase1"
+    },
+    {
+      "task": "archive",
+      "variant": "mixed_v2_phase2"
+    },
+    {
+      "task": "archive",
+      "variant": "task3_backup_20260217"
+    },
+    {
+      "task": "archive",
+      "variant": "validation"
+    },
+    {
+      "task": "mixed",
+      "variant": "mixed_tasks_mixed_v5"
+    },
+    {
+      "task": "mixed",
+      "variant": "mixed_tasks_mixed_v6"
+    },
+    {
+      "task": "mixed",
+      "variant": "mixed_tasks_mixed_v7"
+    },
+    {
+      "task": "mixed",
+      "variant": "mixed_v2_phase1"
+    },
+    {
+      "task": "mixed",
+      "variant": "mixed_v4_weighted"
+    },
+    {
+      "task": "mixed",
+      "variant": "mixed_v5"
+    },
+    {
+      "task": "mixed",
+      "variant": "mixed_v6"
+    },
+    {
+      "task": "mixed",
+      "variant": "mixed_v7"
+    },
+    {
+      "task": "mixed_tasks",
+      "variant": "mixed_v5"
+    },
+    {
+      "task": "mixed_tasks",
+      "variant": "mixed_v6"
+    },
+    {
+      "task": "mixed_tasks",
+      "variant": "mixed_v7"
+    },
+    {
+      "task": "task1",
+      "variant": "cropped_confidence_v1"
+    },
+    {
+      "task": "task1",
+      "variant": "cropped_confidence_v2"
+    },
+    {
+      "task": "task1",
+      "variant": "cropped_v2"
+    },
+    {
+      "task": "task1",
+      "variant": "cropped_v2_concise"
+    },
+    {
+      "task": "task1",
+      "variant": "original_v1"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v1"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v10"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v3"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v6"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v7"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v7_baseline"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v8"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v8_baseline"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v9"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_cropped_v9_baseline"
+    },
+    {
+      "task": "task2",
+      "variant": "visualized_v5"
+    },
+    {
+      "task": "task3b",
+      "variant": "v2_spot_check"
+    },
+    {
+      "task": "task3d",
+      "variant": "v2_spot_check"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v3"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v4.2"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v4.3"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v4.4_kimi"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v4.4_qwen"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v5"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v5.1"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v5.2"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v5.3_mixed_v4_weighted"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v5_easy_baseline"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v5_pilot_baseline"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v6.1"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v6.1.2"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v6.1_qwen"
+    },
+    {
+      "task": "task4",
+      "variant": "mcqa_v6.2_mixed_v4_weighted"
+    },
+    {
+      "task": "task4",
+      "variant": "v4.4_qwen_baseline"
+    }
+  ]
+}

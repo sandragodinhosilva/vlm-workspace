@@ -1,0 +1,37 @@
+# Mixed Dataset Composition
+# Edit this file to update descriptions shown in the monitoring app sidebar.
+# Only "active" entries are shown. "archived" entries are hidden.
+
+active:
+  mixed_balanced_v1:
+    tasks: "task1 (COCO-25) 466, 1b (COCO-17) 466, 1c (Body-12) 468, task2 1402, task3b (Missing) 466, 3c (Displaced) 466, 3d (Combined) 467, task4_mcqa_v1 1401"
+    notes: "Balanced sampling across 4 task categories, LR 1e-5"
+
+  mixed_v3:
+    tasks: "task1c, task2, task3a, task3b, task3c, task3d, task4_v6.2"
+    notes: "7 tasks, LR 1e-5"
+
+  mixed_final_a:
+    tasks: "task1 4000, task2 4000, task3a 1000, 3b 1000, 3c 1000, 3d 1000, task4_v5.3 4000, task4_v6.2 4000"
+    notes: "8 tasks, 20k total, LR 1e-5"
+
+archived:
+  mixed_v2_phase1:
+    tasks: "task1c, task2, task3d, task4_v6.2"
+    notes: "Two-phase curriculum (superseded — caused L/R confusion)"
+
+  mixed_v4_weighted:
+    tasks: "task1c, task2, task3a, task3b, task3c, task3d, task4_v6.2"
+    notes: "Same as v3 + per-task loss weights (T1c=3.0, T4=0.5)"
+
+  mixed_v6:
+    tasks: "task1c, task2, task3d"
+    notes: "3 tasks (no T4), LR 1e-5"
+
+  mixed_v7:
+    tasks: "task1c, task2, task3d"
+    notes: "3 tasks (no T4), LR 1e-5"
+
+  v1_mixed:
+    tasks: "task1, task2, task3, task4"
+    notes: "Original v1 mixed (legacy)"

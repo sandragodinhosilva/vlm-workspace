@@ -491,8 +491,8 @@ def _split_think(text: str) -> tuple[str, str]:
 # ── inference ─────────────────────────────────────────────────────────────────
 
 EVAL_VENV_PY = "/home/sgsilva/vlm-post-training-home-venv/bin/python"
-VERTEX_HELPER = str(Path(__file__).parent / "_vertex_call.py")
-METRICS_HELPER = str(Path(__file__).parent / "_severity_metrics.py")
+VERTEX_HELPER = str(Path(__file__).parent / "scripts" / "_vertex_call.py")
+METRICS_HELPER = str(Path(__file__).parent / "scripts" / "_severity_metrics.py")
 
 
 def _canonical_metrics(pairs: list) -> str:

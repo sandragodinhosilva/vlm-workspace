@@ -7,7 +7,7 @@ data-inspection Gradio apps.
 
 ```bash
 # On the login node:
-~/utilities/apps/launch_app.sh --list              # see all 15 apps + ports
+~/utilities/apps/launch_app.sh --list              # see all 16 apps + ports
 ~/utilities/apps/launch_app.sh video-sft           # launch; prints browser URL
 
 # On your local Mac/PC (tunnel — remote port + 10000):
@@ -15,14 +15,30 @@ ssh -N -L 17862:localhost:7862 new-login-1
 # Then open: http://localhost:17862/
 ```
 
+## Layout
+
+Apps come in two flavors. **Only the 4 standalone apps physically live here**; the other
+12 stay inside their data/working repos (they import sibling code from there, e.g.
+`video-sft` → `video-sft-vlm/app.py`, `vo-compare` → `../data_preparation/canonical_csv_columns`,
+and several are part of the `original-vlm-post-training` upstream-sync set). The **registry +
+`launch_app.sh` are the unification layer** — they reach into each repo. The directory is *not*
+meant to hold all 16 app sources, and moving the embedded ones here would break their imports.
+
+| Path | What |
+|------|------|
+| `*.py` (root) | The 3 self-contained app entrypoints: `vibe_test.py`, `grpo_dashboard.py`, `claude-tracker.py` |
+| `monitoring-app/` | The 4th standalone app (`monitoring`, port 7861) — absorbed from its old `vlm-monitoring-app.git` repo; now plain-tracked inside `utilities` |
+| `scripts/` | Non-launched tooling: the `make_app_video_dataset.py` browse-dataset builder + the subprocess helpers `vibe_test.py` shells out to (`_vertex_call.py`, `_severity_metrics.py`) |
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | [`launch_app.sh`](launch_app.sh) | Launcher: `launch_app.sh <name> [KEY=VAL...] [--extra-arg...]` — kills existing process, launches correct venv + env, prints browser URL |
-| [`apps_registry.yaml`](apps_registry.yaml) | Registry of all 15 apps: name → repo, script, port, venv, env vars. **Edit here** to add or change an app. |
-| [`make_app_video_dataset.py`](make_app_video_dataset.py) | Convert an HF dataset to a `*_browse.jsonl` for the video-sft-vlm app. Output → `/mnt/data/sgsilva/datasets/app_video_datasets/`. |
+| [`apps_registry.yaml`](apps_registry.yaml) | Registry of all 16 apps: name → repo, script, port, venv, env vars. **Edit here** to add or change an app. |
+| [`scripts/make_app_video_dataset.py`](scripts/make_app_video_dataset.py) | Convert an HF dataset to a `*_browse.jsonl` for the video-sft-vlm app. Output → `/mnt/data/sgsilva/datasets/app_video_datasets/`. |
 | [`claude-tracker.py`](claude-tracker.py) | Local HTTP dashboard for Claude Code token usage and cost (port 8080). |
+| [`scripts/`](scripts/) | Non-launched tooling + private support modules; not registry entrypoints. |
 
 ## Port table (all unique — all apps can run concurrently)
 
@@ -56,7 +72,7 @@ picks them up automatically on startup.
 ```bash
 # Convert an HF dataset:
 /home/sgsilva/vlm-post-training-home-venv/bin/python \
-  ~/utilities/apps/make_app_video_dataset.py \
+  ~/utilities/apps/scripts/make_app_video_dataset.py \
   --source /mnt/data/sgsilva/datasets/<hf_dataset> \
   --name   <name>
 # → writes app_video_datasets/<name>_browse.jsonl
