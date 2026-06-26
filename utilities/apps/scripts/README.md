@@ -8,6 +8,7 @@ via `launch_app.sh` (so it doesn't belong at the root next to the registry entry
 | File | What |
 |------|------|
 | `make_app_video_dataset.py` | Convert an HF dataset → a `*_browse.jsonl` for the `video-sft` browse app. Writes to `/mnt/data/sgsilva/datasets/app_video_datasets/`. Run with `vlm-post-training-home-venv/bin/python`; see `--help`. |
+| `snapshot_sft_config.py` | Snapshot an SFT config into `nemo-rl-vlm/logs/<run>/config_snapshot.yaml` at launch, so the `sft-dashboard` (port 7875) config panel shows config-as-run. Called by the `/launch-sft` workflow right after config verification. Run with the nemo `.venv`; see `--help`. |
 
 ## Private subprocess helpers (invoked by an app)
 

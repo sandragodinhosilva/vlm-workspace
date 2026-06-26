@@ -17,8 +17,9 @@
 #   7870  prejudge-viewer     video-sft-vlm/prejudge_viewer.py
 #   7871  mesh-viewer         video-sft-vlm/mesh_viewer.py
 #   7872  sword-viewer        sam3d_pilot/sword_viewer.py
-#   7873  grpo-dashboard      nemo-rl-vlm/tools/grpo_dashboard.py
+#   7873  grpo-dashboard      utilities/apps/grpo_dashboard.py
 #   7874  vibe-test           utilities/apps/vibe_test.py
+#   7875  sft-dashboard       utilities/apps/sft_dashboard.py
 #   8080  claude-tracker      utilities/apps/claude-tracker.py
 
 # Entries are grouped into 6 WORKSTREAMS (banner comments below). Each entry also
@@ -176,7 +177,7 @@ apps:
     venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
 
   # ══ TRAINING ═══════════════════════════════════════════════════════════════
-  #   Training-run dashboards (GRPO; SFT later).
+  #   Training-run dashboards (GRPO + SFT).
 
   grpo-dashboard:
     label: "GRPO training dashboard"
@@ -186,6 +187,17 @@ apps:
     script: grpo_dashboard.py
     port: 7873
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+
+  sft-dashboard:
+    label: "SFT training dashboard"
+    workstream: Training
+    goal: "Live SFT-run visibility: loss / grad-norm / lr curves, val-loss at save points, step timing + throughput, per-node GPU/host health, and a config-intelligence panel (SWEPT vs FROZEN-knob drift + fit-in-memory guardrail audit). Reads tensorboard event files from nemo-rl-vlm/logs/<run>/exp_NNN/tensorboard. 🟢 = run active in last 10 min."
+    repo: /home/sgsilva/utilities/apps
+    script: sft_dashboard.py
+    port: 7875
+    # MUST be the in-repo nemo .venv — it's the only env with `tensorboard`
+    # (the event-file reader). The cu12/eval venvs do NOT have it.
+    venv: /home/sgsilva/nemo-rl-vlm/.venv/bin/python
 
   # ══ UTILITIES ══════════════════════════════════════════════════════════════
   #   Infra / health / cost dashboards — meta-tooling, not per-task browsers.
