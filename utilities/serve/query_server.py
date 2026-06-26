@@ -872,39 +872,49 @@ def query_with_images(
         # Check if this is a Gemini model that should use Gen AI SDK
         is_gemini = provider == "vertex_ai" or litellm_model.startswith("vertex_ai/")
 
-        if is_gemini:
-            # Extract model name from "vertex_ai/model-name" format if needed
-            gemini_model_name = litellm_model.split("/")[-1] if "/" in litellm_model else litellm_model
+        # The encoded mp4 lives in a tempfile.mkdtemp() dir; remove it after the
+        # request so video-mode calls don't leak /tmp/tmp*/output.mp4 (a 26GB leak
+        # accumulated before this). [[feedback_output_locations]]
+        try:
+            if is_gemini:
+                # Extract model name from "vertex_ai/model-name" format if needed
+                gemini_model_name = litellm_model.split("/")[-1] if "/" in litellm_model else litellm_model
 
-            print(f"Querying {model_name} via Gen AI SDK (encoded at {video_fps} FPS, sampling at {sampling_fps} FPS)...")
-            return query_gemini_with_genai_sdk(
-                model_name=gemini_model_name,
-                prompt=prompt,
-                video_path=video_path,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                sampling_fps=sampling_fps,
-                project_id="swordhealth-ai-research",
-                location="global",
-                system_prompt=system_prompt
-            )
-        else:
-            # Use LiteLLM for non-Gemini models
-            print(f"Querying {model_name} in video mode (encoded at {video_fps} FPS, sampling at {sampling_fps} FPS)...")
-            return query_with_litellm(
-                model_name=litellm_model,
-                prompt=prompt,
-                video_path=video_path,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                api_base=api_base_url,
-                sampling_fps=sampling_fps,
-                system_prompt=system_prompt,
-                top_p=top_p,
-                top_k=top_k,
-                timeout=timeout,
-                disable_thinking=disable_thinking
-            )
+                print(f"Querying {model_name} via Gen AI SDK (encoded at {video_fps} FPS, sampling at {sampling_fps} FPS)...")
+                return query_gemini_with_genai_sdk(
+                    model_name=gemini_model_name,
+                    prompt=prompt,
+                    video_path=video_path,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    sampling_fps=sampling_fps,
+                    project_id="swordhealth-ai-research",
+                    location="global",
+                    system_prompt=system_prompt
+                )
+            else:
+                # Use LiteLLM for non-Gemini models
+                print(f"Querying {model_name} in video mode (encoded at {video_fps} FPS, sampling at {sampling_fps} FPS)...")
+                return query_with_litellm(
+                    model_name=litellm_model,
+                    prompt=prompt,
+                    video_path=video_path,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    api_base=api_base_url,
+                    sampling_fps=sampling_fps,
+                    system_prompt=system_prompt,
+                    top_p=top_p,
+                    top_k=top_k,
+                    timeout=timeout,
+                    disable_thinking=disable_thinking
+                )
+        finally:
+            try:
+                import shutil
+                shutil.rmtree(os.path.dirname(video_path), ignore_errors=True)
+            except Exception:
+                pass
     else:
         # Send as image sequence
         print(f"Querying {model_name} with {len(image_paths)} images...")
@@ -935,7 +945,8 @@ def query_with_path(
     sampling_fps: float = None,
     top_p: float = None,
     top_k: int = None,
-    timeout: float = 600.0
+    timeout: float = 600.0,
+    mirror: bool = False,
 ):
     """
     Query model with images from a directory path.
@@ -1010,7 +1021,8 @@ def query_with_path(
         sampling_fps=sampling_fps,
         top_p=top_p,
         top_k=top_k,
-        timeout=timeout
+        timeout=timeout,
+        mirror=mirror,
     )
 
 
