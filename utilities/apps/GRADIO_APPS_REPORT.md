@@ -9,7 +9,7 @@
 
 | App | Path | Port | Venv | Goal | Created | Last commit | Commits | Status |
 |-----|------|:----:|------|------|:-------:|:-----------:|:-------:|--------|
-| Monitoring dashboard | `monitoring-app/app.py` | 7861 | `browser-app-home-venv` | Pipeline health dashboard — datasets, training metrics, eval results in one view | 2026-02-05 | 2026-04-09 | 24 | ✓ |
+| Monitoring dashboard | `apps/monitoring-app/app.py` | 7861 | `browser-app-home-venv` | Pipeline health dashboard — datasets, training metrics, eval results in one view | 2026-02-05 | 2026-04-09 | 24 | ✓ |
 | Video SFT browser | `video-sft-vlm/app.py` | 7862 | `video-sft-vlm-home-venv` | Browse generated MCQA video samples; inspect exercise types, tier, messages | 2026-02-19 | 2026-06-17 | 27 | ✓ active |
 | Dataset browser | `vlm-post-training/web/browser-app/app.py` | 7863 | `browser-app-home-venv` | Multi-tab browser for all post-training datasets: image, video, text, reasoning tabs | 2026-03-06 | 2026-06-16 | 8 | ⚠ BROWSER_MIXED_ROOT dataset not on disk |
 | VO severity comparator | `vlm-post-training/web/single_stage_compare_app.py` | 7864 | `vlm-post-training-home-venv` | Compare two single/two-stage eval runs side-by-side: per-rep error detection + video | 2026-05-22 | 2026-05-29 | 5 | ✓ |
@@ -61,7 +61,7 @@ On your local Mac/PC, open a tmux window with 2 panes:
 
 ### 3.1 Monitoring Dashboard
 
-**Path:** `/home/sgsilva/monitoring-app/app.py`  
+**Path:** `/home/sgsilva/utilities/apps/monitoring-app/app.py`  
 **Port:** 7861  
 **Venv:** `/home/sgsilva/browser-app-home-venv/bin/python` (has gradio ✓)  
 **Input:**
@@ -76,7 +76,7 @@ On your local Mac/PC, open a tmux window with 2 panes:
 ```bash
 ~/utilities/apps/launch_app.sh monitoring
 # or manual:
-cd /home/sgsilva/monitoring-app
+cd /home/sgsilva/utilities/apps/monitoring-app
 lsof -ti:7861 | xargs -r kill -9
 /home/sgsilva/browser-app-home-venv/bin/python app.py --port 7861
 ```
@@ -331,7 +331,7 @@ dropdown, Vertex/gemini routing, stage-2 severity scoring + canonical board metr
 
 | Issue | Fix applied |
 |-------|-------------|
-| Monitoring app `cd /mnt/data/sgsilva/monitoring-app` | Changed to `cd /home/sgsilva/monitoring-app` |
+| Monitoring app `cd /mnt/data/sgsilva/monitoring-app` | Changed to `cd /home/sgsilva/utilities/apps/monitoring-app` |
 | SAM3D sword viewer used dead Poetry venv | Replaced with `/home/sgsilva/video-sft-vlm-home-venv/bin/python` |
 | Data-tuning app block (4 lines) — `/home/sgsilva/data-tuning` doesn't exist | Removed |
 | GRPO dashboard used `.venv/bin/python` (no gradio) | Replaced with `/home/sgsilva/vlm-post-training-home-venv/bin/python` |

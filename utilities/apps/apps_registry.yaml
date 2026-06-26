@@ -5,7 +5,7 @@
 #
 # Port table (all unique — all apps can run concurrently):
 #   7860  reasoning-prompt    reasoning_trace_prompt_app.py
-#   7861  monitoring          monitoring-app/app.py
+#   7861  monitoring          apps/monitoring-app/app.py
 #   7862  video-sft           video-sft-vlm/app.py          ← main browse app
 #   7863  browser             vlm-post-training/web/browser-app/app.py
 #   7864  vo-severity         web/single_stage_compare_app.py
@@ -194,7 +194,7 @@ apps:
     label: "Monitoring dashboard (datasets / training / eval)"
     workstream: Utilities
     goal: "Pipeline health dashboard — datasets, training metrics, and eval results in one view."
-    repo: /home/sgsilva/monitoring-app
+    repo: /home/sgsilva/utilities/apps/monitoring-app
     script: app.py
     port: 7861
     venv: /home/sgsilva/browser-app-home-venv/bin/python
