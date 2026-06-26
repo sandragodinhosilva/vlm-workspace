@@ -161,25 +161,28 @@ def discover_runs(logs_dirs):
 
 
 def load_run_scalars(event_files):
-    """Merge scalars across exp_* event files. Later files win on step conflicts.
+    """Pick, per tag, the LATEST exp_* that contains it — taken WHOLE.
+
+    SFT resumes write a fresh exp_NNN whose step counter RESTARTS from 1 (unlike
+    GRPO, which continues). So a per-step "later wins" merge would splice two
+    different training runs at an invisible seam (e.g. take steps 1..649 from the
+    resumed exp, then 650..675 from the abandoned earlier exp) — a curve that
+    belongs to neither run. Instead we treat each launch's exp as authoritative
+    for its own tags and show only the latest exp that logged a given tag. This
+    means the displayed curve is always exactly one contiguous training segment.
+    Earlier (abandoned/crashed) exps are dropped for that tag, not blended.
 
     Returns {tag: (steps_np_sorted, values_np)}.
     """
-    merged = {}  # tag -> {step: value}
-    for ev in event_files:  # ascending exp order: later overrides
+    out = {}  # tag -> (steps, vals) from the latest exp that had this tag
+    for ev in event_files:  # ascending exp order; later overwrites wholesale
         try:
             tag_data = _read_event_file(ev)
         except Exception:
             continue
         for tag, (steps, vals) in tag_data.items():
-            d = merged.setdefault(tag, {})
-            for s, v in zip(steps.tolist(), vals.tolist()):
-                d[s] = v
-    out = {}
-    for tag, d in merged.items():
-        ks = np.array(sorted(d.keys()), dtype=np.int64)
-        vs = np.array([d[k] for k in ks.tolist()], dtype=np.float64)
-        out[tag] = (ks, vs)
+            order = np.argsort(steps, kind="stable")
+            out[tag] = (steps[order], vals[order])  # last exp with this tag wins, whole
     return out
 
 
@@ -197,11 +200,30 @@ def get_run_scalars(event_files):
 # ---------------------------------------------------------------------------
 # GPU / host health aggregation (ray/* tags)
 # ---------------------------------------------------------------------------
-def gpu_summary(scalars):
-    """Aggregate the most-recent ray/* GPU+host stats into a per-node table dict.
+GPU_WINDOW = 5  # samples to window util over, so a single transient/shutdown 0 doesn't dominate
 
-    Returns {"nodes": {node_idx: {"gpu_util": [...], "gpu_mem": [...], "host_mem": x,
-    "host_mem_total": x}}, "n_steps": int} from the LAST logged ray step.
+
+def _windowed_util(vals):
+    """Max util over the last GPU_WINDOW samples.
+
+    ray/* telemetry keeps ticking through shutdown, so a finished run's final
+    util sample reads 0; a single live sample can also momentarily dip to 0 on a
+    healthy rank. Taking the windowed MAX answers 'was this GPU recently busy?'
+    rather than 'is this exact instant 0?', which is the question that matters.
+    """
+    if len(vals) == 0:
+        return float("nan")
+    w = vals[-GPU_WINDOW:]
+    w = w[~np.isnan(w)]
+    return float(np.max(w)) if len(w) else float("nan")
+
+
+def gpu_summary(scalars):
+    """Aggregate recent ray/* GPU+host stats into a per-node table dict.
+
+    GPU util is windowed (max over last GPU_WINDOW samples); GPU mem and host
+    mem use the last value. Returns {"nodes": {ni: {"util": {gi: v}, "mem": {gi: v}}},
+    "host": {ni: {mem_gb, mem_total_gb}}}.
     """
     nodes = {}
     host = {}
@@ -212,8 +234,10 @@ def gpu_summary(scalars):
         if m:
             ni, gi, kind = int(m.group(1)), int(m.group(2)), m.group(3)
             nd = nodes.setdefault(ni, {"util": {}, "mem": {}})
-            last = float(vals[-1]) if len(vals) else float("nan")
-            (nd["util"] if kind == "util" else nd["mem"])[gi] = last
+            if kind == "util":
+                nd["util"][gi] = _windowed_util(vals)
+            else:
+                nd["mem"][gi] = float(vals[-1]) if len(vals) else float("nan")
             continue
         m2 = re.match(r"ray/node\.(\d+)\.(mem_gb|mem_total_gb)$", tag)
         if m2:
@@ -222,11 +246,19 @@ def gpu_summary(scalars):
     return {"nodes": nodes, "host": host}
 
 
-def gpu_health_markdown(scalars):
+def gpu_health_markdown(scalars, is_running=True):
+    """Render the per-node GPU/host table.
+
+    ⚠️ low-util warnings are only meaningful for an ACTIVE run — a finished run's
+    telemetry trails off to 0, so the warning is suppressed when is_running=False.
+    """
     gs = gpu_summary(scalars)
     if not gs["nodes"]:
         return "_No ray/* GPU telemetry in this run's logs._"
-    lines = ["### GPU / host health (latest logged sample)", ""]
+    header = ("latest sample, util windowed over last "
+              f"{GPU_WINDOW}" + (" — run IDLE/finished, util warnings suppressed"
+                                 if not is_running else ""))
+    lines = [f"### GPU / host health ({header})", ""]
     lines.append("| node | mean GPU util % | min util | GPU mem (max GB) | host mem GB |")
     lines.append("|---|---|---|---|---|")
     for ni in sorted(gs["nodes"]):
@@ -241,11 +273,15 @@ def gpu_health_markdown(scalars):
         max_m = np.max(mems) if mems else float("nan")
         host_str = (f"{host_mem:.0f} / {host_tot:.0f}"
                     if not np.isnan(host_mem) else "—")
-        warn = " ⚠️" if (utils and min_u < 50) else ""
+        warn = " ⚠️" if (is_running and utils and min_u < 50) else ""
         lines.append(f"| {ni} | {mean_u:.0f}{warn} | {min_u:.0f} | {max_m:.0f} | {host_str} |")
     lines.append("")
-    lines.append("_⚠️ on a node = at least one GPU under 50% util in the last sample "
-                 "(straggler / imbalance / idle rank)._")
+    if is_running:
+        lines.append(f"_⚠️ on a node = a GPU stayed under 50% util across the last "
+                     f"{GPU_WINDOW} samples (straggler / imbalance / idle rank)._")
+    else:
+        lines.append("_Run is idle/finished — GPU util naturally trails to 0 at shutdown; "
+                     "util warnings are suppressed. GPU/host mem shown for reference._")
     return "\n".join(lines)
 
 
@@ -453,14 +489,15 @@ def summary_markdown(run_scalars):
         return "No runs selected."
     lines = ["### Run summary", ""]
     lines.append("| run | steps | loss (first→last) | min loss | val_loss (last) | "
-                 "grad_norm (last) | mean step (s) | checkpoints |")
-    lines.append("|---|---|---|---|---|---|---|---|")
+                 "grad_norm (last) | mean step (s) | tok/s (recent) | checkpoints |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
     for label, sc in run_scalars:
         loss = sc.get("train/loss", (np.array([]), np.array([])))[1]
         steps = sc.get("train/loss", (np.array([]), np.array([])))[0]
         gn = sc.get("train/grad_norm", (None, np.array([])))[1]
         val = sc.get(VAL_TAG, (None, np.array([])))[1]
         step_t = sc.get("timing/train/total_step_time", (None, np.array([])))[1]
+        gtoks = sc.get("train/global_valid_toks", (None, np.array([])))[1]
         ckpt = sc.get("timing/train/checkpointing", (np.array([]), None))[0]
         n = len(steps)
         loss_str = (f"{loss[0]:.3f}→{loss[-1]:.3f}" if len(loss) else "—")
@@ -468,9 +505,17 @@ def summary_markdown(run_scalars):
         val_str = f"{val[-1]:.4f}" if len(val) else "—"
         gn_str = f"{gn[-1]:.2f}" if len(gn) else "—"
         step_str = f"{np.nanmean(step_t):.0f}" if len(step_t) else "—"
+        # recent throughput: mean(global_valid_toks) / mean(step_time) over last 50 steps
+        if len(gtoks) and len(step_t):
+            k = min(50, len(gtoks), len(step_t))
+            mt = np.nanmean(step_t[-k:])
+            tps = (np.nanmean(gtoks[-k:]) / mt) if mt > 0 else float("nan")
+            tok_str = f"{tps:,.0f}" if np.isfinite(tps) else "—"
+        else:
+            tok_str = "—"
         ckpt_str = f"{len(ckpt)}" if ckpt is not None else "0"
         lines.append(f"| {label} | {n} | {loss_str} | {min_loss} | {val_str} | "
-                     f"{gn_str} | {step_str} | {ckpt_str} |")
+                     f"{gn_str} | {step_str} | {tok_str} | {ckpt_str} |")
     return "\n".join(lines)
 
 
@@ -486,12 +531,17 @@ class AppState:
         self.runs = discover_runs(self.logs_dirs)  # [(name, dir, events)]
         self.by_name = {n: (d, e) for n, d, e in self.runs}
 
+    def is_running(self, name):
+        """True if the run's latest event file was touched in the last 10 min."""
+        import time
+        ent = self.by_name.get(name)
+        if not ent:
+            return False
+        return _mtime(ent[1][-1]) > (time.time() - 600)
+
     def labels(self):
-        out = []
-        for name, _, events in self.runs:
-            running = (_mtime(events[-1]) > (__import__("time").time() - 600))
-            out.append(("🟢 " if running else "") + name)
-        return out
+        return [("🟢 " if self.is_running(name) else "") + name
+                for name, _, _ in self.runs]
 
     def resolve(self, label):
         return label.replace("🟢 ", "").strip()
@@ -562,7 +612,8 @@ def build_ui(state):
             # GPU + config from the FIRST selected run
             if rs:
                 first_name = rs[0][0]
-                outputs[gpu_md] = gpu_health_markdown(rs[0][1])
+                outputs[gpu_md] = gpu_health_markdown(
+                    rs[0][1], is_running=state.is_running(first_name))
                 run_dir = state.by_name[first_name][0]
                 outputs[config_md] = config_markdown(first_name, run_dir)
             else:
