@@ -12,6 +12,8 @@
 #        --builder "<script + key args>" \
 #        --sources "<input dataset(s)>" \
 #        [--rows N]            # auto-counted via HF load if omitted & loadable
+#        [--status canonical|superseded|component]   # default: canonical
+#        [--superseded-by <name>]                     # the dataset that replaces this one
 #
 # Example:
 #   dlog --path /mnt/.../1805_stage2_train_noreason_obsenforced \
@@ -23,18 +25,25 @@
 set -euo pipefail
 
 REG="$HOME/.claude/DATASETS.md"
-PATH_ARG="" PURPOSE="" BUILDER="" SOURCES="" ROWS=""
+PATH_ARG="" PURPOSE="" BUILDER="" SOURCES="" ROWS="" STATUS="canonical" SUPERSEDED_BY=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --path)    PATH_ARG="$2"; shift 2;;
-    --purpose) PURPOSE="$2";  shift 2;;
-    --builder) BUILDER="$2";  shift 2;;
-    --sources) SOURCES="$2";  shift 2;;
-    --rows)    ROWS="$2";     shift 2;;
+    --path)          PATH_ARG="$2";      shift 2;;
+    --purpose)       PURPOSE="$2";       shift 2;;
+    --builder)       BUILDER="$2";       shift 2;;
+    --sources)       SOURCES="$2";       shift 2;;
+    --rows)          ROWS="$2";          shift 2;;
+    --status)        STATUS="$2";        shift 2;;  # canonical | superseded | component (default: canonical)
+    --superseded-by) SUPERSEDED_BY="$2"; shift 2;;  # name of the replacing dataset
     *) echo "dlog: unknown arg '$1'" >&2; exit 2;;
   esac
 done
+
+case "$STATUS" in
+  canonical|superseded|component) ;;
+  *) echo "dlog: --status must be canonical|superseded|component (got '$STATUS')" >&2; exit 2;;
+esac
 
 [ -z "$PATH_ARG" ] && { echo "dlog: --path is required" >&2; exit 2; }
 [ -z "$PURPOSE" ]  && { echo "dlog: --purpose is required" >&2; exit 2; }
@@ -63,6 +72,7 @@ fi
 ENTRY="$(cat <<EOF
 
 ### \`$(basename "$PATH_ARG")\`  ($DATE)
+- **Status:** $STATUS$([ -n "$SUPERSEDED_BY" ] && printf ' (superseded by `%s`)' "$SUPERSEDED_BY")
 - **Path:** \`$PATH_ARG\`
 - **Purpose:** $PURPOSE
 - **Builder:** \`$BUILDER\`
