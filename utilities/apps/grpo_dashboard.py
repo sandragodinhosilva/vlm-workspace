@@ -1652,9 +1652,18 @@ class AppState:
     def short_name(self, full_name):
         return self.short_names.get(full_name, shorten_run_name(full_name))
 
+    def _resolve_paths(self, run_name):
+        """exp_* paths for a run, re-scanning disk if the launch-time run_map missed it
+        (run started while the app was already open)."""
+        paths = self.run_map.get(run_name)
+        if not paths:
+            run_dir = os.path.join(self.logs_dir, run_name)
+            paths = sorted(glob.glob(os.path.join(run_dir, "exp_*"))) or [run_dir]
+        return paths
+
     def get_step_data(self, run_name):
         if run_name not in self._step_data_cache:
-            path = self.run_map[run_name]
+            path = self._resolve_paths(run_name)
             self._step_data_cache[run_name] = load_run_metrics(path, run_name=run_name)
         return self._step_data_cache[run_name]
 
@@ -1678,9 +1687,9 @@ class AppState:
         return self._train_metrics_cache[run_name]
 
     def get_steps_for_run(self, run_name):
-        paths = self.run_map.get(run_name)
-        if not paths:
-            return []
+        # Re-scan disk live (don't trust launch-time run_map — a run launched while
+        # the app was already open has steps the cached map never saw).
+        paths = self._resolve_paths(run_name)
         if isinstance(paths, str):
             paths = [paths]
         steps = set()
@@ -2027,9 +2036,20 @@ def create_app(logs_dir):
 
         # ===== Tab 2: Rollout Browser =====
         with gr.Tab("Rollout Browser"):
+            # Gradio 6 auto-selects the first choice as a single-Dropdown's value at BUILD
+            # time, so browse_run.change never fires for it — seed the step list here so the
+            # default-selected run already has its steps populated (an app.load below also
+            # refreshes after launch).
+            _init_run = run_names[0] if run_names else None
+            _init_steps = [str(s) for s in state.get_steps_for_run(_init_run)] if _init_run else []
             with gr.Row():
-                browse_run = gr.Dropdown(choices=run_names, label="Run", info="Select a run")
-                browse_step = gr.Dropdown(choices=[], label="Step", info="Select a step")
+                browse_run = gr.Dropdown(
+                    choices=run_names, value=_init_run, label="Run", info="Select a run",
+                )
+                browse_step = gr.Dropdown(
+                    choices=_init_steps, value=(_init_steps[-1] if _init_steps else None),
+                    label="Step", info="Select a step",
+                )
                 browse_task_type = gr.Dropdown(
                     choices=["all"], value="all", label="Task Type",
                     info="Filter by task type (populated when run is selected)"
@@ -2048,15 +2068,29 @@ def create_app(logs_dir):
             def update_steps_and_types(run_name):
                 if not run_name:
                     return gr.update(choices=[], value=None), gr.update(choices=["all"], value="all")
-                steps = state.get_steps_for_run(run_name)
+                # Steps first and independently — never let the heavier task-type
+                # scan (ProcessPool over in-progress step files) blank the step list.
+                try:
+                    steps = state.get_steps_for_run(run_name)
+                except Exception as e:
+                    print(f"[update_steps] get_steps_for_run failed: {e}")
+                    steps = []
                 step_strs = [str(s) for s in steps]
-                task_types = state.get_task_types_for_run(run_name)
+                try:
+                    task_types = state.get_task_types_for_run(run_name)
+                except Exception as e:
+                    print(f"[update_steps] get_task_types_for_run failed: {e}")
+                    task_types = []
                 return (
-                    gr.update(choices=step_strs, value=step_strs[0] if step_strs else None),
+                    gr.update(choices=step_strs, value=step_strs[-1] if step_strs else None),
                     gr.update(choices=["all"] + task_types, value="all"),
                 )
 
             browse_run.change(fn=update_steps_and_types, inputs=[browse_run], outputs=[browse_step, browse_task_type])
+            # Refresh the step/type lists after the app loads (build-time seeding can be
+            # stale if steps land between build and page-open; .change won't fire for the
+            # auto-selected default run in Gradio 6).
+            app.load(fn=update_steps_and_types, inputs=[browse_run], outputs=[browse_step, browse_task_type])
 
             def on_browse(run_name, step_str, task_type_filter, rmin, rmax, page, psize):
                 if not run_name or not step_str:

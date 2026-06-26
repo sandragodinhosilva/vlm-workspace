@@ -20,6 +20,7 @@
 #   7873  grpo-dashboard      utilities/apps/grpo_dashboard.py
 #   7874  vibe-test           utilities/apps/vibe_test.py
 #   7875  sft-dashboard       utilities/apps/sft_dashboard.py
+#   7876  vobs-schema         utilities/apps/vobs_schema_inspector.py
 #   8080  claude-tracker      utilities/apps/claude-tracker.py
 
 # Entries are grouped into 6 WORKSTREAMS (banner comments below). Each entry also
@@ -91,6 +92,15 @@ apps:
     # Add --results "label=path" args at launch time.
     # RAW-browse mode (no model needed): --raw-cohort <processed-dir> indexes every rep's
     #   annotation.json directly (e.g. 1806_after_format_review_processed). See /apps SKILL.md.
+
+  vobs-schema:
+    label: "VObs v3 schema inspector (angle vs categorical)"
+    workstream: Visual Observations
+    goal: "Read-only browse of the v3 visual-observations schema pair (visual_observations_v3_{angle,categorical}.json): per-exercise cards, NEW-vs-v2 questions flagged, each angle question shown in BOTH its angle and categorical-ladder shape. Text filter + NEW-only + angle-only toggles. No model / no GPU."
+    repo: /home/sgsilva/utilities/apps
+    script: vobs_schema_inspector.py
+    port: 7876
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
   reasoning-prompt:
     label: "Reasoning-trace prompt editor — TUNE dataset-GENERATION prompts (4 task formatters)"
