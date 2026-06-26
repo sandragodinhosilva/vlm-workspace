@@ -2,8 +2,8 @@
 # status.sh — one-shot cluster state: vLLM servers + SLURM jobs + /home space.
 #
 # Usage:
-#   bash ~/utilities/status.sh          # default view
-#   bash ~/utilities/status.sh --full   # also show vLLM concurrency + token limits
+#   bash ~/utilities/slurm/status.sh          # default view
+#   bash ~/utilities/slurm/status.sh --full   # also show vLLM concurrency + token limits
 
 set -euo pipefail
 
