@@ -1649,6 +1649,20 @@ class AppState:
     def run_names(self):
         return [name for name, _ in self.runs]
 
+    def invalidate(self, run_name=None):
+        """Drop cached step data so a live run's new steps are re-read from disk.
+        Without this, refreshing the step list shows new step numbers but serving
+        their rollouts would return the stale cached set."""
+        if run_name is None:
+            self._step_data_cache.clear()
+            self._agg_cache.clear()
+            self._train_metrics_cache.clear()
+        else:
+            self._step_data_cache.pop(run_name, None)
+            self._train_metrics_cache.pop(run_name, None)
+            for k in [k for k in self._agg_cache if k[0] == run_name]:
+                self._agg_cache.pop(k, None)
+
     def short_name(self, full_name):
         return self.short_names.get(full_name, shorten_run_name(full_name))
 
@@ -2054,6 +2068,7 @@ def create_app(logs_dir):
                     choices=["all"], value="all", label="Task Type",
                     info="Filter by task type (populated when run is selected)"
                 )
+                browse_refresh_btn = gr.Button("🔄 Refresh steps", scale=1)
 
             with gr.Row():
                 filter_reward_min = gr.Number(value=0.0, label="Min Mean Reward")
@@ -2087,6 +2102,15 @@ def create_app(logs_dir):
                 )
 
             browse_run.change(fn=update_steps_and_types, inputs=[browse_run], outputs=[browse_step, browse_task_type])
+
+            def refresh_steps(run_name):
+                # Drop the cached step data for this run so newly-written steps (a live
+                # training run keeps adding train_data_step*.jsonl) are re-read from disk.
+                if run_name:
+                    state.invalidate(run_name)
+                return update_steps_and_types(run_name)
+
+            browse_refresh_btn.click(fn=refresh_steps, inputs=[browse_run], outputs=[browse_step, browse_task_type])
             # Refresh the step/type lists after the app loads (build-time seeding can be
             # stale if steps land between build and page-open; .change won't fire for the
             # auto-selected default run in Gradio 6).

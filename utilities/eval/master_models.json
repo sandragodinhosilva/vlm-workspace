@@ -94,6 +94,19 @@
       "train_sample_count": "13887"
     },
     {
+      "pattern": "qwen35-4b-mix-12k-1506-grpo-thinkoff-step150",
+      "display": "4B mix-12k-1506 GRPO step150",
+      "train_reasoning": "no",
+      "group": "mix_4b",
+      "note": "GRPO on verifiable subset (7794 rows) from SFT step1299; +7.2 internal val (0.632->0.704); job 100841",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-mix-12k-1506-grpo-thinkoff-step150",
+      "vo_tokens": [
+        "qwen35-4b-mix-12k-1506-grpo-thinkoff-step150",
+        "mix-12k-1506-grpo-thinkoff-step150"
+      ],
+      "train_sample_count": "7794"
+    },
+    {
       "pattern": "oracle-obs-cat-1105-step357",
       "display": "4B oracle-cat ep3",
       "train_reasoning": "no",
