@@ -49,9 +49,12 @@ esac
 [ -z "$PURPOSE" ]  && { echo "dlog: --purpose is required" >&2; exit 2; }
 
 # Auto-count rows if not given and the dataset is an HF Arrow dir.
+# Delegates to count_rows.py, which SUMS num_rows across splits for a DatasetDict
+# (len()/DatasetDict.num_rows would mis-report the split COUNT) and falls back to
+# per-split subdirs. Distinct "?" sentinel on failure (never a silent 0/happy path).
 if [ -z "$ROWS" ] && [ -d "$PATH_ARG" ]; then
-  ROWS="$(/home/sgsilva/vlm-post-training-home-venv/bin/python -c \
-    "from datasets import load_from_disk; print(len(load_from_disk('$PATH_ARG')))" 2>/dev/null || echo "?")"
+  ROWS="$(/home/sgsilva/vlm-post-training-home-venv/bin/python \
+    "$(dirname "$0")/count_rows.py" "$PATH_ARG" 2>/dev/null || echo "?")"
 fi
 
 DATE="$(date +%Y-%m-%d)"
