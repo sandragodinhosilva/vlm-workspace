@@ -10,7 +10,7 @@ Per-exercise cards; NEW-vs-previous-version questions highlighted; the ANGLE vs 
 each angle-type question shown together so you can eyeball the rewrite. Text filter + NEW-only +
 angle-only toggles. Pure read-only viewer (no model, no GPU) — the Gradio analogue of the HTML view.
 
-Run via:  launch_app.sh vobs-schema [--version v5_1]   (port 7876; default = latest = v5_1)
+Run via:  launch_app.sh vobs-schema [--version 2906]   (port 7876; default = 2906 = FINAL, was v5_1)
 """
 import argparse
 import json
@@ -26,7 +26,9 @@ import gradio as gr
 
 # NEW-vs baseline per version. v2's baseline is the dual v2 file; v3/v4/v5 diff the PREVIOUS
 # version's CATEGORICAL file (clean question-text match — avoids the angle-vs-ladder false-NEW).
-_PREV = {"v3": "v2", "v4": "v3", "v5": "v4", "v5_1": "v5"}
+# 2906 is the FINAL schema (was v5_1); its intermediates (v3/v4/v5/v5_1) are archived to
+# _archive/schema_intermediates/, so 2906 diffs straight against v2 (the training baseline).
+_PREV = {"2906": "v2", "v3": "v2", "v4": "v3", "v5": "v4", "v5_1": "v5"}
 
 
 def _load(path):
@@ -36,8 +38,14 @@ def _load(path):
 
 def _resolve(version):
     """Return (F_ANGLE, F_CAT, F_PREV) for the chosen version."""
-    f_angle = os.path.join(VO, f"visual_observations_{version}_angle.json")
-    f_cat = os.path.join(VO, f"visual_observations_{version}_categorical.json")
+    # The FINAL schema (2906) uses date-LAST naming (visual_observations_angle_2906.json);
+    # the versioned intermediates used version-first (visual_observations_v5_angle.json).
+    if version == "2906":
+        f_angle = os.path.join(VO, "visual_observations_angle_2906.json")
+        f_cat = os.path.join(VO, "visual_observations_categorical_2906.json")
+    else:
+        f_angle = os.path.join(VO, f"visual_observations_{version}_angle.json")
+        f_cat = os.path.join(VO, f"visual_observations_{version}_categorical.json")
     prev = _PREV.get(version)
     if prev == "v2":
         f_prev = os.path.join(VO, "visual_observations_v2.json")
@@ -52,8 +60,8 @@ def _resolve(version):
 ANGLE = CAT = None
 PREV_QS = {}       # baseline = immediate previous version
 V2_QS = {}         # baseline = v2 (the last version models were trained on) — for the "vs v2" toggle
-VERSION = "v5_1"
-PREV_LABEL = "v5"
+VERSION = "2906"
+PREV_LABEL = "v2"
 N_EX = N_Q = 0
 
 
@@ -385,8 +393,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=7876)
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--version", default="v5_1", choices=["v2", "v3", "v4", "v5", "v5_1"],
-                        help="schema version to inspect (default: latest = v5_1)")
+    parser.add_argument("--version", default="2906", choices=["v2", "2906"],
+                        help="schema version to inspect (default: 2906 = FINAL, was v5_1). "
+                             "Intermediates v3/v4/v5/v5_1 are archived to "
+                             "visual_obs/_archive/schema_intermediates/.")
     args = parser.parse_args()
     load_version(args.version)
     build_ui().launch(server_name=args.host, server_port=args.port, share=False,
