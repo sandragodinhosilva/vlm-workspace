@@ -9,6 +9,7 @@ to flag "rogue" usage — GPUs in use without a slurm job claiming them
 Usage:
     ./gpuq.py                          # default: slurm + ssh probe
     ./gpuq.py --no-probe               # slurm only, no ssh
+    ./gpuq.py --procs                  # also show owner+model per GPU process
     ./gpuq.py --extra dev01,dev02      # also include nodes outside slurm
     ./gpuq.py --timeout 5              # bump ssh timeout
     watch -c -n2 ./gpuq.py             # live refresh
@@ -310,16 +311,144 @@ SSH_OPTS = [
 ]
 
 
-def probe_node(host, timeout):
-    """SSH to host, run nvidia-smi, return (total_gpus, busy_idx_set, type_name).
+# Marker separating the payloads we pack into one SSH round-trip.
+PROBE_SEP = "===GPUQ-PROCS==="
 
-    Returns None on any failure (no ssh, no nvidia-smi, timeout, etc).
+GPU_QUERY = (
+    "nvidia-smi --query-gpu=index,memory.used,utilization.gpu,name "
+    "--format=csv,noheader,nounits"
+)
+# Process attribution, only sent when --procs: compute-apps + a uuid→idx map
+# + a process tree (pid/ppid/user) so we can attribute each GPU PID, AND the
+# full untruncated cmdline of every process via /proc (ps truncates args and
+# frameworks like vLLM rename the worker procs — the model arg lives on an
+# ancestor). We walk the tree locally to find the model-bearing ancestor.
+PROC_QUERY = (
+    "echo " + PROBE_SEP + "; "
+    "nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory "
+    "--format=csv,noheader,nounits 2>/dev/null; "
+    "echo " + PROBE_SEP + "; "
+    "nvidia-smi --query-gpu=index,uuid --format=csv,noheader 2>/dev/null; "
+    "echo " + PROBE_SEP + "; "
+    "ps -eo pid=,ppid=,user= 2>/dev/null; "
+    "echo " + PROBE_SEP + "; "
+    # full cmdlines: 'PID<TAB>arg0 arg1 ...' (NULs in /proc → spaces)
+    "for f in /proc/[0-9]*/cmdline; do p=${f%/cmdline}; p=${p#/proc/}; "
+    "printf '%s\\t' \"$p\"; tr '\\0' ' ' < \"$f\" 2>/dev/null; echo; done"
+)
+
+
+def _norm_gpu_name(raw):
+    # turn 'NVIDIA H100 80GB HBM3' → 'h100_80gb_hbm3' to match slurm style
+    n = re.sub(r"^nvidia[\s_-]+", "", raw.lower())
+    return re.sub(r"\s+", "_", n)
+
+
+# Recognizable model-bearing flags, tried in order.
+_MODEL_FLAGS = ("--served-model-name", "--model", "--model-path",
+                "--model_name_or_path", "--pretrained", "--checkpoint")
+
+
+def _shorten_model(p):
+    """Keep the last 2 path segments so the label stays informative but short."""
+    p = p.rstrip("/")
+    segs = [s for s in p.split("/") if s]
+    if len(segs) <= 2:
+        return p
+    return ".../" + "/".join(segs[-2:])
+
+
+def extract_model(args_str):
+    """Best-effort 'what model is this' from a process command line.
+
+    Smart chain: explicit serving/training model flags → an HF/checkpoint path
+    token → the python entry script. Returns a short label or None.
     """
-    cmd = [
-        "ssh", "-o", f"ConnectTimeout={int(timeout)}", *SSH_OPTS, host,
-        "nvidia-smi --query-gpu=index,memory.used,utilization.gpu,name "
-        "--format=csv,noheader,nounits",
-    ]
+    if not args_str:
+        return None
+    toks = args_str.split()
+    # `vllm serve <model>` / `... serve <model>`: the positional after 'serve'
+    # is the model (HF id or path), even with no --model flag.
+    for i, t in enumerate(toks[:-1]):
+        if t == "serve" and not toks[i + 1].startswith("-"):
+            return _shorten_model(toks[i + 1])
+    for i, t in enumerate(toks):
+        for flag in _MODEL_FLAGS:
+            if t == flag and i + 1 < len(toks):
+                return _shorten_model(toks[i + 1])
+            if t.startswith(flag + "="):
+                return _shorten_model(t.split("=", 1)[1])
+    for t in toks:
+        if ("/" in t and not t.startswith("-")
+                and re.search(r"(checkpoint|step\d+|/models?/|huggingface|/hf_|"
+                              r"[Qq]wen|merged|sft|grpo|dpo)", t)):
+            return _shorten_model(t)
+    for t in toks:
+        if t.endswith(".py"):
+            return os.path.basename(t)
+    return None
+
+
+def _model_for_pid(pid, ppid, cmdline, depth=12):
+    """Walk a PID up its parent chain, returning the first model label found.
+
+    GPU processes are often renamed workers (e.g. 'VLLM::Worker_TP0') whose
+    real `vllm serve <model>` / training cmdline lives on an ancestor. Stop at
+    the slurmstepd / init boundary so we don't bleed into unrelated processes.
+    """
+    p = pid
+    for _ in range(depth):
+        args = cmdline.get(p, "")
+        if "slurmstepd" in args:
+            break
+        m = extract_model(args)
+        if m:
+            return m
+        parent = ppid.get(p)
+        if not parent or parent == p or parent == "1":
+            break
+        p = parent
+    return None
+
+
+def _parse_procs(apps_block, uuid_block, tree_block, cmd_block):
+    """Stitch compute-apps + uuid→idx + process tree + cmdlines into rows."""
+    uuid2idx = {}
+    for line in uuid_block.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2 and parts[0].isdigit():
+            uuid2idx[parts[1]] = int(parts[0])
+    ppid, user_of = {}, {}
+    for line in tree_block.strip().splitlines():
+        m = re.match(r"\s*(\d+)\s+(\d+)\s+(\S+)\s*$", line)
+        if m:
+            ppid[m.group(1)] = m.group(2)
+            user_of[m.group(1)] = m.group(3)
+    cmdline = {}
+    for line in cmd_block.strip().splitlines():
+        if "\t" in line:
+            pid, args = line.split("\t", 1)
+            cmdline[pid.strip()] = args.strip()
+    rows = []
+    for line in apps_block.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2 or not parts[1].isdigit():
+            continue
+        pid = parts[1]
+        gpu_idx = uuid2idx.get(parts[0], -1)
+        user = user_of.get(pid, "?")
+        rows.append((gpu_idx, pid, user, _model_for_pid(pid, ppid, cmdline)))
+    return rows
+
+
+def probe_node(host, timeout, want_procs=False):
+    """SSH to host, run nvidia-smi, return a probe dict (or None on failure).
+
+    Keys: total, busy (idx set), type. With want_procs, also 'procs': a list of
+    (gpu_idx, pid, user, model_label) for live compute processes.
+    """
+    remote = GPU_QUERY + ((" ; " + PROC_QUERY) if want_procs else "")
+    cmd = ["ssh", "-o", f"ConnectTimeout={int(timeout)}", *SSH_OPTS, host, remote]
     try:
         r = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout + 5
@@ -329,10 +458,11 @@ def probe_node(host, timeout):
     if r.returncode != 0:
         return None
 
+    blocks = r.stdout.split(PROBE_SEP)
     total = 0
     busy = set()
     name = None
-    for line in r.stdout.strip().splitlines():
+    for line in blocks[0].strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 4:
             continue
@@ -346,19 +476,21 @@ def probe_node(host, timeout):
         if mem_mb > PROBE_MEM_MB or util > PROBE_UTIL_PCT:
             busy.add(idx)
         if name is None:
-            # turn 'NVIDIA H100 80GB HBM3' → 'h100_80gb_hbm3' to match slurm style
-            name = re.sub(r"^nvidia[\s_-]+", "", parts[3].lower())
-            name = re.sub(r"\s+", "_", name)
-    return total, busy, name
+            name = _norm_gpu_name(parts[3])
+
+    result = {"total": total, "busy": busy, "type": name}
+    if want_procs and len(blocks) >= 5:
+        result["procs"] = _parse_procs(blocks[1], blocks[2], blocks[3], blocks[4])
+    return result
 
 
-def probe_all(hosts, timeout):
+def probe_all(hosts, timeout, want_procs=False):
     """Probe many hosts in parallel. Returns dict host -> result-or-None."""
     if not hosts:
         return {}
     out = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as ex:
-        futs = {ex.submit(probe_node, h, timeout): h for h in hosts}
+        futs = {ex.submit(probe_node, h, timeout, want_procs): h for h in hosts}
         for fut in concurrent.futures.as_completed(futs):
             out[futs[fut]] = fut.result()
     return out
@@ -424,6 +556,9 @@ def parse_args():
                         "(e.g. dev01,dev02). Requires probe.")
     p.add_argument("--timeout", type=float, default=3.0,
                    help="SSH connect timeout per node in seconds (default 3)")
+    p.add_argument("--procs", action="store_true",
+                   help="Show a per-node sub-line of live GPU processes "
+                        "(gpu#, owner, detected model). Extra ssh cost.")
     return p.parse_args()
 
 
@@ -437,7 +572,8 @@ def print_squeue_listing():
     try:
         out = run([
             "squeue",
-            "--Format=JobID:10,Name:60,Partition:12,State:10,NodeList:30",
+            "--Format=JobID:10,UserName:12,Name:60,Partition:12,"
+            "State:10,NodeList:30",
         ])
     except (subprocess.CalledProcessError, FileNotFoundError):
         return
@@ -460,12 +596,13 @@ def main():
     # Probe slurm-known nodes for rogue usage + any extras for everything.
     if do_probe:
         targets = list(nodes.keys()) + extras
-        probed = probe_all(targets, args.timeout)
+        probed = probe_all(targets, args.timeout, want_procs=args.procs)
 
         for name, result in probed.items():
             if result is None:
                 continue
-            ptotal, pbusy, pname = result
+            ptotal, pbusy, pname = result["total"], result["busy"], result["type"]
+            pprocs = result.get("procs")
             if name in nodes:
                 # Slurm node: derive rogue = busy - slurm_allocated
                 d = nodes[name]
@@ -474,6 +611,8 @@ def main():
                     # what slurm counts as used is rogue
                     set(list(pbusy)[d["used"]:]) if len(pbusy) > d["used"] else set()
                 )
+                if pprocs:
+                    d["procs"] = pprocs
             else:
                 # Extra node: synthesize a slurm-less entry
                 nodes[name] = {
@@ -488,6 +627,7 @@ def main():
                     "mem_used": 0,
                     "mem_total": 0,
                     "jobs": [],
+                    "procs": pprocs or [],
                 }
 
     if not nodes:
@@ -575,6 +715,22 @@ def main():
         for res in d.get("reservations", []):
             line += GAP + c(f"[reservation:{res}]", MAGENTA)
         print(line)
+
+        # Optional per-node process sub-line(s): owner + detected model per GPU.
+        # Owner is shown here even though it also appears in the JOBS column —
+        # this is the ground-truth nvidia-smi/ps owner of the live process.
+        if args.procs:
+            for gidx, pid, user, model in sorted(
+                d.get("procs") or [], key=lambda r: (r[0], r[1])
+            ):
+                gpu_lbl = f"gpu{gidx}" if gidx >= 0 else "gpu?"
+                print(
+                    "    "
+                    + c(f"└ {gpu_lbl}", GRAY) + " "
+                    + c(user, CYAN) + " "
+                    + c(f"pid {pid}", DIM) + "  "
+                    + c(model or "(unknown)", BOLD)
+                )
 
     if any_rogue:
         print(

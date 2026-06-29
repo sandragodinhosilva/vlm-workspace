@@ -22,8 +22,11 @@ CUDA_VISIBLE_DEVICES=2,3 ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_v
 bash /home/sgsilva/utilities/serve/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-9B 8 262144 8000
 # 4B baseline (eval as MCQA baseline: --model /mnt/data/shared/models/Qwen3.5-4B)
 bash /home/sgsilva/utilities/serve/start_vllm_server.sh /mnt/data/shared/models/Qwen3.5-4B 8 262144 8000
+
 # 397B oracle baseline (8 GPU, thinkoff)
-STARTUP_HEARTBEAT_SECS=30 ENABLE_THINKING=0 /home/sgsilva/utilities/serve/start_vllm_server.sh qwen3.5-397b-a17b 8 131072 8000
+ENABLE_THINKING=0 /home/sgsilva/utilities/serve/start_vllm_server.sh qwen3.5-397b-a17b 8 262144 8000
+ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh qwen3.5-397b-a17b 8 262144 8000
+
 # 122b (thinkON) — serving venv
 QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv bash ./start_vllm_server.sh qwen3.5-122b-a10b 8 262144 8000
 
@@ -188,7 +191,8 @@ CLUSTER VIEW  (gpuq + friends — tools in ~/utilities/slurm/, shortcuts in ~/.b
 # gpuq — pretty slurm queue + per-node GPU table; SSH-probes nvidia-smi to flag ROGUE GPUs
 #        (◆ = busy per nvidia-smi but NO slurm job claims it → node is NOT really free).
 #        Lives at ~/utilities/slurm/gpuq, symlinked into ~/.local/bin so it's a bare command.
-gpuq                                  # full view: slurm + ssh rogue-probe
+gpuq                                  # full view: slurm + ssh rogue-probe (top squeue now has a USER col)
+gpuq --procs                          # + per-node sub-line per GPU process: gpu# owner pid MODEL (extra ssh)
 gpuq --no-probe                       # slurm-only, fast, no ssh (no rogue detection)
 gpuq --extra dev01,dev02              # also probe non-slurm nodes
 gpuq --timeout 5                      # bump ssh connect timeout (default 3s)
@@ -201,6 +205,8 @@ freenode
 # rogue_nodes — comma list of nodes busy off-scheduler RIGHT NOW (fallback worker-30,31 if gpuq down).
 #   sftvlm / nodestart now exclude this LIVE set instead of a hardcoded 30,31 (auto-frees them when clean).
 rogue_nodes
+
+# srun into nodes
 sftvlm                                # srun full node, --exclude "$(rogue_nodes)", job sft-vlm
 nodestart myrun                       # same, custom job-name
 
@@ -213,8 +219,10 @@ myjobs -n 3                           # last 3 log lines per job
 gpuwho worker-30                       # ~/utilities/slurm/gpuwho.sh
 gpuwho worker-30 worker-31
 
-# (older, still-useful) coarser views:
+# created by sgsilva
 nodecheck                              # sinfo + scontrol gpu lines (alias)
 status                                 # alias: bash ~/utilities/slurm/status.sh (vLLM + slurm jobs + /home; --full for concurrency)
+
+# (older, still-useful) coarser views:
 squeue -la                             # plain: your jobs
 sinfo -t idle                          # free nodes per slurm (does NOT catch rogue — prefer freenode)
