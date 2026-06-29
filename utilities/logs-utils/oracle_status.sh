@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# oracle_status.sh — at-a-glance progress of every running VObs oracle generation run
+# (generate_visual_observations_human.py), plus today's finished ones. Read-only.
+#
+#   ~/utilities/logs-utils/oracle_status.sh
+#   watch -n 30 ~/utilities/logs-utils/oracle_status.sh    # live
+#
+# For each run: schema file · GT-on/off · K · question-mode · reps written / total ·
+# throughput (reps/min) · ETA. Reads the dated oracle run-logs (Collected N tasks, started)
+# + counts reps in the run's --output-file JSON. Mirrors eval_status.sh.
+set -uo pipefail
+LOG_ROOT="/mnt/data/sgsilva/logs/oracle"
+PYBIN="/home/sgsilva/vlm-post-training-home-venv/bin/python"
+BOLD=$'\e[1m'; DIM=$'\e[2m'; RESET=$'\e[0m'; GREEN=$'\e[32m'; YELLOW=$'\e[33m'; CYAN=$'\e[36m'; RED=$'\e[31m'
+
+now_epoch=$(date -u +%s)
+
+# count top-level reps in an oracle output JSON (exid -> {rep -> {...}}) without loading via jq
+_reps() {
+  local f="$1"
+  [[ -f "$f" ]] || { echo 0; return; }
+  "$PYBIN" - "$f" <<'PY' 2>/dev/null || echo 0
+import json,sys
+try:
+    d=json.load(open(sys.argv[1])); print(sum(len(v) for v in d.values()) if isinstance(d,dict) else 0)
+except Exception: print(0)
+PY
+}
+
+# newest oracle log whose cmd contains a given --output-file path
+_logfor_output() {
+  local out="$1" d
+  for d in "$(date -u +%F)" "$(date -u -d yesterday +%F 2>/dev/null)"; do
+    grep -ls -- "--output-file $out" "$LOG_ROOT/$d"/*.log 2>/dev/null | while read -r L; do
+      printf '%s\t%s\n' "$(stat -c %Y "$L")" "$L"
+    done
+  done | sort -rn | head -1 | cut -f2-
+}
+
+fmt_eta() { local m=$1; (( m < 0 )) && { echo "?"; return; }
+  (( m < 90 )) && { echo "${m}m"; return; }
+  printf "%.1fh\n" "$(echo "$m/60" | bc -l)"; }
+
+echo
+echo "${BOLD}${CYAN}── VObs oracle status $(date '+%H:%M:%S') ──${RESET}  node $(hostname)"
+echo "${DIM}────────────────────────────────────────────────────────────${RESET}"
+
+# discover RUNNING generator procs by their --output-file
+mapfile -t OUTS < <(ps -eo args 2>/dev/null \
+  | grep "generate_visual_observations_human.py" | grep -v grep \
+  | grep -oE -- "--output-file [^ ]+" | awk '{print $2}' | sort -u)
+
+if (( ${#OUTS[@]} == 0 )); then
+  echo "  ${DIM}no oracle generation run currently running${RESET}"
+fi
+
+for out in "${OUTS[@]}"; do
+  log="$(_logfor_output "$out")"
+  name="$(basename "$out" .json)"
+  total=0; k="?"; qmode="?"; gt="GT-on"; started=""
+  if [[ -n "$log" && -f "$log" ]]; then
+    total=$(grep -oE "Collected [0-9]+ tasks" "$log" 2>/dev/null | head -1 | grep -oE "[0-9]+")
+    # K from the cmd line (always present; the "Self-consistency: K=" banner only prints when K>1)
+    k=$(grep -oE -- "--self-consistency [0-9]+" "$log" 2>/dev/null | head -1 | grep -oE "[0-9]+")
+    qmode=$(grep -oE "Question mode: [a-z-]+" "$log" 2>/dev/null | head -1 | awk '{print $3}')
+    grep -q -- "--withhold-gt" "$log" 2>/dev/null && gt="GT-off"
+    started=$(grep -oE "started  : [0-9T:-]+" "$log" 2>/dev/null | head -1 | sed 's/started  : //')
+  fi
+  done_n=$(_reps "$out")
+  [[ -z "$total" ]] && total=0
+
+  # throughput + ETA from started timestamp
+  rate=""; eta=""
+  if [[ -n "$started" ]]; then
+    s_epoch=$(date -u -d "${started/T/ }" +%s 2>/dev/null || echo 0)
+    elapsed_min=$(( (now_epoch - s_epoch) / 60 ))
+    if (( elapsed_min > 0 && done_n > 0 )); then
+      rate=$(echo "scale=1; $done_n/$elapsed_min" | bc -l)
+      remain=$(( total - done_n ))
+      (( remain < 0 )) && remain=0
+      eta_min=$(echo "$remain/($done_n/$elapsed_min)" | bc 2>/dev/null)
+      eta=$(fmt_eta "${eta_min:--1}")
+    fi
+  fi
+
+  pct=0; (( total > 0 )) && pct=$(( done_n * 100 / total ))
+  col=$GREEN; (( pct < 100 )) && col=$YELLOW
+  echo "  ${BOLD}${name}${RESET}"
+  echo "    ${gt} · K=${k} · mode=${qmode}"
+  echo "    progress: ${col}${done_n}/${total} (${pct}%)${RESET}  rate=${rate:-?} reps/min  ETA=${eta:-?}"
+  [[ -n "$log" ]] && echo "    ${DIM}log: $log${RESET}"
+done
+
+echo "${DIM}────────────────────────────────────────────────────────────${RESET}"
+# 397B server load (the shared bottleneck)
+running=$(curl -s -m 3 http://worker-5:8000/metrics 2>/dev/null | grep "num_requests_running" | grep -v "^#" | grep -oE "[0-9]+\.[0-9]+" | head -1)
+waiting=$(curl -s -m 3 http://worker-5:8000/metrics 2>/dev/null | grep "num_requests_waiting" | grep -v "^#" | grep -oE "[0-9]+\.[0-9]+" | head -1)
+[[ -n "$running" ]] && echo "  ${DIM}397B@worker-5: ${running%.*} running / ${waiting%.*} waiting${RESET}"
+echo
