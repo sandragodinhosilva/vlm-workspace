@@ -94,9 +94,9 @@ apps:
     #   annotation.json directly (e.g. 1806_after_format_review_processed). See /apps SKILL.md.
 
   vobs-schema:
-    label: "VObs schema inspector (angle vs categorical; --version, default v5_1)"
+    label: "VObs schema inspector (angle vs categorical; --version, default 2906)"
     workstream: Visual Observations
-    goal: "Read-only browse of a visual-observations schema pair (visual_observations_<V>_{angle,categorical}.json): per-exercise cards, questions NEW/changed-vs-baseline flagged, each angle question shown in BOTH its angle and categorical-ladder shape. Toggles: text filter, NEW-only, angle-only, Group-by-family (138 families w/ sibling-gap flags), vs-v2 (cumulative diff since the v2 training baseline). Version-parameterized via --version v2|v3|v4|v5|v5_1 (default v5_1 = latest). No model / no GPU."
+    goal: "Read-only browse of a visual-observations schema pair (visual_observations_{angle,categorical}_2906.json): per-exercise cards (241 ex / 1758 q), questions NEW/changed-vs-baseline flagged (incl. the net-new coverage entries promoted into 2906), each angle question shown in BOTH its angle and categorical-ladder shape. Toggles: text filter, NEW-only, angle-only, Group-by-family (sibling-gap flags), vs-v2 (cumulative diff since the v2 training baseline). Version-parameterized via --version v2|2906 (default 2906 = FINAL, was v5_1; intermediates v3/v4/v5/v5_1 archived). No model / no GPU."
     repo: /home/sgsilva/utilities/apps
     script: vobs_schema_inspector.py
     port: 7876

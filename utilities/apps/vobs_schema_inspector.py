@@ -127,13 +127,19 @@ def _exercise_card(exid, base_qs, base_label):
         badge = f'<span class="badge">NEW vs {base_label}</span>' if is_new else ""
         atag = '<span class="atag">ANGLE↔CAT</span>' if is_angle else ""
         cls = "q new" if is_new else "q"
-        # angle row: show the angle question + its categorical twin if it differs
+        # angle row: a dual-form question is TWO distinct questions (angle estimate + categorical
+        # ladder) emitted in the same pass. Render them as two clearly-separated sub-blocks so the
+        # ladder options visibly belong to the CATEGORICAL twin, not to the angle question (whose
+        # only answer is "angle estimate").
         if is_angle:
             inner = (
                 f'<div class="qt">{html.escape(oa["question"])}{badge}{atag}</div>'
-                f'<div class="sub">angle answer: <span class="chip ang">angle estimate</span></div>'
-                f'<div class="sub">categorical ladder: <span class="qsub">{html.escape(oc["question"])}</span></div>'
-                f'<div class="opts">{_opts_html(oc)}</div>'
+                f'<div class="form form-ang"><span class="ftag ftag-ang">ANGLE form</span>'
+                f'<span class="sub">answer: <span class="chip ang">angle estimate</span> '
+                f'<span class="noopts">(free numeric estimate — no options)</span></span></div>'
+                f'<div class="form form-cat"><span class="ftag ftag-cat">CATEGORICAL twin</span>'
+                f'<div class="qsub">{html.escape(oc["question"])}</div>'
+                f'<div class="opts">{_opts_html(oc)}</div></div>'
             )
         else:
             inner = (
@@ -166,6 +172,11 @@ CSS = """
 .badge{background:var(--ac);color:#ffffff;font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;margin-left:7px}
 .atag{background:#fde9c8;color:var(--amb);font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;margin-left:6px}
 .opts{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+.form{margin:6px 0 0;padding:6px 9px;border-radius:6px;border:1px solid #e0e5ec;background:#fbfcfe}
+.form-ang{border-left:3px solid var(--amb)}.form-cat{border-left:3px solid var(--blu)}
+.ftag{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.04em;padding:1px 6px;border-radius:4px;margin-right:8px;vertical-align:middle}
+.ftag-ang{background:#fde9c8;color:var(--amb)}.ftag-cat{background:#dbeafe;color:var(--blu)}
+.noopts{color:var(--mut);font-size:11px;font-style:italic}
 .chip{background:#eef1f6;color:#374151;font-size:12px;padding:2px 9px;border-radius:12px;border:1px solid #dde2ea}
 .chip.ang{background:#fdf3e3;color:var(--amb);border-color:#f3dcb8}
 .fam{border:1px solid #c7d2e0;border-radius:12px;padding:10px 12px 4px;margin-bottom:16px;background:#f8fafc}
@@ -397,7 +408,12 @@ if __name__ == "__main__":
                         help="schema version to inspect (default: 2906 = FINAL, was v5_1). "
                              "Intermediates v3/v4/v5/v5_1 are archived to "
                              "visual_obs/_archive/schema_intermediates/.")
+    parser.add_argument("--share", action="store_true",
+                        help="expose a public Gradio share URL (*.gradio.live) so a colleague "
+                             "can open it without the SSH tunnel. Read-only app, no model/GPU — "
+                             "but the link is world-reachable while running, so only share it "
+                             "deliberately and stop the app when done.")
     args = parser.parse_args()
     load_version(args.version)
-    build_ui().launch(server_name=args.host, server_port=args.port, share=False,
+    build_ui().launch(server_name=args.host, server_port=args.port, share=args.share,
                       theme=gr.themes.Soft())

@@ -3,6 +3,7 @@
 #
 # Usage:
 #   launch_app.sh <app-name> [extra args passed to the script...]
+#   launch_app.sh <app-name> --share   # expose a public *.gradio.live URL (if the app supports it)
 #   launch_app.sh --list
 #   launch_app.sh --status
 #
@@ -233,6 +234,13 @@ fi
 
 APP_NAME="$1"; shift
 
+# Note whether a public share URL was requested (just for the post-launch hint;
+# the flag itself is forwarded to the app script via EXTRA_ARGS like any other arg).
+SHARE_REQUESTED=0
+for arg in "$@"; do
+    [[ "$arg" == "--share" ]] && SHARE_REQUESTED=1
+done
+
 # ── worker-node redirect ───────────────────────────────────────────────────────
 # If running on a compute node (hostname = worker-*), the app must run on the
 # login node where the SSH tunnels land. Transparently re-dispatch via SSH into
@@ -291,6 +299,23 @@ REMOTE
         if (( elapsed >= timeout )); then
             echo " ✗  did not respond within ${timeout}s"
             echo "  Check logs: ssh ${LOGIN_NODE} -t 'tmux attach -t ${TMUX_SESSION}'"
+        fi
+    fi
+    if (( SHARE_REQUESTED )); then
+        # Gradio prints the public *.gradio.live URL into the app's tmux window a few
+        # seconds after start; surface it here so it doesn't get lost.
+        echo ""
+        echo "  🔗 Public share URL requested. Fetching the *.gradio.live link..."
+        share_url=""
+        for _ in 1 2 3 4 5 6; do
+            share_url=$(ssh "${LOGIN_NODE}" "tmux capture-pane -pt '${TMUX_SESSION}:${WINDOW_NAME}' 2>/dev/null | grep -oE 'https://[a-z0-9]+\.gradio\.live' | tail -1" 2>/dev/null || true)
+            [[ -n "$share_url" ]] && break
+            sleep 2
+        done
+        if [[ -n "$share_url" ]]; then
+            echo "  ${share_url}   ← send this to your colleague (live only while the app runs)"
+        else
+            echo "  (not printed yet — run: ssh ${LOGIN_NODE} -t 'tmux attach -t ${TMUX_SESSION}' and look for *.gradio.live)"
         fi
     fi
     exit 0
