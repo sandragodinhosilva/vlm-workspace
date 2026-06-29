@@ -45,16 +45,22 @@ echo
 echo "${BOLD}${CYAN}── VObs oracle status $(date '+%H:%M:%S') ──${RESET}  node $(hostname)"
 echo "${DIM}────────────────────────────────────────────────────────────${RESET}"
 
-# discover RUNNING generator procs by their --output-file
-mapfile -t OUTS < <(ps -eo args 2>/dev/null \
-  | grep "generate_visual_observations_human.py" | grep -v grep \
-  | grep -oE -- "--output-file [^ ]+" | awk '{print $2}' | sort -u)
+# discover oracle runs from the dated LOGS on shared storage (node-independent — the procs may run
+# on any worker node, so local `ps` would miss them when this is run from a login node). Take each
+# log's --output-file; a run is "active" if its output file was modified in the last few minutes.
+ACTIVE_SECS=300
+mapfile -t OUTS < <(
+  for d in "$(date -u +%F)" "$(date -u -d yesterday +%F 2>/dev/null)"; do
+    grep -hoE -- "--output-file [^ ]+" "$LOG_ROOT/$d"/*.log 2>/dev/null
+  done | awk '{print $2}' | grep -E "/oracle_" | sort -u)
 
 if (( ${#OUTS[@]} == 0 )); then
-  echo "  ${DIM}no oracle generation run currently running${RESET}"
+  echo "  ${DIM}no oracle generation run found in today/yesterday's logs${RESET}"
 fi
 
 for out in "${OUTS[@]}"; do
+  # skip runs that never produced an output file (killed/aborted before first write — not real runs)
+  [[ -f "$out" ]] || continue
   log="$(_logfor_output "$out")"
   name="$(basename "$out" .json)"
   total=0; k="?"; qmode="?"; gt="GT-on"; started=""
@@ -84,8 +90,14 @@ for out in "${OUTS[@]}"; do
   fi
 
   pct=0; (( total > 0 )) && pct=$(( done_n * 100 / total ))
+  # active/stalled/done from output-file mtime freshness (node-independent — shared storage)
+  state="${DIM}stalled?${RESET}"; mtime_age=99999
+  if [[ -f "$out" ]]; then mtime_age=$(( now_epoch - $(stat -c %Y "$out") )); fi
+  if (( pct >= 100 )); then state="${GREEN}done${RESET}"
+  elif (( mtime_age <= ACTIVE_SECS )); then state="${GREEN}● active${RESET} ${DIM}(${mtime_age}s ago)${RESET}"
+  else state="${RED}● stalled${RESET} ${DIM}(no write ${mtime_age}s)${RESET}"; fi
   col=$GREEN; (( pct < 100 )) && col=$YELLOW
-  echo "  ${BOLD}${name}${RESET}"
+  echo "  ${BOLD}${name}${RESET}  ${state}"
   echo "    ${gt} · K=${k} · mode=${qmode}"
   echo "    progress: ${col}${done_n}/${total} (${pct}%)${RESET}  rate=${rate:-?} reps/min  ETA=${eta:-?}"
   [[ -n "$log" ]] && echo "    ${DIM}log: $log${RESET}"
