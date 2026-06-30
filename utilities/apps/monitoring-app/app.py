@@ -48,7 +48,11 @@ import plotly.graph_objects as go
 REPO_ROOT = Path(__file__).resolve().parent
 HOME_ROOT = REPO_ROOT.parent
 VLM_EVAL_ROOT = HOME_ROOT / "vlm-evaluation"
-SFT_DATA_ROOT = HOME_ROOT / "sft-data-vlm"
+# sft-data-vlm was archived to cold storage 2026-06-30; experiments/ and
+# prompts/task4/ read below live in the archived copy (override via env if moved).
+SFT_DATA_ROOT = Path(
+    os.environ.get("MONITOR_SFT_DATA_ROOT", "/mnt/data/sgsilva/archive/sft-data-vlm")
+)
 
 # Central config — override any path via environment variables
 CONFIG = {

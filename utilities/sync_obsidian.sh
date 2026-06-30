@@ -20,7 +20,7 @@
 #   vlm-post-training/scripts_regen/docs/
 #   utilities/apps/monitoring-app/docs/
 #   video-sft-vlm/docs/
-#   sft-data-vlm/docs/
+#   (sft-data-vlm/docs/ removed 2026-06-30 — repo archived to /mnt/data/sgsilva/archive/; docs stale)
 #   (vlm-evaluation/docs/ removed 2026-06-23 — repo archived to /mnt/data/sgsilva/archive/; docs stale)
 
 set -euo pipefail
@@ -43,8 +43,7 @@ mkdir -p \
   "$VAULT/vlm-post-training/aux_tasks/transcripts/docs" \
   "$VAULT/vlm-post-training/scripts_regen/docs" \
   "$VAULT/monitoring-app/docs" \
-  "$VAULT/video-sft-vlm/docs" \
-  "$VAULT/sft-data-vlm/docs"
+  "$VAULT/video-sft-vlm/docs"
 
 # --- sync all doc dirs ---
 $RSYNC "$CLUSTER:/home/sgsilva/.claude/projects/-home-sgsilva/memory/"         "$VAULT/memory/"
@@ -55,6 +54,6 @@ $RSYNC "$CLUSTER:/home/sgsilva/vlm-post-training/aux_tasks/transcripts/docs/"  "
 $RSYNC "$CLUSTER:/home/sgsilva/vlm-post-training/scripts_regen/docs/"          "$VAULT/vlm-post-training/scripts_regen/docs/"
 $RSYNC "$CLUSTER:/home/sgsilva/utilities/apps/monitoring-app/docs/"            "$VAULT/monitoring-app/docs/"
 $RSYNC "$CLUSTER:/home/sgsilva/video-sft-vlm/docs/"                            "$VAULT/video-sft-vlm/docs/"
-$RSYNC "$CLUSTER:/home/sgsilva/sft-data-vlm/docs/"                             "$VAULT/sft-data-vlm/docs/"
+# (sft-data-vlm/docs/ removed 2026-06-30 — repo archived to /mnt/data/sgsilva/archive/; docs stale)
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] done"

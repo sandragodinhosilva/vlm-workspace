@@ -10,7 +10,7 @@
 #   7863  browser             vlm-post-training/web/browser-app/app.py
 #   7864  vo-severity         web/single_stage_compare_app.py
 #   7865  vo-compare          web/human_visual_obs_compare_app.py
-#   7866  sft-data            sft-data-vlm/app.py
+#   7866  sft-data            utilities/apps/sft_data_browser.py
 #   7867  llm-fms             web/llm_fms_viewer.py
 #   7868  multimodal-compare  web/multimodal_compare_app.py
 #   7869  reas-inspector      aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py
@@ -118,8 +118,8 @@ apps:
     label: "SFT data browser (text MCQA)"
     workstream: Aux Tasks
     goal: "Browse and QC text-based SFT datasets (5 MCQA families) from the Thrive VLM database."
-    repo: /home/sgsilva/sft-data-vlm
-    script: app.py
+    repo: /home/sgsilva/utilities/apps
+    script: sft_data_browser.py
     port: 7866
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
