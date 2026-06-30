@@ -6,7 +6,7 @@
 # Port table (all unique — all apps can run concurrently):
 #   7860  reasoning-prompt    reasoning_trace_prompt_app.py
 #   7861  monitoring          apps/monitoring-app/app.py
-#   7862  video-sft           video-sft-vlm/app.py          ← main browse app
+#   7862  video-sft           utilities/apps/video_sft/app.py  ← main browse app
 #   7863  browser             vlm-post-training/web/browser-app/app.py
 #   7864  vo-severity         web/single_stage_compare_app.py
 #   7865  vo-compare          web/human_visual_obs_compare_app.py
@@ -14,8 +14,8 @@
 #   7867  llm-fms             web/llm_fms_viewer.py
 #   7868  multimodal-compare  web/multimodal_compare_app.py
 #   7869  reas-inspector      aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py
-#   7870  prejudge-viewer     video-sft-vlm/prejudge_viewer.py
-#   7871  mesh-viewer         video-sft-vlm/mesh_viewer.py
+#   7870  prejudge-viewer     utilities/apps/video_sft/prejudge_viewer.py
+#   7871  mesh-viewer         utilities/apps/video_sft/mesh_viewer.py
 #   7872  sword-viewer        sam3d_pilot/sword_viewer.py
 #   7873  grpo-dashboard      utilities/apps/grpo_dashboard.py
 #   7874  vibe-test           utilities/apps/vibe_test.py
