@@ -43,6 +43,8 @@ DEFAULT_LOGS_DIR = "/home/sgsilva/nemo-rl-vlm/logs"
 # Also scanned if it exists (mirrors the grpo_logs convention).
 EXTRA_LOGS_DIRS = ["/mnt/data/sgsilva/logs/sft_logs"]
 CONFIGS_DIR = "/home/sgsilva/nemo-rl-vlm/examples/configs"
+# the launcher writes node-0 training logs here: <SLURM_LOGS>/<YYYYMMDD>/training_<stem>_node_0_*.log
+SLURM_LOGS_DIR = "/home/sgsilva/nemo-rl-vlm/slurm_logs"
 
 COLORS = [
     "#1976d2", "#d32f2f", "#388e3c", "#f57c00", "#7b1fa2",
@@ -137,8 +139,15 @@ def _mtime(path):
 
 
 def discover_runs(logs_dirs):
-    """Return [(run_name, run_dir, [event_files_sorted_by_exp])] for valid SFT runs."""
+    """Return [(run_name, run_dir, [event_files_sorted_by_exp])] for SFT runs.
+
+    A run with tfevents is a real training run (events non-empty). A run dir that has
+    a `config_snapshot.yaml` (written at LAUNCH, before training) but NO tfevents yet is
+    a STARTING run (queued / spinning up) — surfaced with an EMPTY event list so it shows
+    in the selector (config tab works; curves are empty until step-1 tfevents appear).
+    """
     runs = {}
+    starting = {}
     for logs_dir in logs_dirs:
         if not os.path.isdir(logs_dir):
             continue
@@ -155,9 +164,20 @@ def discover_runs(logs_dirs):
                     os.path.join(run_dir, "tensorboard", "events.out.tfevents.*")))
             if evs:
                 runs.setdefault(name, (run_dir, evs))
-    # newest first by latest event mtime
+            elif glob.glob(os.path.join(run_dir, "config_snapshot*.yaml")):
+                # launched but not training yet — keep its snapshot mtime to sort/filter by
+                starting.setdefault(name, (run_dir, []))
+    # real runs first (newest by latest event mtime), then starting runs (newest snapshot first)
     items = sorted(runs.items(), key=lambda kv: _mtime(kv[1][1][-1]), reverse=True)
-    return [(name, rd, evs) for name, (rd, evs) in items]
+    out = [(name, rd, evs) for name, (rd, evs) in items]
+    def _snap_mtime(rd):
+        snaps = glob.glob(os.path.join(rd, "config_snapshot*.yaml"))
+        return max((_mtime(s) for s in snaps), default=0.0)
+    start_items = sorted(
+        ((n, rd) for n, (rd, _) in starting.items() if n not in runs),
+        key=lambda nr: _snap_mtime(nr[1]), reverse=True)
+    out += [(name, rd, []) for name, rd in start_items]
+    return out
 
 
 def load_run_scalars(event_files):
@@ -191,6 +211,8 @@ _SCALAR_CACHE = {}
 
 
 def get_run_scalars(event_files):
+    if not event_files:          # starting run (no tfevents yet)
+        return {}
     key = (tuple(event_files), round(_mtime(event_files[-1]), 1))
     if key not in _SCALAR_CACHE:
         _SCALAR_CACHE[key] = load_run_scalars(event_files)
@@ -421,6 +443,71 @@ def config_markdown(run_name, run_dir):
     return "\n".join(lines)
 
 
+def raw_config_text(run_name, run_dir):
+    """The exact YAML the run launched with — the config_snapshot if present (best:
+    captures the resolved-as-run config), else the name-matched config file. Returns
+    (yaml_text, source_label)."""
+    snaps = sorted(glob.glob(os.path.join(run_dir, "config_snapshot*.yaml")))
+    # prefer the plain (latest-launch) snapshot; fall back to the newest timestamped one
+    plain = os.path.join(run_dir, "config_snapshot.yaml")
+    path = plain if os.path.exists(plain) else (snaps[-1] if snaps else None)
+    if path:
+        try:
+            return open(path).read(), f"{os.path.basename(path)} (exact-as-run)"
+        except OSError as e:
+            return f"# could not read {path}: {e}", "read error"
+    # fall back to the name-matched config in examples/configs
+    stem = run_name[4:] if run_name.startswith("sft_") else run_name
+    for c in (f"sft_vlm_{stem}_megatron.yaml", f"sft_vlm_{stem}.yaml",
+              f"{stem}_megatron.yaml", f"{stem}.yaml"):
+        p = os.path.join(CONFIGS_DIR, c)
+        if os.path.exists(p):
+            try:
+                return open(p).read(), f"{c} (name-matched, NOT a launch snapshot)"
+            except OSError:
+                pass
+    return f"# no config found for '{run_name}'", "none"
+
+
+def find_training_log(run_name):
+    """Locate the node-0 training log for a run. The launcher writes
+    <SLURM_LOGS>/<YYYYMMDD>/training_<stem>_node_0_*.log. The <stem> is the launcher's
+    LOG_FILE stem (e.g. 'qwen35_4b_vobs2906'), not the full run name, so match by the run
+    name's distinctive middle token(s). Returns the newest matching path or None."""
+    stem = run_name[4:] if run_name.startswith("sft_") else run_name  # e.g. qwen35_4b_vobs2906_<variant>
+    # progressively shorter prefixes so 'sft_qwen35_4b_vobs2906_<variant>' matches a
+    # 'training_qwen35_4b_vobs2906_node_0_*.log' (launcher LOG_FILE often drops the variant)
+    toks = stem.split("_")
+    cands = []
+    for k in range(len(toks), 1, -1):
+        cands.append("_".join(toks[:k]))
+    for dated in sorted(glob.glob(os.path.join(SLURM_LOGS_DIR, "*")), reverse=True):
+        if not os.path.isdir(dated):
+            continue
+        for pref in cands:
+            hits = sorted(glob.glob(os.path.join(dated, f"training_{pref}*node_0*.log")),
+                          key=_mtime, reverse=True)
+            if hits:
+                return hits[0]
+    return None
+
+
+def training_log_tail(run_name, n_lines=400):
+    """Tail the run's node-0 training log. Returns (text, source_label)."""
+    path = find_training_log(run_name)
+    if not path:
+        return ("(no training log yet — the run hasn't produced a node-0 log. PENDING jobs\n"
+                "have none until they land on a node and start.)", "none")
+    try:
+        with open(path, "r", errors="replace") as f:
+            lines = f.readlines()
+        tail = "".join(lines[-n_lines:])
+        head = f"# {path}\n# (last {min(n_lines, len(lines))} of {len(lines)} lines)\n\n"
+        return head + tail, os.path.basename(path)
+    except OSError as e:
+        return (f"# could not read {path}: {e}", "read error")
+
+
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
@@ -447,6 +534,7 @@ def _overlay(run_scalars, tag, title, ylabel, smoothing, logy=False):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    plt.rcParams["figure.max_open_warning"] = 0  # we hand figs to Gradio; suppress the pile-up warning
 
     fig, ax = plt.subplots(figsize=(11, 4.5))
     any_data = False
@@ -535,16 +623,51 @@ class AppState:
         """True if the run's latest event file was touched in the last 10 min."""
         import time
         ent = self.by_name.get(name)
-        if not ent:
+        if not ent or not ent[1]:
             return False
         return _mtime(ent[1][-1]) > (time.time() - 600)
 
-    def labels(self):
-        return [("🟢 " if self.is_running(name) else "") + name
-                for name, _, _ in self.runs]
+    def is_starting(self, name):
+        """Launched (config snapshot present) but not emitting tfevents yet."""
+        ent = self.by_name.get(name)
+        return bool(ent) and not ent[1]
+
+    def _latest_mtime(self, name):
+        """Latest activity mtime: last tfevents if any, else the config snapshot."""
+        ent = self.by_name.get(name)
+        if not ent:
+            return 0.0
+        run_dir, evs = ent
+        if evs:
+            return _mtime(evs[-1])
+        snaps = glob.glob(os.path.join(run_dir, "config_snapshot*.yaml"))
+        return max((_mtime(s) for s in snaps), default=_mtime(run_dir))
+
+    def is_today(self, name):
+        """True if the run's latest activity (tfevents OR launch snapshot) is today."""
+        import datetime
+        ts = self._latest_mtime(name)
+        if not ts:
+            return False
+        return (datetime.date.fromtimestamp(ts) == datetime.date.today())
+
+    def status_prefix(self, name):
+        """Display-only status marker (NOT baked into the dropdown value, so choices stay
+        stable across refreshes and Gradio never rejects a stale selection)."""
+        if self.is_running(name):
+            return "🟢 "
+        if self.is_starting(name):
+            return "⏳ "
+        return ""
+
+    def labels(self, today_only=False):
+        """Dropdown choices = PLAIN run names (stable values). Status shown elsewhere."""
+        return [name for name, _, _ in self.runs
+                if (not today_only or self.is_today(name))]
 
     def resolve(self, label):
-        return label.replace("🟢 ", "").strip()
+        # values ARE plain names now; tolerate a legacy-prefixed value just in case
+        return label.replace("🟢 ", "").replace("⏳ ", "").strip()
 
 
 def build_ui(state):
@@ -554,9 +677,17 @@ def build_ui(state):
                     "step timing, GPU health, and config drift. 🟢 = active in the last 10 min.")
 
         with gr.Row():
+            run_filter = gr.Radio(
+                ["All", "Today"], value="All", label="Show runs",
+                info="Today = latest activity (training OR launch) is today; ⏳ = launched, not training yet",
+                scale=0)
             run_sel = gr.Dropdown(
                 choices=state.labels(), label="Runs (multi-select to compare)",
-                multiselect=True, value=state.labels()[:1] if state.labels() else [])
+                multiselect=True, value=state.labels()[:1] if state.labels() else [],
+                # don't let a stale client-side selection (a value no longer in choices after
+                # a Today-filter / refresh) trip Gradio's preprocess membership check — the
+                # server-side handlers filter to valid runs anyway.
+                allow_custom_value=True)
             smoothing = gr.Slider(1, 50, value=5, step=1, label="Smoothing window")
             refresh_btn = gr.Button("🔄 Refresh", scale=0)
 
@@ -584,6 +715,16 @@ def build_ui(state):
             config_md = gr.Markdown(
                 "_Select a single run above to inspect its config._")
 
+        with gr.Tab("📋 Config viewer"):
+            config_src = gr.Markdown("_Select a run to view its exact launch config._")
+            config_raw = gr.Code(label="config (YAML)", language="yaml")
+
+        with gr.Tab("📜 Log viewer"):
+            with gr.Row():
+                log_src = gr.Markdown("_Select a run to tail its node-0 training log._")
+                log_refresh_btn = gr.Button("🔄 Reload log", scale=0)
+            log_raw = gr.Code(label="training log (node-0, tail)")
+
         # ----- callbacks -----
         def _selected_scalars(labels):
             out = []
@@ -592,13 +733,17 @@ def build_ui(state):
                 if name not in state.by_name:
                     continue
                 _, events = state.by_name[name]
-                out.append((name, get_run_scalars(events)))
+                # starting runs have no tfevents yet → empty scalars (no curves, but the
+                # run still shows + its config/log viewers work)
+                out.append((name, get_run_scalars(events) if events else {}))
             return out
 
         def update(labels, sm):
             rs = _selected_scalars(labels)
+            # status marker (🟢 active / ⏳ starting) shown in the SUMMARY, not the dropdown
+            rs_disp = [(state.status_prefix(n) + n, sc) for n, sc in rs]
             outputs = {
-                summary: summary_markdown(rs),
+                summary: summary_markdown(rs_disp),
                 loss_plot: _overlay(rs, "train/loss", "Training Loss", "loss", sm),
                 gn_plot: _overlay(rs, "train/grad_norm", "Gradient Norm", "grad_norm", sm, logy=True),
                 lr_plot: _overlay(rs, "train/lr", "Learning Rate", "lr", 1),
@@ -609,36 +754,62 @@ def build_ui(state):
                 policy_plot: _overlay(rs, "timing/train/policy_training", "Policy Training Time", "s", sm),
                 dataproc_plot: _overlay(rs, "timing/train/data_processing", "Data Processing Time", "s", sm),
             }
-            # GPU + config from the FIRST selected run
+            # GPU + config + log from the FIRST selected run
             if rs:
                 first_name = rs[0][0]
                 outputs[gpu_md] = gpu_health_markdown(
                     rs[0][1], is_running=state.is_running(first_name))
                 run_dir = state.by_name[first_name][0]
                 outputs[config_md] = config_markdown(first_name, run_dir)
+                raw, csrc = raw_config_text(first_name, run_dir)
+                outputs[config_raw] = raw
+                outputs[config_src] = f"**{first_name}** — config source: `{csrc}`"
+                ltext, lsrc = training_log_tail(first_name)
+                outputs[log_raw] = ltext
+                outputs[log_src] = f"**{first_name}** — log: `{lsrc}`"
             else:
                 outputs[gpu_md] = "_Select a run._"
                 outputs[config_md] = "_Select a single run above to inspect its config._"
+                outputs[config_raw] = ""
+                outputs[config_src] = "_Select a run to view its exact launch config._"
+                outputs[log_raw] = ""
+                outputs[log_src] = "_Select a run to tail its node-0 training log._"
             return outputs
 
         all_outputs = [summary, loss_plot, gn_plot, lr_plot, val_plot,
                        steptime_plot, tok_plot, policy_plot, dataproc_plot,
-                       gpu_md, config_md]
+                       gpu_md, config_md, config_raw, config_src, log_raw, log_src]
 
         def update_list(labels, sm):
             d = update(labels, sm)
             return [d[o] for o in all_outputs]
 
-        def do_refresh(labels, sm):
+        def do_refresh(labels, sm, flt):
             state.refresh()
-            new_choices = state.labels()
-            kept = [l for l in (labels or []) if state.resolve(l) in state.by_name]
+            new_choices = state.labels(today_only=(flt == "Today"))
+            kept = [l for l in (labels or []) if state.resolve(l) in state.by_name
+                    and l in new_choices]
             d = update(kept, sm)
             return [gr.update(choices=new_choices, value=kept)] + [d[o] for o in all_outputs]
 
+        def do_filter(flt, labels, sm):
+            new_choices = state.labels(today_only=(flt == "Today"))
+            kept = [l for l in (labels or []) if l in new_choices]
+            d = update(kept, sm)
+            return [gr.update(choices=new_choices, value=kept)] + [d[o] for o in all_outputs]
+
+        def reload_log(labels):
+            if not labels:
+                return "", "_Select a run to tail its node-0 training log._"
+            name = state.resolve(labels[0])
+            ltext, lsrc = training_log_tail(name)
+            return ltext, f"**{name}** — log: `{lsrc}`"
+
         run_sel.change(update_list, [run_sel, smoothing], all_outputs)
         smoothing.change(update_list, [run_sel, smoothing], all_outputs)
-        refresh_btn.click(do_refresh, [run_sel, smoothing], [run_sel] + all_outputs)
+        run_filter.change(do_filter, [run_filter, run_sel, smoothing], [run_sel] + all_outputs)
+        refresh_btn.click(do_refresh, [run_sel, smoothing, run_filter], [run_sel] + all_outputs)
+        log_refresh_btn.click(reload_log, [run_sel], [log_raw, log_src])
         demo.load(update_list, [run_sel, smoothing], all_outputs)
 
     return demo
