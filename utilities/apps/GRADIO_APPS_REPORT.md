@@ -36,7 +36,7 @@ On your local Mac/PC, open a tmux window with 2 panes:
   Pane 1 (remote shell):
     ssh new-login-1
     cd /home/sgsilva/video-sft-vlm
-    source /home/sgsilva/video-sft-vlm-home-venv/bin/activate
+    source /home/sgsilva/vlm-post-training-home-venv/bin/activate
     lsof -ti:7863 | xargs -r kill -9
     DEFAULT_JSONL=/mnt/data/sgsilva/datasets/app_video_datasets/1805_merged_reasoning_v2_browse.jsonl \
       python app.py --port 7863
@@ -296,7 +296,7 @@ lsof -ti:7861 | xargs -r kill -9
 
 **Path:** `/home/sgsilva/utilities/apps/vibe_test.py`  
 **Port:** 7874  
-**Venv:** `video-sft-vlm-home-venv`  
+**Venv:** `vlm-post-training-home-venv` (was video-sft-vlm-home-venv; merged + deleted 2026-06-30)  
 **Goal:** Free-form inference playground — send any text / image / video to any served model and
 inspect the answer + thinking trace. Used heavily for the EXP-B stage-2 template + teacher comparison.
 

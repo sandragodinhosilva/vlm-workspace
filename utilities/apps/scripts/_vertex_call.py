@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Vertex/gemini call helper for vibe_test.py.
 
-The vibe-test app runs in video-sft-vlm-home-venv, which lacks the Google Cloud
+The vibe-test app runs in vlm-post-training-home-venv (was video-sft-vlm-home-venv,
+merged+deleted 2026-06-30), which lacks the Google Cloud
 SDK that litellm needs for Vertex. This helper runs in the EVAL venv
 (vlm-post-training-home-venv, which has google-genai + a working gemini path) and
 is invoked via subprocess. Reuses query_server's gemini routing so the behaviour
