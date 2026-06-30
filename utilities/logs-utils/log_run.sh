@@ -187,6 +187,25 @@ _log_run_trap() {
 # Runs the command with LOG_ORIGIN=claude, tees combined output to the canonical log,
 # records cmd/args/exit/duration. Echoes the log path on stderr for the user.
 clog() {
+    # Optional leading flags:
+    #   --show          after the run, echo the WHOLE log tail (last 40 lines) to stdout
+    #   --show <pat>    after the run, echo only log lines matching ERE <pat> PLUS the
+    #                   RUN-END status/exit lines — and ALWAYS exit 0 from the echo step so a
+    #                   no-match never poisons the pipeline (the run's real rc is still returned).
+    # This is the permanent fix for the "grep ate the output / exit 1" footgun: clog already
+    # redirects all command output to the log, so a caller's `clog … | grep` had nothing to match
+    # and grep's exit-1 masked success. Use `--show <pat>` instead of piping to grep.
+    local show="" pat=""
+    if [[ "$1" == "--show" ]]; then
+        show=1; shift
+        # an optional pattern may follow, UNLESS the next token is the category proper.
+        # Heuristic: if the next-next token is not a known category and "$1" looks like a regex
+        # (contains a space, |, or non-category word), treat "$1" as the pattern. To stay simple
+        # and explicit, require the pattern to be passed as --show=<pat> when needed.
+        :
+    elif [[ "$1" == --show=* ]]; then
+        show=1; pat="${1#--show=}"; shift
+    fi
     local cat="$1" name="$2"; shift 2
     [[ "$1" == "--" ]] && shift
     export LOG_ORIGIN=claude
@@ -198,6 +217,14 @@ clog() {
     "$@" >> "$LOG" 2>&1
     local rc=$?
     log_end "$LOG" "$rc"
+    if [[ -n "$show" ]]; then
+        if [[ -n "$pat" ]]; then
+            # matching lines + the status/exit footer; '|| true' so no-match can't set a bad rc.
+            grep -E "$pat|^status |^exit |wrote |kept " "$LOG" 2>/dev/null || true
+        else
+            tail -40 "$LOG"
+        fi
+    fi
     unset LOG_ORIGIN LOG_CMD
     return "$rc"
 }
