@@ -1,0 +1,17 @@
+{
+  "2026-05-11T11:33:08.334255": {
+    "rating": "Has issues",
+    "note": "Mean ROM is wrong, it is  1.6\u00b0 for left elbow",
+    "video_id": "11007_600468_03102025144643_57695168",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11007_600468_03102025144643_57695168",
+    "dataset_version": "qa_v14_added_shippable",
+    "exercise_name": "Shoulder abduction (left)",
+    "tier": "TIER_C_LONGITUDINAL",
+    "template": "tier_c_variability_analysis",
+    "joint": "left_elbow",
+    "question_index": 1,
+    "questions_in_video": 1,
+    "timestamp": "2026-05-13T13:10:57.082659",
+    "author": "sgsilva"
+  }
+}

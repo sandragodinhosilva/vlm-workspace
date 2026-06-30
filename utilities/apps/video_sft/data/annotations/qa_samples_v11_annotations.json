@@ -1,0 +1,58 @@
+{
+  "2026-02-26T13:40:14.980820": {
+    "rating": "Has issues",
+    "note": " Plantar flexion -> therefore why right elbow?",
+    "video_id": "10059_758756_25102025124808_58600662",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10059_758756_25102025124808_58600662",
+    "dataset_version": "qa_samples_v11",
+    "exercise_name": "Plantar flexion (both)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_error_detection",
+    "joint": "right_elbow",
+    "question_index": 3,
+    "questions_in_video": 4,
+    "timestamp": "2026-02-26T16:09:50.009745"
+  },
+  "2026-02-26T13:40:15.289278": {
+    "rating": "Has issues",
+    "note": "left elbow? remove these questions (no need to regenerate - I will start excluding questions or types of questions that don't make sense)\n",
+    "video_id": "10059_763293_07102025015828_57360795",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10059_763293_07102025015828_57360795",
+    "dataset_version": "qa_samples_v11",
+    "exercise_name": "Plantar flexion (both)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_compensatory",
+    "joint": "",
+    "question_index": 3,
+    "questions_in_video": 4,
+    "timestamp": "2026-02-26T16:11:50.020968"
+  },
+  "2026-02-26T13:49:08.429895": {
+    "rating": "Has issues",
+    "note": "joint should be left wrist and not unknown",
+    "video_id": "14009_783539_28102025235601_59221361",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/14009_783539_28102025235601_59221361",
+    "dataset_version": "qa_samples_v11",
+    "exercise_name": "Wrist radial deviation (left)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_compensatory",
+    "joint": "",
+    "question_index": 2,
+    "questions_in_video": 4,
+    "timestamp": "2026-02-26T16:14:26.977664"
+  },
+  "2026-02-26T13:49:06.359050": {
+    "rating": "Has issues",
+    "note": "joint: right wrist instead of unknown",
+    "video_id": "14002_732181_10112025084047_59055616",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/14002_732181_10112025084047_59055616",
+    "dataset_version": "qa_samples_v11",
+    "exercise_name": "Wrist flexion (right)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_compensatory",
+    "joint": "",
+    "question_index": 1,
+    "questions_in_video": 4,
+    "timestamp": "2026-02-26T16:14:52.805329"
+  }
+}

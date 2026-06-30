@@ -36,10 +36,13 @@ apps:
     label: "Video SFT browser (MCQA)"
     workstream: General
     goal: "Browse generated MCQA video samples; inspect exercise types, tier, messages. Quick-load dropdown switches datasets without restart."
-    repo: /home/sgsilva/video-sft-vlm
+    # Relocated 2026-06-30 out of the archived video-sft-vlm repo. app.py + its
+    # sibling viewers (prejudge, mesh) now live in ~/utilities/apps/video_sft/;
+    # the stale scripts/utils were dropped (canonical copies are in vlm-post-training).
+    repo: /home/sgsilva/utilities/apps/video_sft
     script: app.py
     port: 7862
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
     # Set DEFAULT_JSONL to pick which browse dataset to load on startup.
     # Omit to use the app's built-in default, or use the in-app dropdown.
     env:
@@ -63,7 +66,9 @@ apps:
     repo: /home/sgsilva/utilities/apps
     script: vibe_test.py
     port: 7874
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+    # Was video-sft-vlm-home-venv; merged into vlm-post-training-home-venv 2026-06-30
+    # (+pyvis) when that dedicated venv was retired with the video-sft-vlm archive.
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
   # ══ VISUAL OBSERVATIONS ════════════════════════════════════════════════════
   #   VO eval-output comparison + tuning the prompts that generate VO datasets.
@@ -160,10 +165,11 @@ apps:
     label: "Prejudge viewer (LLM prejudge smoke)"
     workstream: Aux Tasks
     goal: "Inspect LLM prejudge smoke verdicts alongside video frames and post-hoc labels."
-    repo: /home/sgsilva/video-sft-vlm
+    # Relocated 2026-06-30 with app.py (it does `from app import ...`).
+    repo: /home/sgsilva/utilities/apps/video_sft
     script: prejudge_viewer.py
     port: 7870
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
   # ══ 3D ═════════════════════════════════════════════════════════════════════
   #   SAM-3D mesh/pose inspection.
@@ -172,10 +178,15 @@ apps:
     label: "Mesh viewer (SAM-3D overlays)"
     workstream: 3D
     goal: "Browse SAM-3D-Body overlay videos: mesh render + interactive 3D skeleton + angle signals."
-    repo: /home/sgsilva/video-sft-vlm
+    # Relocated 2026-06-30 with app.py + app_mesh_render.py into ~/utilities/apps/video_sft/.
+    # ⚠️ KNOWN-BROKEN at source: imports `_sam3d_output_dir` etc. from app.py that were
+    # never merged into app.py (planned-but-unlanded API). Was already non-functional in
+    # the video-sft-vlm repo before archiving — relocation did not break it. Fix app.py's
+    # mesh API or rewrite mesh_viewer to revive.
+    repo: /home/sgsilva/utilities/apps/video_sft
     script: mesh_viewer.py
     port: 7871
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
   sword-viewer:
     label: "SWORD SAM-3D viewer (pipeline outputs)"
@@ -184,7 +195,8 @@ apps:
     repo: /home/sgsilva/vlm-post-training/aux_tasks/video_tasks/video_mcqa/sam3d_pilot
     script: sword_viewer.py
     port: 7872
-    venv: /home/sgsilva/video-sft-vlm-home-venv/bin/python
+    # Was video-sft-vlm-home-venv; merged into vlm-post-training-home-venv 2026-06-30.
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
   # ══ TRAINING ═══════════════════════════════════════════════════════════════
   #   Training-run dashboards (GRPO + SFT).

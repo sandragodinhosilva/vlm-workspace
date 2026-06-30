@@ -34,7 +34,7 @@ USAGE:
       --old-reas-from /mnt/data/vramos/.../1805_binary_train_no_video/dataset
 
 Then:
-  cd /home/sgsilva/video-sft-vlm && source /home/sgsilva/video-sft-vlm-home-venv/bin/activate
+  source /home/sgsilva/vlm-post-training-home-venv/bin/activate
   DEFAULT_JSONL=/mnt/data/sgsilva/datasets/app_video_datasets/<name>_browse.jsonl python app.py --port 7863
 """
 

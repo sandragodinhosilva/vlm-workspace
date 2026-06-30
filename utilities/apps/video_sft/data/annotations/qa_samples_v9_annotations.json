@@ -1,0 +1,58 @@
+{
+  "2026-02-25T11:03:59.367217": {
+    "rating": "Has issues",
+    "note": "If: 1st star: 20\u00ba\n2nd star: 26.25\u00ba\n3rd star: 32.5\u00ba\n4th star: 38.75\u00ba\n5th star: 45\u00ba How can adequate_rom = yes?\n",
+    "video_id": "10005_858433_06112025045121_61053675",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10005_858433_06112025045121_61053675",
+    "dataset_version": "qa_samples_v9",
+    "exercise_name": "Hip abduction (right)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_correctness_criteria",
+    "joint": "right_hip",
+    "question_index": 6,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T11:37:02.561519"
+  },
+  "2026-02-25T11:03:59.589578": {
+    "rating": "Has issues",
+    "note": "Right knee, in a good exercise execution, shouldn't have high ROM. ROM here is a good metric for right hip",
+    "video_id": "10005_860027_05112025063532_60801390",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10005_860027_05112025063532_60801390",
+    "dataset_version": "qa_samples_v9",
+    "exercise_name": "Hip abduction (right)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_rom_comparison",
+    "joint": "right_knee",
+    "question_index": 1,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T11:39:44.456214"
+  },
+  "2026-02-25T11:03:59.589890": {
+    "rating": "Has issues",
+    "note": "30\u00b0 threshold? Current targets\n1st star: 20\u00ba\n2nd star: 26.25\u00ba\n3rd star: 32.5\u00ba\n4th star: 38.75\u00ba\n5th star: 45\u00ba",
+    "video_id": "10005_860027_05112025063532_60801390",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10005_860027_05112025063532_60801390",
+    "dataset_version": "qa_samples_v9",
+    "exercise_name": "Hip abduction (right)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_error_detection",
+    "joint": "right_hip",
+    "question_index": 2,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T11:40:20.576249"
+  },
+  "2026-02-25T11:03:59.589925": {
+    "rating": "Good quality",
+    "note": "",
+    "video_id": "10005_860027_05112025063532_60801390",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10005_860027_05112025063532_60801390",
+    "dataset_version": "qa_samples_v9",
+    "exercise_name": "Hip abduction (right)",
+    "tier": "TIER_A_SINGLE_REP",
+    "template": "tier_a_temporal_grounding",
+    "joint": "right_knee",
+    "question_index": 3,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T11:41:07.372993"
+  }
+}

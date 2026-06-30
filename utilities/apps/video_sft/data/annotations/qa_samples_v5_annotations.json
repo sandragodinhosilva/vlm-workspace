@@ -1,0 +1,44 @@
+{
+  "2026-02-23T16:19:17.659544": {
+    "rating": "Has issues",
+    "note": "How can ROM remain stable but CoV has high variability?",
+    "video_id": "10001_236215_02102025140556_23857789",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10001_236215_02102025140556_23857789",
+    "dataset_version": "qa_samples_v5",
+    "exercise_name": "Hip flexion with knee bend (bilateral)",
+    "tier": "TIER_C_LONGITUDINAL",
+    "template": "tier_c_error_trend",
+    "joint": "left_hip",
+    "question_index": 6,
+    "questions_in_video": 12,
+    "timestamp": "2026-02-24T11:01:15.950251"
+  },
+  "2026-02-23T16:21:17.581973": {
+    "rating": "Has issues",
+    "note": "Video of rep ends before movement ends",
+    "video_id": "10009_821481_27102025175302_60231317",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10009_821481_27102025175302_60231317",
+    "dataset_version": "qa_samples_v5",
+    "exercise_name": "Hip hyperextension (left)",
+    "tier": "TIER_C_LONGITUDINAL",
+    "template": "tier_c_error_trend",
+    "joint": "left_hip",
+    "question_index": 1,
+    "questions_in_video": 12,
+    "timestamp": "2026-02-24T11:02:52.802206"
+  },
+  "2026-02-23T16:30:42.124625": {
+    "rating": "Has issues",
+    "note": "Rep 5 should be exclude from the analysis - it was a recording error, not a real issue. This rep shouldn't account for the overal CoV",
+    "video_id": "11015_783025_01102025021441_56150443",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11015_783025_01102025021441_56150443",
+    "dataset_version": "qa_samples_v5",
+    "exercise_name": "Shoulder external rotation (bilateral)",
+    "tier": "TIER_C_LONGITUDINAL",
+    "template": "tier_c_trend_analysis",
+    "joint": "right_elbow",
+    "question_index": 8,
+    "questions_in_video": 12,
+    "timestamp": "2026-02-24T11:07:19.248678"
+  }
+}

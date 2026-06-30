@@ -1,0 +1,30 @@
+{
+  "2026-04-30T14:09:56.559730": {
+    "rating": "Has issues",
+    "note": "2 different sides",
+    "video_id": "12214_550980_18112025130908_60435692",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/12214_550980_18112025130908_60435692",
+    "dataset_version": "qa_all_exercises_v10",
+    "exercise_name": "Side Plank On Knees",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_compensatory",
+    "joint": "left_shoulder",
+    "question_index": 1,
+    "questions_in_video": 1,
+    "timestamp": "2026-04-30T15:28:09.477659"
+  },
+  "2026-04-30T14:03:31.172662": {
+    "rating": "Has issues",
+    "note": "check metrics",
+    "video_id": "11025_603765_03112025074158_59145677",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11025_603765_03112025074158_59145677",
+    "dataset_version": "qa_all_exercises_v10",
+    "exercise_name": "Overhead Press (left)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_correctness_criteria",
+    "joint": "left_shoulder",
+    "question_index": 2,
+    "questions_in_video": 2,
+    "timestamp": "2026-04-30T15:46:18.220976"
+  }
+}

@@ -37,11 +37,15 @@ logger = logging.getLogger(__name__)
 APP_ROOT = Path(__file__).resolve().parent
 HOME_ROOT = Path.home()
 VLM_EVAL_ROOT = HOME_ROOT / "vlm-evaluation"
-VIDEO_SFT_ROOT = HOME_ROOT / "video-sft-vlm"
 # generate_text_sft_datasets (parse_excel/load_csv_names) was migrated from the
 # retired sft-data-vlm repo into aux_tasks; this app is its only remaining caller.
 GEN_TEXT_SFT_DIR = (
     HOME_ROOT / "vlm-post-training" / "aux_tasks" / "text_tasks" / "generation"
+)
+# exercise_metadata.csv was relocated 2026-06-30 out of the archived video-sft-vlm
+# repo into vlm-post-training/aux_tasks/shared/data/ (its canonical home).
+SHARED_DATA_DIR = (
+    HOME_ROOT / "vlm-post-training" / "aux_tasks" / "shared" / "data"
 )
 
 NEW_DATASETS_DIR = Path(
@@ -95,7 +99,7 @@ _EXERCISE_EXCEL_PATH = Path(
 _EXERCISE_CSV_PATH = Path(
     os.environ.get(
         "EXERCISE_CSV",
-        str(VIDEO_SFT_ROOT / "training" / "exercise_metadata.csv"),
+        str(SHARED_DATA_DIR / "exercise_metadata.csv"),
     )
 )
 _EXERCISE_DATA: Dict[str, Dict[str, str]] = {}  # code -> row dict

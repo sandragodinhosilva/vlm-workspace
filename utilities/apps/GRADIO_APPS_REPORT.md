@@ -10,7 +10,7 @@
 | App | Path | Port | Venv | Goal | Created | Last commit | Commits | Status |
 |-----|------|:----:|------|------|:-------:|:-----------:|:-------:|--------|
 | Monitoring dashboard | `apps/monitoring-app/app.py` | 7861 | `browser-app-home-venv` | Pipeline health dashboard — datasets, training metrics, eval results in one view | 2026-02-05 | 2026-04-09 | 24 | ✓ |
-| Video SFT browser | `video-sft-vlm/app.py` | 7862 | `video-sft-vlm-home-venv` | Browse generated MCQA video samples; inspect exercise types, tier, messages | 2026-02-19 | 2026-06-17 | 27 | ✓ active |
+| Video SFT browser | `utilities/apps/video_sft/app.py` | 7862 | `vlm-post-training-home-venv` | Browse generated MCQA video samples; inspect exercise types, tier, messages | 2026-02-19 | 2026-06-30 | 27 | ✓ active (relocated from video-sft-vlm 06-30) |
 | Dataset browser | `vlm-post-training/web/browser-app/app.py` | 7863 | `browser-app-home-venv` | Multi-tab browser for all post-training datasets: image, video, text, reasoning tabs | 2026-03-06 | 2026-06-16 | 8 | ⚠ BROWSER_MIXED_ROOT dataset not on disk |
 | VO severity comparator | `vlm-post-training/web/single_stage_compare_app.py` | 7864 | `vlm-post-training-home-venv` | Compare two single/two-stage eval runs side-by-side: per-rep error detection + video | 2026-05-22 | 2026-05-29 | 5 | ✓ |
 | VO stage-1 comparator | `vlm-post-training/web/human_visual_obs_compare_app.py` | 7865 | `vlm-post-training-home-venv` | Side-by-side visual observations across multiple VLMs vs human ground-truth | 2026-05-04 | 2026-05-28 | 6 | ✓ |
@@ -18,13 +18,13 @@
 | LLM-FMS viewer | `vlm-post-training/web/llm_fms_viewer.py` | 7867 | `vlm-post-training-home-venv` | Inspect image-based LLM-FMS SFT rows: image + prompt + target + metadata | 2026-05-22 | 2026-05-22 | 2 | ✓ |
 | Multimodal eval comparer | `vlm-post-training/web/multimodal_compare_app.py` | 7868 | `vlm-post-training-home-venv` | Side-by-side multimodal eval run comparison with COCO keypoint overlay | 2026-04-21 | 2026-04-21 | 2 | ⚠ hardcoded default dirs stale |
 | Reas-mix inspector | `vlm-post-training/aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py` | 7869 | `browser-app-home-venv` | Quick inspector for the reas2 merged reasoning mix: filter by modality/judge verdict | 2026-04-21 | 2026-04-21 | 1 | ✓ |
-| Prejudge viewer | `video-sft-vlm/prejudge_viewer.py` | 7870 | `video-sft-vlm-home-venv` | Inspect LLM prejudge smoke verdicts alongside video frames and post-hoc labels | 2026-06-17 | 2026-06-17 | 1 | ✓ new |
-| Mesh viewer | `video-sft-vlm/mesh_viewer.py` | 7871 | `video-sft-vlm-home-venv` | Browse SAM-3D-Body overlay videos: mesh render + interactive 3D skeleton + angle signals | 2026-06-17 | 2026-06-17 | 1 | ✓ new |
-| SAM3D sword viewer | `vlm-post-training/…/sam3d_pilot/sword_viewer.py` | 7872 | `video-sft-vlm-home-venv` | Browse SWORD SAM-3D pipeline outputs: 2D overlay + interactive 3D skeleton + mesh | 2026-05-13 | 2026-05-13 | 1 | ✓ fixed (was broken venv) |
+| Prejudge viewer | `utilities/apps/video_sft/prejudge_viewer.py` | 7870 | `vlm-post-training-home-venv` | Inspect LLM prejudge smoke verdicts alongside video frames and post-hoc labels | 2026-06-17 | 2026-06-30 | 1 | ✓ (relocated 06-30) |
+| Mesh viewer | `utilities/apps/video_sft/mesh_viewer.py` | 7871 | `vlm-post-training-home-venv` | Browse SAM-3D-Body overlay videos: mesh render + interactive 3D skeleton + angle signals | 2026-06-17 | 2026-06-30 | 1 | ✗ BROKEN at source (imports `_sam3d_output_dir` never merged into app.py); relocated 06-30 |
+| SAM3D sword viewer | `vlm-post-training/…/sam3d_pilot/sword_viewer.py` | 7872 | `vlm-post-training-home-venv` | Browse SWORD SAM-3D pipeline outputs: 2D overlay + interactive 3D skeleton + mesh | 2026-05-13 | 2026-06-30 | 1 | ✓ (venv → vlm-post-training-home-venv 06-30) |
 | GRPO dashboard | `utilities/apps/grpo_dashboard.py` (moved 06-26) | 7873 | `vlm-post-training-home-venv` | Explore and compare GRPO training runs: reward curves, task breakdowns | 2026-06-01 | 2026-06-03 | 4 | ✓ fixed (was broken venv) |
 | Reasoning-trace prompt editor | `vlm-post-training/web/reasoning_trace_prompt_app.py` | 7860 | `vlm-post-training-home-venv` | Iterate on reasoning-trace prompts with inline editing + live VLM calls for testing | 2026-05-22 | 2026-05-28 | 3 | ⚠ one default dataset path missing |
 | Claude usage tracker | `utilities/apps/claude-tracker.py` | 8080 | system python3 | Local dashboard for Claude Code token usage and cost estimates | — | — | — | ✓ |
-| VLM vibe tester | `utilities/apps/vibe_test.py` | 7874 | `video-sft-vlm-home-venv` | Free-form inference playground: text/image/video → any served vLLM **or Vertex/gemini** model; cluster scan, dataset dropdown, stage-2 canonical metrics vs GT | 2026-06 | 2026-06-24 | — | ✓ active |
+| VLM vibe tester | `utilities/apps/vibe_test.py` | 7874 | `vlm-post-training-home-venv` | Free-form inference playground: text/image/video → any served vLLM **or Vertex/gemini** model; cluster scan, dataset dropdown, stage-2 canonical metrics vs GT | 2026-06 | 2026-06-30 | — | ✓ active (venv merged 06-30) |
 
 ---
 
@@ -85,9 +85,9 @@ lsof -ti:7861 | xargs -r kill -9
 
 ### 3.2 Video SFT Browser (main browse app)
 
-**Path:** `/home/sgsilva/video-sft-vlm/app.py`  
+**Path:** `/home/sgsilva/utilities/apps/video_sft/app.py`  
 **Port:** 7862  
-**Venv:** `/home/sgsilva/video-sft-vlm-home-venv/bin/python` (gradio ✓ plotly ✓ cv2 ✓)  
+**Venv:** `/home/sgsilva/vlm-post-training-home-venv/bin/python` (gradio ✓ plotly ✓ cv2 ✓ pyvis ✓)  
 **Input:**
 - `DEFAULT_JSONL` env var (fallback: first file in `app_video_datasets/`)
 - **Quick-load dropdown** (added 2026-06-17): auto-scans `app_video_datasets/`, sorted by mtime. Select from dropdown to reload without restarting.
@@ -209,9 +209,9 @@ lsof -ti:7861 | xargs -r kill -9
 
 ### 3.10 Prejudge Viewer
 
-**Path:** `/home/sgsilva/video-sft-vlm/prejudge_viewer.py`  
+**Path:** `/home/sgsilva/utilities/apps/video_sft/prejudge_viewer.py`  
 **Port:** 7870  
-**Venv:** `/home/sgsilva/video-sft-vlm-home-venv/bin/python`  
+**Venv:** `/home/sgsilva/vlm-post-training-home-venv/bin/python`  
 **Input:** Prejudge smoke verdicts JSON + video dataset.
 
 **Launch:**
@@ -223,9 +223,9 @@ lsof -ti:7861 | xargs -r kill -9
 
 ### 3.11 Mesh Viewer
 
-**Path:** `/home/sgsilva/video-sft-vlm/mesh_viewer.py`  
+**Path:** `/home/sgsilva/utilities/apps/video_sft/mesh_viewer.py`  
 **Port:** 7871  
-**Venv:** `/home/sgsilva/video-sft-vlm-home-venv/bin/python`  
+**Venv:** `/home/sgsilva/vlm-post-training-home-venv/bin/python`  
 **Input:** SAM-3D overlay videos from the 3D batch pipeline.
 
 **Launch:**
@@ -239,7 +239,7 @@ lsof -ti:7861 | xargs -r kill -9
 
 **Path:** `/home/sgsilva/vlm-post-training/aux_tasks/video_tasks/video_mcqa/sam3d_pilot/sword_viewer.py`  
 **Port:** 7872  
-**Venv:** `/home/sgsilva/video-sft-vlm-home-venv/bin/python` (fixed from dead Poetry venv)  
+**Venv:** `/home/sgsilva/vlm-post-training-home-venv/bin/python` (fixed from dead Poetry venv)  
 **Input:** SAM-3D pipeline output directories.
 
 **Launch:**

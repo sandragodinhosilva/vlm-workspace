@@ -1,0 +1,32 @@
+{
+  "2026-05-04T16:20:42.574645": {
+    "rating": "Has issues",
+    "note": "wrong joint",
+    "video_id": "10004_682848_30102025163353_57462470",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10004_682848_30102025163353_57462470",
+    "dataset_version": "qa_all_exercises_v14_added",
+    "exercise_name": "Hip Abduction (bilateral)",
+    "tier": "TIER_A_SINGLE_REP",
+    "template": "tier_a_rom_single_rep",
+    "joint": "right_hip_abduction",
+    "question_index": 2,
+    "questions_in_video": 2,
+    "timestamp": "2026-05-12T10:53:04.403435",
+    "author": "sgsilva"
+  },
+  "2026-05-04T16:39:19.098855": {
+    "rating": "Has issues",
+    "note": "",
+    "video_id": "11204_797803_19092025010917_55965866",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11204_797803_19092025010917_55965866",
+    "dataset_version": "qa_all_exercises_v14_added",
+    "exercise_name": "Shoulder Flexion (right)",
+    "tier": "TIER_A_SINGLE_REP",
+    "template": "tier_a_temporal_grounding",
+    "joint": "right_shoulder",
+    "question_index": 2,
+    "questions_in_video": 3,
+    "timestamp": "2026-05-12T10:54:43.670097",
+    "author": "sgsilva"
+  }
+}

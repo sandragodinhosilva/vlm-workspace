@@ -1,0 +1,17 @@
+{
+  "2026-05-11T21:49:10.549018+00:00": {
+    "rating": "Good quality",
+    "note": "",
+    "video_id": "10001_758406_19102025224723_57696882",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10001_758406_19102025224723_57696882",
+    "dataset_version": "samples_visual_obs_v1_capped",
+    "exercise_name": "Hip flexion with knee bend (bilateral)",
+    "tier": "",
+    "template": "vo_side_identification",
+    "joint": "",
+    "question_index": 1,
+    "questions_in_video": 1,
+    "timestamp": "2026-05-13T10:42:59.895315",
+    "author": "sgsilva"
+  }
+}

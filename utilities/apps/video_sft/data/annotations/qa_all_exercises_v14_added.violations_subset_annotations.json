@@ -1,0 +1,17 @@
+{
+  "2026-02-24T14:09:51.741184": {
+    "rating": "Good quality",
+    "note": "",
+    "video_id": "10001_236215_02102025140556_23857789",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10001_236215_02102025140556_23857789",
+    "dataset_version": "qa_all_exercises_v14_added.violations_subset",
+    "exercise_name": "Hip flexion with knee bend (bilateral)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_rom_comparison",
+    "joint": "right_hip",
+    "question_index": 1,
+    "questions_in_video": 1,
+    "timestamp": "2026-05-13T11:12:10.733750",
+    "author": "sgsilva"
+  }
+}

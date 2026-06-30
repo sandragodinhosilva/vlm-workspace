@@ -1,0 +1,72 @@
+{
+  "2026-02-24T17:50:48.869475": {
+    "rating": "Has issues",
+    "note": "Mean ROM: 26.5\u00b0 | CoV: 78.1% | Trend: stable -> from full metrics. But last rep seems an outlier, shouldn't it be excluded?",
+    "video_id": "11005_600359_24102025022843_44380780",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11005_600359_24102025022843_44380780",
+    "dataset_version": "qa_samples_v8",
+    "exercise_name": "Scapular plane elevation (left)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_compensatory",
+    "joint": "",
+    "question_index": 1,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T09:32:14.339766"
+  },
+  "2026-02-24T17:50:48.869791": {
+    "rating": "Has issues",
+    "note": "The options are too complex and difficult to understand",
+    "video_id": "11005_600359_24102025022843_44380780",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11005_600359_24102025022843_44380780",
+    "dataset_version": "qa_samples_v8",
+    "exercise_name": "Scapular plane elevation (left)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_error_detection",
+    "joint": "left_shoulder",
+    "question_index": 4,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T09:33:38.644373"
+  },
+  "2026-02-24T17:50:49.018862": {
+    "rating": "Has issues",
+    "note": "ROM are too similar to be considered an interesting question (8% difference is too low, we need to increase the threshold so this question is excluded). If needed, we can reduce the number of questions per video",
+    "video_id": "11005_629767_31102025111238_59598369",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11005_629767_31102025111238_59598369",
+    "dataset_version": "qa_samples_v8",
+    "exercise_name": "Scapular plane elevation (left)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_rom_comparison",
+    "joint": "left_shoulder",
+    "question_index": 1,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T09:35:19.604473"
+  },
+  "2026-02-24T17:50:49.019060": {
+    "rating": "Good quality",
+    "note": "",
+    "video_id": "11005_629767_31102025111238_59598369",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11005_629767_31102025111238_59598369",
+    "dataset_version": "qa_samples_v8",
+    "exercise_name": "Scapular plane elevation (left)",
+    "tier": "TIER_C_LONGITUDINAL",
+    "template": "tier_c_trend_analysis",
+    "joint": "left_shoulder",
+    "question_index": 4,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T09:38:21.351845"
+  },
+  "2026-02-24T17:50:49.019084": {
+    "rating": "Maybe redundant",
+    "note": "",
+    "video_id": "11005_629767_31102025111238_59598369",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/11005_629767_31102025111238_59598369",
+    "dataset_version": "qa_samples_v8",
+    "exercise_name": "Scapular plane elevation (left)",
+    "tier": "TIER_C_LONGITUDINAL",
+    "template": "tier_c_error_trend",
+    "joint": "left_shoulder",
+    "question_index": 5,
+    "questions_in_video": 6,
+    "timestamp": "2026-02-25T09:38:44.009908"
+  }
+}

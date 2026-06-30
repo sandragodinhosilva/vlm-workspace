@@ -1,0 +1,16 @@
+{
+  "2026-04-29T12:23:02.909566": {
+    "rating": "Has issues",
+    "note": "The thing is that angle difference is higher on the first rep - this is the issue that we already start the movement near 180\u00ba\n",
+    "video_id": "10008_844167_10112025120525_60830223",
+    "video_path": "/mnt/data/shared/vlm/data/10k/all/10008_844167_10112025120525_60830223",
+    "dataset_version": "qa_all_exercises_v8",
+    "exercise_name": "Hip hyperextension (left)",
+    "tier": "TIER_B_COMPARATIVE",
+    "template": "tier_b_peak_comparison",
+    "joint": "left_knee",
+    "question_index": 1,
+    "questions_in_video": 1,
+    "timestamp": "2026-04-29T13:33:31.472580"
+  }
+}
