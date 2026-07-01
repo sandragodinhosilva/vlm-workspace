@@ -181,28 +181,40 @@ def discover_runs(logs_dirs):
 
 
 def load_run_scalars(event_files):
-    """Pick, per tag, the LATEST exp_* that contains it — taken WHOLE.
+    """Stitch a tag's curve across exp_* dirs by STEP, later-exp wins on collision.
 
-    SFT resumes write a fresh exp_NNN whose step counter RESTARTS from 1 (unlike
-    GRPO, which continues). So a per-step "later wins" merge would splice two
-    different training runs at an invisible seam (e.g. take steps 1..649 from the
-    resumed exp, then 650..675 from the abandoned earlier exp) — a curve that
-    belongs to neither run. Instead we treat each launch's exp as authoritative
-    for its own tags and show only the latest exp that logged a given tag. This
-    means the displayed curve is always exactly one contiguous training segment.
-    Earlier (abandoned/crashed) exps are dropped for that tag, not blended.
+    A resume writes a fresh exp_NNN. Two cases occur in the wild:
+      (a) the resumed exp CONTINUES the global step counter (e.g. resume from
+          step_220 → exp logs steps 221..N). Here the earlier exp holds 1..220
+          and the new one holds 221..N with NO overlap — they must be
+          CONCATENATED, or the chart starts at 220 and you lose the full run.
+      (b) the resumed exp RESTARTS at step 1. Here both exps cover 1..N and a
+          naive concat would double each step; the later exp must WIN per step.
 
-    Returns {tag: (steps_np_sorted, values_np)}.
+    A per-step "later wins, then take the union" merge handles BOTH: overlapping
+    steps take the newest exp's value (case b — the abandoned earlier segment is
+    overwritten), and non-overlapping steps from the earlier exp are kept (case a
+    — the pre-resume history is preserved). The old "latest exp whole" rule was
+    correct only for (b) and silently truncated (a) — the vobs2906 resume bug.
+
+    Returns {tag: (steps_np_sorted_unique, values_np)}.
     """
-    out = {}  # tag -> (steps, vals) from the latest exp that had this tag
-    for ev in event_files:  # ascending exp order; later overwrites wholesale
+    # tag -> dict{step: value}; iterate exps ascending so a later exp overwrites
+    # an earlier exp's value at the SAME step, while unique earlier steps survive.
+    merged = {}
+    for ev in event_files:  # ascending exp order
         try:
             tag_data = _read_event_file(ev)
         except Exception:
             continue
         for tag, (steps, vals) in tag_data.items():
-            order = np.argsort(steps, kind="stable")
-            out[tag] = (steps[order], vals[order])  # last exp with this tag wins, whole
+            d = merged.setdefault(tag, {})
+            for st, vl in zip(steps.tolist(), vals.tolist()):
+                d[st] = vl  # later exp wins on step collision; new steps added
+    out = {}
+    for tag, d in merged.items():
+        ks = np.array(sorted(d.keys()))
+        out[tag] = (ks, np.array([d[k] for k in ks]))
     return out
 
 
@@ -689,6 +701,9 @@ def build_ui(state):
                 # server-side handlers filter to valid runs anyway.
                 allow_custom_value=True)
             smoothing = gr.Slider(1, 50, value=5, step=1, label="Smoothing window")
+            loss_log = gr.Checkbox(
+                value=False, label="Loss log-scale",
+                info="log y-axis — resolves small late-SFT changes")
             refresh_btn = gr.Button("🔄 Refresh", scale=0)
 
         summary = gr.Markdown()
@@ -708,22 +723,47 @@ def build_ui(state):
                 policy_plot = gr.Plot(label="Policy Training Time")
                 dataproc_plot = gr.Plot(label="Data Processing Time")
 
+        # Per-run subtabs: the selection is dynamic but Gradio's component tree is fixed at build
+        # time, so pre-build a POOL of MAX_RUNS subtabs inside each tab; on update we fill the first
+        # len(rs) (set label + content + visible) and hide the rest. Lets you flip between runs
+        # within GPU / Config / Log instead of one giant concatenated scroll.
+        MAX_RUNS = 6
+        gpu_subtabs, gpu_mds = [], []
+        cfgint_subtabs, config_mds = [], []
+        cfgview_subtabs, config_srcs, config_raws = [], [], []
+        logview_subtabs, log_srcs, log_raws = [], [], []
+
         with gr.Tab("🖥️ GPU / host health"):
-            gpu_md = gr.Markdown()
+            with gr.Tabs():
+                for i in range(MAX_RUNS):
+                    with gr.Tab(f"run {i+1}", visible=(i == 0)) as t:
+                        gpu_subtabs.append(t)
+                        gpu_mds.append(gr.Markdown("_Select run(s) above._"))
 
         with gr.Tab("⚙️ Config intelligence"):
-            config_md = gr.Markdown(
-                "_Select a single run above to inspect its config._")
+            with gr.Tabs():
+                for i in range(MAX_RUNS):
+                    with gr.Tab(f"run {i+1}", visible=(i == 0)) as t:
+                        cfgint_subtabs.append(t)
+                        config_mds.append(gr.Markdown("_Select run(s) above to inspect config._"))
 
         with gr.Tab("📋 Config viewer"):
-            config_src = gr.Markdown("_Select a run to view its exact launch config._")
-            config_raw = gr.Code(label="config (YAML)", language="yaml")
+            with gr.Tabs():
+                for i in range(MAX_RUNS):
+                    with gr.Tab(f"run {i+1}", visible=(i == 0)) as t:
+                        cfgview_subtabs.append(t)
+                        config_srcs.append(gr.Markdown("_Select run(s) to view config._"))
+                        config_raws.append(gr.Code(label="config (YAML)", language="yaml"))
 
         with gr.Tab("📜 Log viewer"):
             with gr.Row():
-                log_src = gr.Markdown("_Select a run to tail its node-0 training log._")
-                log_refresh_btn = gr.Button("🔄 Reload log", scale=0)
-            log_raw = gr.Code(label="training log (node-0, tail)")
+                log_refresh_btn = gr.Button("🔄 Reload logs", scale=0)
+            with gr.Tabs():
+                for i in range(MAX_RUNS):
+                    with gr.Tab(f"run {i+1}", visible=(i == 0)) as t:
+                        logview_subtabs.append(t)
+                        log_srcs.append(gr.Markdown("_Select run(s) to tail log._"))
+                        log_raws.append(gr.Code(label="training log (node-0, tail)"))
 
         # ----- callbacks -----
         def _selected_scalars(labels):
@@ -738,13 +778,13 @@ def build_ui(state):
                 out.append((name, get_run_scalars(events) if events else {}))
             return out
 
-        def update(labels, sm):
+        def update(labels, sm, loss_logy=False):
             rs = _selected_scalars(labels)
             # status marker (🟢 active / ⏳ starting) shown in the SUMMARY, not the dropdown
             rs_disp = [(state.status_prefix(n) + n, sc) for n, sc in rs]
             outputs = {
                 summary: summary_markdown(rs_disp),
-                loss_plot: _overlay(rs, "train/loss", "Training Loss", "loss", sm),
+                loss_plot: _overlay(rs, "train/loss", "Training Loss", "loss", sm, logy=loss_logy),
                 gn_plot: _overlay(rs, "train/grad_norm", "Gradient Norm", "grad_norm", sm, logy=True),
                 lr_plot: _overlay(rs, "train/lr", "Learning Rate", "lr", 1),
                 val_plot: _overlay(rs, VAL_TAG, "Validation Loss", "val_loss", 1),
@@ -754,63 +794,89 @@ def build_ui(state):
                 policy_plot: _overlay(rs, "timing/train/policy_training", "Policy Training Time", "s", sm),
                 dataproc_plot: _overlay(rs, "timing/train/data_processing", "Data Processing Time", "s", sm),
             }
-            # GPU + config + log from the FIRST selected run
-            if rs:
-                first_name = rs[0][0]
-                outputs[gpu_md] = gpu_health_markdown(
-                    rs[0][1], is_running=state.is_running(first_name))
-                run_dir = state.by_name[first_name][0]
-                outputs[config_md] = config_markdown(first_name, run_dir)
-                raw, csrc = raw_config_text(first_name, run_dir)
-                outputs[config_raw] = raw
-                outputs[config_src] = f"**{first_name}** — config source: `{csrc}`"
-                ltext, lsrc = training_log_tail(first_name)
-                outputs[log_raw] = ltext
-                outputs[log_src] = f"**{first_name}** — log: `{lsrc}`"
-            else:
-                outputs[gpu_md] = "_Select a run._"
-                outputs[config_md] = "_Select a single run above to inspect its config._"
-                outputs[config_raw] = ""
-                outputs[config_src] = "_Select a run to view its exact launch config._"
-                outputs[log_raw] = ""
-                outputs[log_src] = "_Select a run to tail its node-0 training log._"
+            # Fill the per-run subtab POOL: one subtab per selected run (up to MAX_RUNS), the rest
+            # hidden. Each subtab is labelled with its run name so you flip between all N runs.
+            for i in range(MAX_RUNS):
+                if i < len(rs):
+                    name, sc = rs[i]
+                    disp = state.status_prefix(name) + name
+                    run_dir = state.by_name[name][0]
+                    raw, csrc = raw_config_text(name, run_dir)
+                    ltext, lsrc = training_log_tail(name)
+                    outputs[gpu_subtabs[i]] = gr.update(visible=True, label=disp)
+                    outputs[gpu_mds[i]] = gpu_health_markdown(
+                        sc, is_running=state.is_running(name))
+                    outputs[cfgint_subtabs[i]] = gr.update(visible=True, label=disp)
+                    outputs[config_mds[i]] = config_markdown(name, run_dir)
+                    outputs[cfgview_subtabs[i]] = gr.update(visible=True, label=disp)
+                    outputs[config_srcs[i]] = f"**{name}** — config source: `{csrc}`"
+                    outputs[config_raws[i]] = raw
+                    outputs[logview_subtabs[i]] = gr.update(visible=True, label=disp)
+                    outputs[log_srcs[i]] = f"**{name}** — log: `{lsrc}`"
+                    outputs[log_raws[i]] = ltext
+                else:
+                    # hide the subtab AND clear its content — every pooled component in all_outputs
+                    # MUST get a key each update, or the `d[o]` gather raises KeyError.
+                    outputs[gpu_subtabs[i]] = gr.update(visible=False)
+                    outputs[gpu_mds[i]] = ""
+                    outputs[cfgint_subtabs[i]] = gr.update(visible=False)
+                    outputs[config_mds[i]] = ""
+                    outputs[cfgview_subtabs[i]] = gr.update(visible=False)
+                    outputs[config_srcs[i]] = ""
+                    outputs[config_raws[i]] = ""
+                    outputs[logview_subtabs[i]] = gr.update(visible=False)
+                    outputs[log_srcs[i]] = ""
+                    outputs[log_raws[i]] = ""
             return outputs
 
-        all_outputs = [summary, loss_plot, gn_plot, lr_plot, val_plot,
-                       steptime_plot, tok_plot, policy_plot, dataproc_plot,
-                       gpu_md, config_md, config_raw, config_src, log_raw, log_src]
+        # plots + summary, then every pooled per-run subtab component (tabs + their content)
+        all_outputs = ([summary, loss_plot, gn_plot, lr_plot, val_plot,
+                        steptime_plot, tok_plot, policy_plot, dataproc_plot]
+                       + gpu_subtabs + gpu_mds
+                       + cfgint_subtabs + config_mds
+                       + cfgview_subtabs + config_srcs + config_raws
+                       + logview_subtabs + log_srcs + log_raws)
 
-        def update_list(labels, sm):
-            d = update(labels, sm)
+        def update_list(labels, sm, loss_logy):
+            d = update(labels, sm, loss_logy)
             return [d[o] for o in all_outputs]
 
-        def do_refresh(labels, sm, flt):
+        def do_refresh(labels, sm, flt, loss_logy):
             state.refresh()
             new_choices = state.labels(today_only=(flt == "Today"))
             kept = [l for l in (labels or []) if state.resolve(l) in state.by_name
                     and l in new_choices]
-            d = update(kept, sm)
+            d = update(kept, sm, loss_logy)
             return [gr.update(choices=new_choices, value=kept)] + [d[o] for o in all_outputs]
 
-        def do_filter(flt, labels, sm):
+        def do_filter(flt, labels, sm, loss_logy):
             new_choices = state.labels(today_only=(flt == "Today"))
             kept = [l for l in (labels or []) if l in new_choices]
-            d = update(kept, sm)
+            d = update(kept, sm, loss_logy)
             return [gr.update(choices=new_choices, value=kept)] + [d[o] for o in all_outputs]
 
         def reload_log(labels):
-            if not labels:
-                return "", "_Select a run to tail its node-0 training log._"
-            name = state.resolve(labels[0])
-            ltext, lsrc = training_log_tail(name)
-            return ltext, f"**{name}** — log: `{lsrc}`"
+            """Re-tail every selected run's log into its subtab (log_srcs[i], log_raws[i])."""
+            names = [state.resolve(l) for l in (labels or [])]
+            names = [n for n in names if n in state.by_name][:MAX_RUNS]
+            src_out, raw_out = [], []
+            for i in range(MAX_RUNS):
+                if i < len(names):
+                    ltext, lsrc = training_log_tail(names[i])
+                    src_out.append(f"**{names[i]}** — log: `{lsrc}`")
+                    raw_out.append(ltext)
+                else:
+                    src_out.append("_Select run(s) to tail log._")
+                    raw_out.append("")
+            return src_out + raw_out
 
-        run_sel.change(update_list, [run_sel, smoothing], all_outputs)
-        smoothing.change(update_list, [run_sel, smoothing], all_outputs)
-        run_filter.change(do_filter, [run_filter, run_sel, smoothing], [run_sel] + all_outputs)
-        refresh_btn.click(do_refresh, [run_sel, smoothing, run_filter], [run_sel] + all_outputs)
-        log_refresh_btn.click(reload_log, [run_sel], [log_raw, log_src])
-        demo.load(update_list, [run_sel, smoothing], all_outputs)
+        run_sel.change(update_list, [run_sel, smoothing, loss_log], all_outputs)
+        smoothing.change(update_list, [run_sel, smoothing, loss_log], all_outputs)
+        loss_log.change(update_list, [run_sel, smoothing, loss_log], all_outputs)
+        run_filter.change(do_filter, [run_filter, run_sel, smoothing, loss_log], [run_sel] + all_outputs)
+        refresh_btn.click(do_refresh, [run_sel, smoothing, run_filter, loss_log], [run_sel] + all_outputs)
+        log_refresh_btn.click(reload_log, [run_sel], log_srcs + log_raws)
+        demo.load(update_list, [run_sel, smoothing, loss_log], all_outputs)
 
     return demo
 
