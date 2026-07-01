@@ -9,15 +9,26 @@ mismatch between intent and implementation is caught cheaply.
 Works on:
   - a DatasetDict dir (has split subdirs),
   - a single saved split dir,
-  - a PARENT dir containing several leaf datasets (auto-discovers leaves).
+  - a PARENT dir containing several leaf datasets (auto-discovers leaves),
+  - a generator JSONL sidecar (`*_traces_*.jsonl` or any `.jsonl` of row dicts),
+  - a PARENT dir containing per-family sidecars (`*/_traces_*.jsonl`).
+
+Each row renders FIVE sections: 0. KEY METADATA + completeness audit · 1. GENERATION
+PROMPT · 2. MODEL REASONING · 3. RAW MODEL OUTPUT · 4. PARSED OUTPUT (messages).
 
 Provenance columns it looks for (any subset): generation_prompt, raw_model_output,
-messages, choices, correct_answer. If generation_prompt / raw_model_output are absent
-it says so explicitly (never a silent half-preview).
+messages, choices, correct_answer + the reasoning/judge metadata fields. If
+generation_prompt / raw_model_output are absent it says so explicitly (never a
+silent half-preview). The fields shown in section 0 are configurable with
+`--meta-fields a,b,c`; defaults cover the text-reasoning + judge pipeline.
+
+Reusable by BOTH /generate-reas (preview generated traces) and /vlm-judge
+(preview judged rows: judge decision/tags surfaced in section 0).
 
 Usage:
-  python preview_dataset_output.py --root <dir> --n 3 [--split train] [--out preview.txt]
-  python preview_dataset_output.py --root /tmp/patient_qa_v2_2706_smoke --n 2
+  python preview_dataset_output.py --root <dir-or-jsonl> --n 3 [--split train] [--out preview.txt]
+  python preview_dataset_output.py --root /home/sgsilva/tmp/<gen_smoke> --n 3   # sidecars
+  python preview_dataset_output.py --root <judged_dataset> --meta-fields reasoning_judge_decision,reasoning_repair_tags
 """
 from __future__ import annotations
 
@@ -30,6 +41,42 @@ from pathlib import Path
 from datasets import load_from_disk
 
 
+class _JsonlDataset:
+    """Minimal Dataset-like view over a JSONL of row dicts (generator sidecars),
+    so _render works identically for HF dirs and sidecars. Skips rows whose
+    `_row_status`/`_twin_status` is present and != 'ok' (sentinel failures)."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        cols = set()
+        for r in rows:
+            cols.update(r.keys())
+        self.column_names = sorted(cols)
+
+    def __len__(self):
+        return len(self.rows)
+
+    def __getitem__(self, i):
+        return self.rows[i]
+
+
+def _load_jsonl(p: Path):
+    import json
+    rows = []
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        status = r.get("_row_status", r.get("_twin_status", "ok"))
+        if status != "ok":
+            continue
+        rows.append(r)
+    return _JsonlDataset(rows)
+
+
 def _is_dataset_dir(p: Path) -> bool:
     return (p / "dataset_info.json").exists() or (p / "state.json").exists()
 
@@ -39,8 +86,11 @@ def _has_split_subdirs(p: Path) -> bool:
 
 
 def _load_any(p: Path):
-    """Return list of (label, Dataset). Handles DatasetDict / single split / split subdir."""
+    """Return list of (label, Dataset). Handles a JSONL sidecar, DatasetDict,
+    single split, or split subdir."""
     out = []
+    if p.is_file() and p.suffix == ".jsonl":
+        return [(p.parent.name + "/" + p.name, _load_jsonl(p))]
     try:
         ds = load_from_disk(str(p))
     except Exception:
@@ -62,7 +112,17 @@ def _load_any(p: Path):
 
 
 def _discover_leaves(root: Path):
-    """Yield (label, Dataset) for root and any nested leaf datasets."""
+    """Yield (label, Dataset) for root and any nested leaf datasets or JSONL
+    sidecars (generator output: <root>/<family>/_traces_<split>.jsonl)."""
+    if root.is_file():
+        return _load_any(root)
+    # generator sidecars under per-family subdirs
+    sidecars = sorted(root.glob("*/_traces_*.jsonl")) + sorted(root.glob("_traces_*.jsonl"))
+    if sidecars:
+        out = []
+        for sc in sidecars:
+            out.extend(_load_any(sc))
+        return out
     direct = _load_any(root)
     if direct:
         return direct
@@ -111,7 +171,18 @@ def _extract_reasoning(row, msgs) -> str:
     return ""
 
 
-def _render(label, d, n, w):
+# Default KEY metadata fields surfaced in section 0 (present-AND-filled audit).
+# Covers the text-reasoning + judge pipelines; override with --meta-fields.
+_DEFAULT_META_FIELDS = (
+    "dataset_type", "source_dataset_family", "source_version", "exercise_id",
+    "exercise_name", "body_region", "is_lr_pair", "task", "correct_answer",
+    "reasoning_added", "reasoning_model",
+    "reasoning_judge_decision", "reasoning_regenerated", "reasoning_judge_model",
+    "reasoning_repair_tags",
+)
+
+
+def _render(label, d, n, w, meta_fields):
     w(f"\n{'='*100}\n=== LEAF: {label}   (rows={len(d)}, cols={len(d.column_names)})\n{'='*100}")
     cols = set(d.column_names)
     missing = [c for c in ("generation_prompt", "raw_model_output") if c not in cols]
@@ -122,6 +193,20 @@ def _render(label, d, n, w):
         r = d[i]
         ex = r.get("exercise_name") or r.get("exercise_id") or ""
         w(f"\n{'-'*100}\nROW {i}  exercise={ex!r}  task={r.get('task','?')!r}  variant={r.get('variant','?')!r}\n{'-'*100}")
+
+        w("\n### 0. KEY METADATA (present-AND-filled audit) ###")
+        empty = []
+        for f in meta_fields:
+            if f not in cols:
+                continue
+            v = r.get(f)
+            filled = v not in (None, "", [], {})
+            w(f"  {f:26s} = {v!r}" + ("" if filled else "   ⚠ EMPTY"))
+            if not filled and f in ("messages", "reasoning_model", "source_version",
+                                    "dataset_type"):
+                empty.append(f)
+        if empty:
+            w(f"  ⚠ LOAD-BEARING FIELDS EMPTY: {empty} — STOP, fix the generator.")
 
         w("\n### 1. GENERATION PROMPT ###")
         w(r.get("generation_prompt", "<no generation_prompt column>"))
@@ -158,7 +243,12 @@ def main() -> int:
     ap.add_argument("--split", default=None, help="only preview this split (e.g. train)")
     ap.add_argument("--out", default=None,
                     help="txt output path; default: /home/sgsilva/tmp/previews/preview_<root>.txt")
+    ap.add_argument("--meta-fields", default=None,
+                    help="comma-separated metadata fields for section 0 "
+                         "(default: text-reasoning + judge fields)")
     args = ap.parse_args()
+    meta_fields = (tuple(f.strip() for f in args.meta_fields.split(","))
+                   if args.meta_fields else _DEFAULT_META_FIELDS)
 
     root = Path(args.root)
     if not root.exists():
@@ -187,7 +277,7 @@ def main() -> int:
 
     w(f"PREVIEW  root={root}  n={args.n}  leaves={len(leaves)}")
     for label, d in leaves:
-        _render(label, d, args.n, w)
+        _render(label, d, args.n, w, meta_fields)
 
     if args.out:
         outp = Path(args.out)
