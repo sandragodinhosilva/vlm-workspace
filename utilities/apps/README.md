@@ -50,7 +50,7 @@ meant to hold all 16 app sources, and moving the embedded ones here would break 
 | 7863 | `browser` | Multi-tab dataset browser (image / video / text) |
 | 7864 | `vo-severity` | VO severity comparator — single-stage A vs B |
 | 7865 | `vo-compare` | VO stage-1 comparator — side-by-side observations |
-| 7866 | `sft-data` | Text SFT data browser (5 MCQA families) |
+| 7866 | `text-sft` | Text SFT data browser (TEXT-ONLY) |
 | 7867 | `llm-fms` | LLM-FMS image+text SFT row viewer |
 | 7868 | `multimodal-compare` | Multimodal eval run comparer (keypoint overlay) |
 | 7869 | `reas-inspector` | Reas-mix inspector (reas2 merged mix) |

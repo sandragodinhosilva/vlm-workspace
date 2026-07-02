@@ -89,6 +89,21 @@ EXISTING_DATASET_NAMES = [
     "technical_tips_natural_reasoning_1102",
 ]
 
+# Ad-hoc extra families to surface in the selector, resolved under EXISTING_DATASETS_DIR
+# (TEXT_AUX_DIR). Set TEXT_AUX_EXTRA_NAMES=<comma list> to browse a staging dir of
+# HF <name>/<split> splits without editing this list — e.g. the _2706 reasoning-twin
+# diversity smoke. They appear in the dropdown by their raw name (no numbered label).
+_EXTRA = os.environ.get("TEXT_AUX_EXTRA_NAMES", "").strip()
+if _EXTRA:
+    EXISTING_DATASET_NAMES += [n.strip() for n in _EXTRA.split(",") if n.strip()]
+
+# When browsing an ad-hoc dir (TEXT_AUX_EXTRA_NAMES set), the hardcoded Thrive-v2
+# methodology / overview panels ("275 exercises", "2,867 train / 1,657 test",
+# per-family sample counts, PKG/V1→V2 hardening) are STALE and misdescribe the
+# loaded data. Gate them behind this flag → show a generic data-driven panel
+# instead. Unset → the app is exactly the original Thrive-v2 QC browser.
+AD_HOC_MODE = bool(_EXTRA)
+
 # Exercise metadata (loaded from Excel for full field coverage)
 _EXERCISE_EXCEL_PATH = Path(
     os.environ.get(
@@ -973,7 +988,10 @@ def compute_overview():
     mcqa_count = 0
     openended_count = 0
 
-    for ds_name in NEW_DATASET_NAMES:
+    # In ad-hoc mode iterate the ACTUALLY-available families (not the fixed
+    # Thrive-v2 5), so the overview reflects the loaded data.
+    overview_names = get_available_datasets() if AD_HOC_MODE else NEW_DATASET_NAMES
+    for ds_name in overview_names:
         for split in get_available_splits(ds_name):
             samples = get_samples(ds_name, split)
             variant_counts = Counter(s.get("variant", "?") for s in samples)
@@ -1001,9 +1019,28 @@ def compute_overview():
     )
 
     total_md = f"### {grand_total:,}\nTotal samples"
-    ds_md = f"### {len(NEW_DATASET_NAMES)}\nDatasets"
+    ds_md = f"### {len(overview_names)}\nDatasets"
     ex_md = f"### {len(all_exercises)}\nExercises"
     type_md = f"### {mcqa_count:,} / {openended_count:,}\nMCQA / Open-ended"
+
+    if AD_HOC_MODE:
+        # No Thrive split_info.json for ad-hoc dirs; describe families from data.
+        audit_md = ("### Train/Test Split Audit\n\n_Ad-hoc dataset — Thrive-v2 "
+                    "split audit not applicable. Per-family/per-split counts above._")
+        summary_lines = [
+            "### Dataset Summary (ad-hoc)\n",
+            "Families and counts computed from the loaded `TEXT_AUX_DIR` — no "
+            "hardcoded Thrive-v2 descriptions.\n",
+        ]
+        for ds_name in overview_names:
+            short = ds_name.replace("text_", "")
+            ds_samples = sum(
+                r["samples"] for _, r in df.iterrows()
+                if r["dataset"] == short) if not df.empty else 0
+            summary_lines.append(f"**{short}** ({ds_samples:,} samples)\n")
+        summary_md = "\n".join(summary_lines)
+        return total_md, ds_md, ex_md, type_md, df, audit_md, summary_md
+
     audit_md = load_split_info()
 
     # Build a combined summary
@@ -1771,7 +1808,17 @@ def build_app() -> gr.Blocks:
             # Tab 5: Methodology
             # ================================================================
             with gr.Tab("Methodology"):
-                gr.Markdown(METHODOLOGY_MD)
+                if AD_HOC_MODE:
+                    gr.Markdown(
+                        "## Ad-hoc dataset\n\n"
+                        "Browsing an ad-hoc `TEXT_AUX_DIR` (set via `TEXT_AUX_EXTRA_NAMES`), "
+                        "so the Thrive-v2 methodology below does **not** describe this data — "
+                        "it is hidden to avoid stale/misleading info.\n\n"
+                        f"**Families loaded:** {', '.join(EXISTING_DATASET_NAMES[-len([n for n in _EXTRA.split(',') if n.strip()]):])}\n\n"
+                        "Use the **Dataset Overview** tab for real per-family / per-split counts "
+                        "computed from what is actually loaded.")
+                else:
+                    gr.Markdown(METHODOLOGY_MD)
 
     return app
 

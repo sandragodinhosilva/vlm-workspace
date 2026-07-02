@@ -10,8 +10,8 @@
 #   7863  browser             vlm-post-training/web/browser-app/app.py
 #   7864  vo-severity         web/single_stage_compare_app.py
 #   7865  vo-compare          web/human_visual_obs_compare_app.py
-#   7866  sft-data            utilities/apps/sft_data_browser.py
-#   7867  llm-fms             web/llm_fms_viewer.py
+#   7866  text-sft            utilities/apps/sft_text_data_browser.py
+#   7867  image-viewer        web/image_row_viewer.py
 #   7868  multimodal-compare  web/multimodal_compare_app.py
 #   7869  reas-inspector      aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py
 #   7870  prejudge-viewer     utilities/apps/video_sft/prejudge_viewer.py
@@ -119,21 +119,21 @@ apps:
   # ══ AUX TASKS ══════════════════════════════════════════════════════════════
   #   Text/image SFT data QC + the reas2 mix + multimodal keypoint eval.
 
-  sft-data:
-    label: "SFT data browser (text MCQA)"
+  text-sft:
+    label: "Text SFT data browser (TEXT-ONLY)"
     workstream: Aux Tasks
     goal: "Browse and QC text-based SFT datasets (5 MCQA families) from the Thrive VLM database."
     repo: /home/sgsilva/utilities/apps
-    script: sft_data_browser.py
+    script: sft_text_data_browser.py
     port: 7866
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
 
-  llm-fms:
-    label: "LLM-FMS viewer (image+text SFT rows)"
+  image-viewer:
+    label: "Image-row viewer (image + prompt + target + metadata; judge-review)"
     workstream: Aux Tasks
-    goal: "Inspect image-based LLM-FMS SFT rows: image + prompt + target + metadata."
+    goal: "Inspect any image-based HF dataset row: image + prompt + target + full metadata. Renders a nested `metadata` dict in full (e.g. judge-review sets: VERDICT/GT/judge-answer/margin). Was llm-fms."
     repo: /home/sgsilva/vlm-post-training
-    script: web/llm_fms_viewer.py
+    script: web/image_row_viewer.py
     port: 7867
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
     # Pass --dataset /path/to/hf at launch time.

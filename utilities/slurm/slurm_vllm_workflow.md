@@ -23,7 +23,7 @@ Cluster: 8× NVIDIA B300 SXM6 per worker node, ~2.5 TB RAM, 192 CPUs per node. `
 This is the formula recommended for the cluster — it gives you exactly your proportional share of a node and never over-claims:
 
 ```bash
-NUM_GPUS=4
+NUM_GPUS=2
 srun --nodes=1 \
      --gres=gpu:${NUM_GPUS} \
      -c $((24*NUM_GPUS)) \
@@ -31,13 +31,13 @@ srun --nodes=1 \
      --job-name=27b \
      --pty bash -i 
 
-NUM_GPUS=4
+NUM_GPUS=2
 srun --nodes=1 \
      --gres=gpu:${NUM_GPUS} \
      -c $((24*NUM_GPUS)) \
      --mem=$((311*NUM_GPUS))G \
      --job-name=eval1 \
-     --nodelist=worker-7 \
+     --nodelist=worker-5 \
      --pty bash -i 
 
 ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh \

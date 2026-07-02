@@ -29,6 +29,9 @@ Usage:
   python preview_dataset_output.py --root <dir-or-jsonl> --n 3 [--split train] [--out preview.txt]
   python preview_dataset_output.py --root /home/sgsilva/tmp/<gen_smoke> --n 3   # sidecars
   python preview_dataset_output.py --root <judged_dataset> --meta-fields reasoning_judge_decision,reasoning_repair_tags
+  # diversity preview — one representative row per (style × model) cell (covers all combos,
+  # not just the first-n rows which on a session-ordered leaf can all be one cell):
+  python preview_dataset_output.py --root <gen_dir> --n 1 --group-by reasoning_prompt_style,reasoning_model
 """
 from __future__ import annotations
 
@@ -201,8 +204,10 @@ _DEFAULT_META_FIELDS = (
 
 def _gen_prompt_of(row):
     """The reasoning-GENERATION prompt — `generation_prompt` (the teacher prompt
-    that produced the <think> trace)."""
-    return row.get("generation_prompt")
+    that produced the <think> trace). The visual-observations generator
+    (add_reasoning_traces_vlm.py) persists it as `reasoning_teacher_prompt`
+    instead — additive fallback, backwards compatible."""
+    return row.get("generation_prompt") or row.get("reasoning_teacher_prompt")
 
 
 def _judge_prompt_of(row):
@@ -221,31 +226,62 @@ def _prompt_of(row):
 
 def _raw_of(row):
     """Raw model output — `raw_model_output` (generators) OR `raw_response`
-    (vlm-judge output)."""
-    return row.get("raw_model_output") or row.get("raw_response")
+    (vlm-judge output) OR `reasoning_raw_response` (the visual-observations
+    generator's raw teacher output) — additive fallback, backwards compatible."""
+    return (row.get("raw_model_output") or row.get("raw_response")
+            or row.get("reasoning_raw_response"))
 
 
-def _render(label, d, n, w, meta_fields):
+def _row_indices_by_group(d, group_cols, n):
+    """Row indices for a --group-by preview: the first `n` rows of EACH distinct
+    value-tuple of group_cols (n=1 → one representative per cell). Shows every
+    cell, so a diversity preview covers all (style × model) combos instead of the
+    first-n rows — which, on a session-ordered leaf, can all be one cell. Falls
+    back to the first-n rows if none of group_cols are present."""
+    present = [c for c in group_cols if c in d.column_names]
+    if not present:
+        return list(range(min(n, len(d))))
+    from collections import defaultdict
+    per_cell = defaultdict(list)
+    for i in range(len(d)):
+        r = d[i]
+        key = tuple(str(r.get(c, "")) for c in present)
+        if len(per_cell[key]) < max(1, n):
+            per_cell[key].append(i)
+    return sorted(i for idxs in per_cell.values() for i in idxs)
+
+
+def _render(label, d, n, w, meta_fields, group_cols=None):
     w(f"\n{'='*100}\n=== LEAF: {label}   (rows={len(d)}, cols={len(d.column_names)})\n{'='*100}")
     cols = set(d.column_names)
     # prompt/raw may be under generator OR judge column names — only warn if NEITHER
     # alias is present, so judge outputs (judge_prompt/raw_response) don't false-warn.
     missing = []
-    if not (cols & {"generation_prompt", "judge_prompt", "reasoning_judge_prompt"}):
+    if not (cols & {"generation_prompt", "judge_prompt", "reasoning_judge_prompt",
+                    "reasoning_teacher_prompt"}):
         missing.append("generation_prompt/judge_prompt")
-    if not (cols & {"raw_model_output", "raw_response"}):
+    if not (cols & {"raw_model_output", "raw_response", "reasoning_raw_response"}):
         missing.append("raw_model_output/raw_response")
     if missing:
         w(f"!! MISSING provenance columns: {missing} — showing what IS present "
           f"(at minimum messages). Columns: {d.column_names}")
-    for i in range(min(n, len(d))):
+    if group_cols:
+        row_idxs = _row_indices_by_group(d, group_cols, n)
+        present_gc = [c for c in group_cols if c in d.column_names]
+        w(f"  [--group-by {','.join(group_cols)}] → {len(row_idxs)} rows across "
+          f"{len(set(tuple(str(d[i].get(c,'')) for c in present_gc) for i in row_idxs))} cells")
+    else:
+        row_idxs = list(range(min(n, len(d))))
+    for i in row_idxs:
         r = d[i]
         ex = r.get("exercise_name") or r.get("exercise_id") or ""
         # `task`/`variant` are the text-pipeline names; image judge sidecars use
         # `task_type`/`question_template` — fall back so the header isn't '?'.
         task = r.get("task") or r.get("task_type") or "?"
         variant = r.get("variant") or r.get("question_template") or "?"
-        w(f"\n{'-'*100}\nROW {i}  exercise={ex!r}  task={task!r}  variant={variant!r}\n{'-'*100}")
+        cell = (f"  cell=({','.join(str(r.get(c,'')) for c in group_cols if c in d.column_names)})"
+                if group_cols else "")
+        w(f"\n{'-'*100}\nROW {i}  exercise={ex!r}  task={task!r}  variant={variant!r}{cell}\n{'-'*100}")
 
         w("\n### 0. KEY METADATA (present-AND-filled audit) ###")
         empty = []
@@ -403,7 +439,15 @@ def main() -> int:
     ap.add_argument("--meta-fields", default=None,
                     help="comma-separated metadata fields for section 0 "
                          "(default: text-reasoning + judge fields)")
+    ap.add_argument("--group-by", default=None,
+                    help="comma-separated provenance cols (e.g. "
+                         "reasoning_prompt_style,reasoning_model) — show the first "
+                         "--n rows of EACH distinct cell instead of the first-n "
+                         "rows overall. Covers every (style×model) diversity combo; "
+                         "avoids a session-ordered leaf showing only one cell.")
     args = ap.parse_args()
+    group_cols = ([c.strip() for c in args.group_by.split(",")]
+                  if args.group_by else None)
     meta_fields = (tuple(f.strip() for f in args.meta_fields.split(","))
                    if args.meta_fields else _DEFAULT_META_FIELDS)
 
@@ -434,7 +478,7 @@ def main() -> int:
 
     w(f"PREVIEW  root={root}  n={args.n}  leaves={len(leaves)}")
     for label, d in leaves:
-        _render(label, d, args.n, w, meta_fields)
+        _render(label, d, args.n, w, meta_fields, group_cols=group_cols)
 
     # Diversity coverage summary (no-op unless the style/model provenance cols
     # are present) — aggregated across all leaves.

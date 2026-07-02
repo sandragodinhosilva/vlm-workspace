@@ -14,7 +14,7 @@
 | Dataset browser | `vlm-post-training/web/browser-app/app.py` | 7863 | `browser-app-home-venv` | Multi-tab browser for all post-training datasets: image, video, text, reasoning tabs | 2026-03-06 | 2026-06-16 | 8 | ⚠ BROWSER_MIXED_ROOT dataset not on disk |
 | VO severity comparator | `vlm-post-training/web/single_stage_compare_app.py` | 7864 | `vlm-post-training-home-venv` | Compare two single/two-stage eval runs side-by-side: per-rep error detection + video | 2026-05-22 | 2026-05-29 | 5 | ✓ |
 | VO stage-1 comparator | `vlm-post-training/web/human_visual_obs_compare_app.py` | 7865 | `vlm-post-training-home-venv` | Side-by-side visual observations across multiple VLMs vs human ground-truth | 2026-05-04 | 2026-05-28 | 6 | ✓ |
-| SFT data browser | `utilities/apps/sft_data_browser.py` | 7866 | `vlm-post-training-home-venv` | Browse and QC text-based SFT datasets (5 MCQA families) from Thrive VLM database | 2026-02-27 | 2026-04-09 | 6 | ✓ |
+| SFT data browser | `utilities/apps/sft_text_data_browser.py` | 7866 | `vlm-post-training-home-venv` | Browse and QC text-based SFT datasets (5 MCQA families) from Thrive VLM database | 2026-02-27 | 2026-04-09 | 6 | ✓ |
 | LLM-FMS viewer | `vlm-post-training/web/llm_fms_viewer.py` | 7867 | `vlm-post-training-home-venv` | Inspect image-based LLM-FMS SFT rows: image + prompt + target + metadata | 2026-05-22 | 2026-05-22 | 2 | ✓ |
 | Multimodal eval comparer | `vlm-post-training/web/multimodal_compare_app.py` | 7868 | `vlm-post-training-home-venv` | Side-by-side multimodal eval run comparison with COCO keypoint overlay | 2026-04-21 | 2026-04-21 | 2 | ⚠ hardcoded default dirs stale |
 | Reas-mix inspector | `vlm-post-training/aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py` | 7869 | `browser-app-home-venv` | Quick inspector for the reas2 merged reasoning mix: filter by modality/judge verdict | 2026-04-21 | 2026-04-21 | 1 | ✓ |
@@ -153,14 +153,14 @@ lsof -ti:7861 | xargs -r kill -9
 
 ### 3.6 SFT Data Browser
 
-**Path:** `/home/sgsilva/utilities/apps/sft_data_browser.py`  
+**Path:** `/home/sgsilva/utilities/apps/sft_text_data_browser.py`  
 **Port:** 7866  
 **Venv:** `/home/sgsilva/vlm-post-training-home-venv/bin/python`  
 **Input:** Loads text MCQA families from an HF dataset root (configurable via `--dataset`).
 
 **Launch:**
 ```bash
-~/utilities/apps/launch_app.sh sft-data
+~/utilities/apps/launch_app.sh text-sft
 ```
 
 ---
@@ -362,7 +362,7 @@ dropdown, Vertex/gemini routing, stage-2 severity scoring + canonical board metr
 | 7863 | Dataset browser | ✓ `browser-app/config.py` |
 | 7864 | VO severity comparator | — (already unique) |
 | 7865 | VO stage-1 comparator | ✓ `human_visual_obs_compare_app.py` |
-| 7866 | SFT data browser | ✓ `utilities/apps/sft_data_browser.py` |
+| 7866 | SFT data browser | ✓ `utilities/apps/sft_text_data_browser.py` |
 | 7867 | LLM-FMS viewer | ✓ `llm_fms_viewer.py` |
 | 7868 | Multimodal eval comparer | ✓ `multimodal_compare_app.py` |
 | 7869 | Reas-mix inspector | ✓ `inspect_reas2_mix_gradio.py` |
