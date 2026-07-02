@@ -192,18 +192,31 @@ _DEFAULT_META_FIELDS = (
     "reasoning_added", "reasoning_model",
     "reasoning_prompt_style", "reasoning_origin",
     "reasoning_judge_decision", "reasoning_regenerated", "reasoning_judge_model",
-    "reasoning_repair_tags",
+    "reasoning_repair_tags", "reasoning_judge_prompt",
     # vlm-judge sample/audit output (surfaced in §0 when present):
     "verdict_kind", "category", "answerability", "confidence", "evidence",
     "gt", "margin", "judge_model", "tier",
 )
 
 
+def _gen_prompt_of(row):
+    """The reasoning-GENERATION prompt — `generation_prompt` (the teacher prompt
+    that produced the <think> trace)."""
+    return row.get("generation_prompt")
+
+
+def _judge_prompt_of(row):
+    """The reasoning-JUDGE prompt sent to the judge model. Persisted on judged
+    datasets as `reasoning_judge_prompt` (judge_reasoning_text_mcqa.py); legacy
+    vlm-judge sidecars use `judge_prompt`. Returns None on un-judged datasets so
+    section 1b is simply omitted — backwards compatible."""
+    return row.get("reasoning_judge_prompt") or row.get("judge_prompt")
+
+
 def _prompt_of(row):
-    """The generation/judge prompt — `generation_prompt` (generators) OR
-    `judge_prompt` (vlm-judge output). Backwards compatible: generator datasets
-    are unaffected; judge JSONs now render their full prompt in section 1."""
-    return row.get("generation_prompt") or row.get("judge_prompt")
+    """Any single prompt — gen first, else judge. Kept for callers/paths that
+    want one prompt; section 1 renders both explicitly when both are present."""
+    return _gen_prompt_of(row) or _judge_prompt_of(row)
 
 
 def _raw_of(row):
@@ -218,7 +231,7 @@ def _render(label, d, n, w, meta_fields):
     # prompt/raw may be under generator OR judge column names — only warn if NEITHER
     # alias is present, so judge outputs (judge_prompt/raw_response) don't false-warn.
     missing = []
-    if not (cols & {"generation_prompt", "judge_prompt"}):
+    if not (cols & {"generation_prompt", "judge_prompt", "reasoning_judge_prompt"}):
         missing.append("generation_prompt/judge_prompt")
     if not (cols & {"raw_model_output", "raw_response"}):
         missing.append("raw_model_output/raw_response")
@@ -241,15 +254,31 @@ def _render(label, d, n, w, meta_fields):
                 continue
             v = r.get(f)
             filled = v not in (None, "", [], {})
-            w(f"  {f:26s} = {v!r}" + ("" if filled else "   ⚠ EMPTY"))
+            # Section 0 is a present-AND-filled audit, not a content dump: abbreviate
+            # long values (e.g. reasoning_judge_prompt — full text is in section 1b).
+            disp = repr(v)
+            if len(disp) > 120:
+                disp = disp[:117] + "…'"
+            w(f"  {f:26s} = {disp}" + ("" if filled else "   ⚠ EMPTY"))
             if not filled and f in ("messages", "reasoning_model", "source_version",
                                     "dataset_type"):
                 empty.append(f)
         if empty:
             w(f"  ⚠ LOAD-BEARING FIELDS EMPTY: {empty} — STOP, fix the generator.")
 
-        w("\n### 1. GENERATION PROMPT ###")
-        w(_prompt_of(r) or "<no generation_prompt/judge_prompt column>")
+        # Section 1 renders BOTH prompts when present (judged reasoning datasets
+        # carry the reasoning-gen prompt AND the judge prompt). Back-compat: a
+        # plain generator dataset shows only 1a; an un-judged one omits 1b.
+        gen_p = _gen_prompt_of(r)
+        judge_p = _judge_prompt_of(r)
+        if judge_p:
+            w("\n### 1a. REASONING-GENERATION PROMPT (teacher → <think>) ###")
+            w(gen_p or "<no generation_prompt column>")
+            w("\n### 1b. REASONING-JUDGE PROMPT (judge → verdict) ###")
+            w(judge_p)
+        else:
+            w("\n### 1. GENERATION PROMPT ###")
+            w(gen_p or _prompt_of(r) or "<no generation_prompt/judge_prompt column>")
 
         w("\n### 2. MODEL REASONING (<think> / reasoning_content) ###")
         reasoning = _extract_reasoning(r, r.get("messages"))
