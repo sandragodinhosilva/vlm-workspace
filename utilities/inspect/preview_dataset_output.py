@@ -266,21 +266,36 @@ def _render(label, d, n, w, meta_fields):
         if empty:
             w(f"  ⚠ LOAD-BEARING FIELDS EMPTY: {empty} — STOP, fix the generator.")
 
-        # Section 1 renders BOTH prompts when present (judged reasoning datasets
-        # carry the reasoning-gen prompt AND the judge prompt). Back-compat: a
-        # plain generator dataset shows only 1a; an un-judged one omits 1b.
+        # Section 1 renders BOTH prompts when present. Label by OPERATION, not a
+        # fixed "reasoning" assumption: a REASONING-judge dataset carries a
+        # `reasoning_judge_prompt` (+ the reasoning-GENERATION teacher prompt); a
+        # SAMPLE-QUALITY judge sidecar carries `judge_prompt` with NO generation
+        # prompt (it audits the sample/answer, not a <think> trace). Mislabeling a
+        # sample-quality audit as a "reasoning judge" is the wrong operation
+        # (judge-SAMPLE vs judge-REASONING — see /vlm-judge).
         gen_p = _gen_prompt_of(r)
         judge_p = _judge_prompt_of(r)
-        if judge_p:
+        is_reasoning_judge = bool(r.get("reasoning_judge_prompt"))
+        if judge_p and (gen_p or is_reasoning_judge):
+            # reasoning pipeline: generation trace + reasoning-judge verdict
             w("\n### 1a. REASONING-GENERATION PROMPT (teacher → <think>) ###")
             w(gen_p or "<no generation_prompt column>")
-            w("\n### 1b. REASONING-JUDGE PROMPT (judge → verdict) ###")
+            w("\n### 1b. REASONING-JUDGE PROMPT (judge → trace verdict) ###")
+            w(judge_p)
+        elif judge_p:
+            # sample-quality judge: one prompt, audits the sample/answer (no trace)
+            w("\n### 1. SAMPLE-QUALITY JUDGE PROMPT (judge → sample verdict) ###")
             w(judge_p)
         else:
             w("\n### 1. GENERATION PROMPT ###")
             w(gen_p or _prompt_of(r) or "<no generation_prompt/judge_prompt column>")
 
-        w("\n### 2. MODEL REASONING (<think> / reasoning_content) ###")
+        # For a reasoning pipeline this is the model's <think> trace; for a
+        # sample-quality judge it's the judge's analysis preamble before the JSON.
+        _sec2 = ("JUDGE ANALYSIS (prose before the verdict JSON)"
+                 if (judge_p and not gen_p and not is_reasoning_judge)
+                 else "MODEL REASONING (<think> / reasoning_content)")
+        w(f"\n### 2. {_sec2} ###")
         reasoning = _extract_reasoning(r, r.get("messages"))
         if reasoning:
             w(reasoning)
