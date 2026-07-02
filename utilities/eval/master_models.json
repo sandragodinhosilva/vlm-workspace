@@ -269,7 +269,7 @@
     },
     {
       "pattern": "qwen35-4b-vobs2906-categorical_k5majority-sft-step987",
-      "display": "4B vobs2906 cat k5maj (stage-1)",
+      "display": "4B vobs2906 cat k5maj (obs-SFT)",
       "train_reasoning": "no",
       "group": "vobs2906_bakeoff",
       "note": "2906 dualform stage-1 SFT; categorical schema, K=5 majority; thinkOFF; step987 (val 0.0159). 4-variant bake-off vs angle x maj/sev.",
@@ -280,7 +280,7 @@
     },
     {
       "pattern": "qwen35-4b-vobs2906-angle_k5majority-sft-step987",
-      "display": "4B vobs2906 angle k5maj (stage-1)",
+      "display": "4B vobs2906 angle k5maj (obs-SFT)",
       "train_reasoning": "no",
       "group": "vobs2906_bakeoff",
       "note": "2906 dualform stage-1 SFT; angle (numeric) schema, K=5 majority; thinkOFF; step987 (val 0.0280).",
@@ -291,7 +291,7 @@
     },
     {
       "pattern": "qwen35-4b-vobs2906-categorical_k5severity-sft-step987",
-      "display": "4B vobs2906 cat k5sev (stage-1)",
+      "display": "4B vobs2906 cat k5sev (obs-SFT)",
       "train_reasoning": "no",
       "group": "vobs2906_bakeoff",
       "note": "2906 dualform stage-1 SFT; categorical schema, K=5 severity(union); thinkOFF; step987.",
@@ -302,7 +302,7 @@
     },
     {
       "pattern": "qwen35-4b-vobs2906-angle_k5severity-sft-step880",
-      "display": "4B vobs2906 angle k5sev (stage-1)",
+      "display": "4B vobs2906 angle k5sev (obs-SFT)",
       "train_reasoning": "no",
       "group": "vobs2906_bakeoff",
       "note": "2906 dualform stage-1 SFT; angle(numeric) schema, K=5 severity(union); thinkOFF; step987. [step880 = best saved; step987 lost to Ray-actor crash at step986]",

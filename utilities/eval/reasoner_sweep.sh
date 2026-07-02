@@ -37,6 +37,10 @@
 #                  Set a tag to instead write side-by-side files (board keeps the old numbers).
 #   ONLY           (optional) space-separated list of obs stems to limit the sweep (substring match).
 #   DRYRUN=1       (optional) print the commands without running.
+#   VO_TEST_1105 / VO_TEST_1806 / VO_N_1105 / VO_N_1806
+#                  (optional) per-cohort GT test dir + expected N overrides. The cohort is derived
+#                  per-obs from the _1105_/_1806_ tag in the obs filename (untagged -> 1105).
+#   MIN_COMPLETE   (optional) ABSOLUTE accept threshold override; default = 99% of the cohort's N.
 #   MAX_TOKENS     (optional) stage-2 generation budget. Default 16384. The reasoner's THINKING mode
 #                  is set at SERVE time (ENABLE_THINKING), NOT here — the sweep just queries whatever
 #                  is served. A thinkON reasoner needs the larger budget (16384 fits); a thinkoff one
@@ -49,7 +53,15 @@ PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
 VO_RUNS=/mnt/data/sgsilva/results/visual_obs/runs
 EVAL_PY="$VPT/eval/evaluate.py"
 EVAL_VO_PY="$VPT/eval/evaluate_vo.py"
-TEST_DIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test
+# ---- cohort-aware GT routing (2026-07-02) ----
+# The obs filename carries a cohort tag (_1105_/_1806_, from eval_all.sh VO_COHORT_TAG). The GT test
+# dir + expected N MUST follow that tag — a fixed TEST_DIR scored 1806 obs against 1105 human GT
+# (cohort mismatch, invalid stage2). Defaults below are per-cohort and env-overridable (mirrors
+# eval_all.sh's VO_TEST pattern); an untagged obs stem falls back to 1105 (legacy single-cohort).
+VO_TEST_1105="${VO_TEST_1105:-/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test}"
+VO_TEST_1806="${VO_TEST_1806:-/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test}"
+VO_N_1105="${VO_N_1105:-1181}"
+VO_N_1806="${VO_N_1806:-2260}"
 COMPILER=/home/sgsilva/utilities/eval/compile_eval_results.py
 MAX_TOKENS="${MAX_TOKENS:-16384}"
 # Client concurrency into evaluate.py. The default (10 for a --server-url run) overwhelms a HEAVY
@@ -134,6 +146,15 @@ for entry in "${MAP[@]}"; do
     echo "[skip] no obs yet: $(basename "$obs_file")  (run its VO eval first)"
     n_skip=$((n_skip+1)); continue
   fi
+  # cohort routing: derive GT test dir + expected N from the obs stem's cohort tag.
+  case "$obs_stem" in
+    *_1806*) cohort=1806; TEST_DIR="$VO_TEST_1806"; expect_n="$VO_N_1806" ;;
+    *)       cohort=1105; TEST_DIR="$VO_TEST_1105"; expect_n="$VO_N_1105" ;;
+  esac
+  if [[ ! -d "$TEST_DIR" ]]; then
+    echo "[FAIL] cohort $cohort test dir missing: $TEST_DIR — skipping $obs_stem (would score vs nothing)"
+    n_fail=$((n_fail+1)); continue
+  fi
   out="$VO_RUNS/stage2_${out_stem}_${think}${TAG_SUFFIX}.json"
   # PREFLIGHT (2026-06-22): per-obs, show how many samples WILL be recomputed (universe − already
   # done) WITHOUT running anything. universe = reps in the obs file; done = per_sample_results in the
@@ -162,6 +183,7 @@ PY
   echo ">>> [$obs_stem] obs -> stage2 (reasoner=${REASONER_TAG:-NEW, canonical/REPLACE})"
   echo "    in : $(basename "$obs_file")"
   echo "    out: $(basename "$out")"
+  echo "    GT : cohort $cohort -> $TEST_DIR (expect N=$expect_n)"
   cmd=( "$PY" "$EVAL_PY"
         --test-dataset-dir "$TEST_DIR"
         --two-stage --precomputed-visual-obs "$obs_file"
@@ -176,22 +198,23 @@ PY
   # reasoner → "Failed to get response" / a length-capped runaway → "Failed to parse scores")
   # are NOT persisted to per_sample_results, so each --resume re-queries ONLY the missing/failed
   # samples (evaluate.py:2419 — failures go to failed_samples[], never to existing_results). We
-  # want a FULL 1181 eval, so loop --resume until evaluated_samples==1181 or attempts exhaust.
+  # want a FULL eval, so loop --resume until evaluated_samples==the cohort's N or attempts exhaust.
   # Convergence guard: if an attempt adds ZERO new samples (n unchanged), stop — a stuck obs
-  # won't loop forever (distinct sentinel, never a silent <1181 pass). [[feedback_eval_gotchas]]
+  # won't loop forever (distinct sentinel, never a silent short pass). [[feedback_eval_gotchas]]
   # MIN_COMPLETE: the thinkON reasoner has an intrinsic ~10% token-repetition-collapse tail (verified
-  # 2026-06-23) — a handful of reps never parse, so demanding an exact 1181 grinds for hours on the
-  # last stochastic stragglers. Accept >=1170 (~99% coverage) as done; the board's VO Eval N column
-  # shows the real N/failed so a partial is never hidden. Keeps the STUCK guard. Tune via env.
-  min_complete="${MIN_COMPLETE:-1170}"
+  # 2026-06-23) — a handful of reps never parse, so demanding an exact N grinds for hours on the
+  # last stochastic stragglers. Default = 99% of the cohort's expected N (was fixed 1170 when the
+  # sweep was 1105-only); the board's VO Eval N column shows the real N/failed so a partial is never
+  # hidden. Keeps the STUCK guard. MIN_COMPLETE env overrides ABSOLUTE (careful in mixed-cohort runs).
+  min_complete="${MIN_COMPLETE:-$(( expect_n * 99 / 100 ))}"
   attempts="${RESUME_ATTEMPTS:-6}"; n=0; prev=-1; a=0
   while (( a < attempts )); do
     a=$((a+1))
-    echo "    [resume attempt $a/$attempts] (have $n/1181, accept >=$min_complete)"
+    echo "    [resume attempt $a/$attempts] (have $n/$expect_n, accept >=$min_complete)"
     ( cd "$VPT" && "${cmd[@]}" ) || echo "    [warn] evaluate.py returned non-zero on attempt $a (partial save still topped off below)"
     n=$("$PY" -c "import json;print(json.load(open('$out')).get('metadata',{}).get('evaluated_samples',0))" 2>/dev/null || echo 0)
     fl=$("$PY" -c "import json;print(json.load(open('$out')).get('metadata',{}).get('failed_samples',0))" 2>/dev/null || echo 0)
-    echo "    -> evaluated_samples=$n  failed=$fl  (target 1181, accept >=$min_complete)"
+    echo "    -> evaluated_samples=$n  failed=$fl  (target $expect_n, accept >=$min_complete)"
     (( n >= min_complete )) && break
     if [[ "$n" == "$prev" ]]; then
       echo "    [STUCK] attempt $a added 0 new samples (n=$n) — server may be down or these reps consistently fail. Stopping retries for this obs."
@@ -200,9 +223,9 @@ PY
     prev="$n"
   done
   if (( n >= min_complete )); then
-    echo "    [OK] $obs_stem accepted ($n/1181, >=$min_complete)"; n_ok=$((n_ok+1)); outputs+=("$out")
+    echo "    [OK] $obs_stem accepted ($n/$expect_n, >=$min_complete)"; n_ok=$((n_ok+1)); outputs+=("$out")
   else
-    echo "    [INCOMPLETE] $obs_stem stalled at $n/1181 (<$min_complete) after $a attempts — NOT counting as done (re-run later against a warm server to top off)."
+    echo "    [INCOMPLETE] $obs_stem stalled at $n/$expect_n (<$min_complete) after $a attempts — NOT counting as done (re-run later against a warm server to top off)."
     n_fail=$((n_fail+1))
   fi
   echo

@@ -142,6 +142,8 @@ FIELDS = [
     #   s2 = TWO-STAGE (a stage-2 reasoner consumes the model's stage-1 obs → severity). s2 are
     #   PLACEHOLDERS for the reasoner run — they fill from stage2_* files where present, else BLANK.
     "vo_s1_error_f1", "vo_s1_sample_f1", "vo_s1_severity_acc",
+    "_spacer_two_stage",   # blank spacer: single-stage │ ⎵ │ two-stage; carries the "Error Detection
+                           # (error-based)" band label over the two-stage block.
     "vo_s2_error_f1", "vo_s2_sample_f1", "vo_s2_severity_acc",
     #   visual-obs AGREEMENT vs HUMAN GT (single-stage obs; error_relevant.vs_gt.a.overall) —
     #   the comparable no-reasoner signal the old formatted CSV showed as its own band
@@ -210,7 +212,7 @@ HEADER_LABELS = {
     # blank spacer columns between metric groups (identity │ benchmarks │ VO │ aux │ metadata)
     "_spacer_identity": "", "_spacer_bench": "", "_spacer_vo": "", "_spacer_aux": "",
     "_spacer_prov_bench": "", "_spacer_prov_vo": "", "_spacer_prov_train": "",
-    "_spacer_detail": "",
+    "_spacer_detail": "", "_spacer_two_stage": "",
 }
 # Detail-block headers: the formatted-CSV column NAME (Acc/F1 Score/Precision/...) for each block
 # field, both stages. The stage is carried by the row-1 band (see GROUP_BANDS), so the column label
@@ -231,6 +233,7 @@ def _header(field: str) -> str:
 GROUP_BANDS = {
     "MMMU_val": "General benchmarks",
     "vo_s1_error_f1": "Visual-obs: SINGLE-STAGE (model emits severity directly)",
+    "_spacer_two_stage": "Error Detection (error-based)",
     "vo_s2_error_f1": "Visual-obs: TWO-STAGE (stage-1 obs -> stage-2 reasoner)",
     "vo_agree_errf1": "Visual-obs: AGREEMENT vs human GT (stage-1 obs + rules)",
     "aux_acc_weighted_3mod": "Aux tasks",
@@ -900,6 +903,20 @@ def _rows():
     if VO_RUNS.is_dir():
         ss_best: dict[tuple[str, str], int] = {}  # single-stage (model,thinking) -> winning _v2 tier
         ts_best: dict[tuple[str, str], int] = {}  # two-stage   (model,thinking) -> winning _v2 tier
+        # ---- COHORT-AWARE VO ROWS (2026-07-02) ----
+        # A model can be VO-evaluated on MORE THAN ONE test cohort (1105 vs 1806) — different test
+        # populations + different GT, so they are NOT one number. The obs/stage2 filenames carry a
+        # `_1105_`/`_1806_` tag (from eval_all.sh VO_COHORT_TAG). To surface BOTH as separate board
+        # rows, fold the cohort into the row key + display for cohort-tagged VO files ONLY. A file
+        # with NO cohort tag (every historical single-cohort run) is unchanged → still one row.
+        def _vo_cohort(fname: str) -> str:
+            if "_1806" in fname: return "1806"
+            if "_1105" in fname: return "1105"
+            return ""
+        def _vo_row_path(model_path: str, cohort: str) -> str:
+            # cohort-suffixed PSEUDO-path = the row key; only when a cohort tag is present so
+            # single-cohort models keep their bare path (one row, exactly as before).
+            return f"{model_path}__cohort_{cohort}" if cohort else model_path
         for vj in sorted(VO_RUNS.glob("*.json")):
             name = vj.name.lower()
             is_two = name.startswith("stage2_")
@@ -948,23 +965,35 @@ def _rows():
             # whose reasoner (metadata.model) is not the sft2812 fe_comparison ckpt.
             if is_two:
                 _rsnr = str((d.get("metadata") or {}).get("model", "")).lower()
-                if not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
+                # COHORT BAKE-OFF EXCEPTION (2026-07-02): a cohort-tagged vobs2906 stage2 run uses the
+                # BASE-27B reasoner (the 4-variant bake-off), not sft2812. Admit it — but ONLY when the
+                # file is cohort-tagged (so this never resurrects a historical base-27B stage2 for some
+                # other single-cohort model). Otherwise keep the sft2812-only board rule.
+                _is_cohort_bakeoff = bool(_vo_cohort(name)) and "vobs2906" in name
+                if not _is_cohort_bakeoff and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
                     continue   # not the sft2812 reasoner → historical, don't put it on the board
-                # Accept a near-complete sweep result (>= MIN_COMPLETE of 1181). The thinkON reasoner
-                # has an intrinsic ~10% token-repetition-collapse tail (verified 2026-06-23) — a
-                # handful of reps never parse, so requiring an exact 1181 would block an otherwise-good
-                # result forever. 1170 = ~99% coverage; the VO Eval N column shows the real N/failed so
-                # a partial is never hidden. A genuinely mid-write file (<1170) is still excluded.
+                # Accept a near-complete sweep result. Threshold scales with the cohort's N (1806 ≈
+                # 2260 vs 1105 = 1181) — a fixed 1170 would wrongly reject a full 1806 run's tail. Use
+                # 99% of the file's own expected N when cohort-tagged, else the legacy 1170 floor.
                 _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
-                if _eN < 1170:
+                _min = (2237 if _vo_cohort(name) == "1806" else 1169) if _is_cohort_bakeoff else 1170
+                if _eN < _min:
                     continue
-            key = (_norm_path(model_path), thinking)
+            _cohort = _vo_cohort(name)
+            _row_path = _vo_row_path(model_path, _cohort)
+            key = (_norm_path(_row_path), thinking)
             best = ts_best if is_two else ss_best
             tier = _vo_v2_tier(name)
             if best.get(key, -1) >= tier:
                 continue  # a better-or-equal file (within this pipeline) already populated this row
             best[key] = tier
-            r = get(model_path, thinking, display=vj.stem)
+            r = get(_row_path, thinking, display=vj.stem)
+            # cohort-tagged rows: show the REAL model path (not the pseudo-key) + a cohort suffix in
+            # the display, so the board reads e.g. "…cat k5maj (stage-1) [1806]".
+            if _cohort:
+                r["model"] = model_path
+                if not r.get("_cohort"):
+                    r["_cohort"] = _cohort
             def vm(k):
                 v = m.get(k)
                 return round(v * 100, 2) if isinstance(v, (int, float)) else ""
@@ -1008,7 +1037,9 @@ def _rows():
                 continue  # no curated token → skip (distinct sentinel, never a wrong join)
             thinking = "on" if "thinkon" in name else ("off" if "thinkoff" in name else "unknown")
             tier = 1 if name.endswith("_v2.json") else 0
-            key = (_norm_path(model_path), thinking)
+            _cohort = _vo_cohort(name)
+            _row_path = _vo_row_path(model_path, _cohort)  # cohort-aware, same as scored families
+            key = (_norm_path(_row_path), thinking)
             if agree_best.get(key, -1) >= tier:
                 continue
             try:
@@ -1019,7 +1050,11 @@ def _rows():
             if not ov:
                 continue  # no vs_gt path (e.g. an oracle-only agreement w/o human GT) → skip
             agree_best[key] = tier
-            r = get(model_path, thinking, display=aj.stem)
+            r = get(_row_path, thinking, display=aj.stem)
+            if _cohort:
+                r["model"] = model_path
+                if not r.get("_cohort"):
+                    r["_cohort"] = _cohort
             def am(k):
                 v = ov.get(k)
                 return round(v * 100, 2) if isinstance(v, (int, float)) else ""
