@@ -35,11 +35,24 @@ VPT_PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
 BENCH_DIR=/home/sgsilva/benchmarks
 BENCH_RUN=/home/sgsilva/benchmarks/scripts/run_eval.py
 BENCH_PY=/home/sgsilva/benchmarks/SIBench-VSR/.venv/bin/python
-VO_TEST=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test
+# VO cohort/schema are ENV-OVERRIDABLE (added 2026-07-01 for the vobs2906 4-variant bake-off, which
+# needs 2906 schema — categorical AND angle — on BOTH 1105 and 1806, none of which the hardcoded
+# 1105-categorical defaults cover). Override per (cohort, schema) leaf via the sbatch env contract:
+#   VO_TEST           test split dir            (1105: …/1105_not_reviewed/repetitions_test)
+#   VO_PROCESSED_DIR  obs-gen processed dir     (1105: the test-only symlink set; 1806: the processed dir)
+#   VO_GT_CAT         human-GT for agreement    (per cohort/schema oracle)
+#   VO_SCHEMA         --visual-obs-variant      (categorical|angle; default categorical)
+#   VO_OBS_FILE       explicit --visual-obs-file (2906 schema JSON; empty => resolve from variant)
+#   VO_SESSIONS_FROM  --sessions-from filter    (1806 test-scoping; empty for 1105 which uses its symlink dir)
+# All default to the historical 1105-categorical values so existing board runs are unchanged.
+VO_TEST="${VO_TEST:-/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test}"
 VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visual_obs_runs/ back-compat-symlinked)
 # GT visual-obs (human) for the agreement stage — per-rep entries carry `human_error_severities`
 # (the HUMAN ground truth) + folder_name/repetition_id. Agreement = model-vs-GT (NOT vs oracle).
-VO_GT_CAT=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed_visual_obs/oracle/oracle_397b_1105_categorical_test.json
+VO_GT_CAT="${VO_GT_CAT:-/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed_visual_obs/oracle/oracle_397b_1105_categorical_test.json}"
+VO_SCHEMA="${VO_SCHEMA:-categorical}"       # --visual-obs-variant (categorical|angle)
+VO_OBS_FILE="${VO_OBS_FILE:-}"              # explicit --visual-obs-file (2906 schema); empty => resolve from variant
+VO_SESSIONS_FROM="${VO_SESSIONS_FROM:-}"    # --sessions-from (1806 test-scoping); empty => none (1105)
 AGREE_PY=/home/sgsilva/vlm-post-training/visual_obs/analyze_observation_agreement.py   # moved from data_preparation/ (reorg)
 # Agreement needs the model's STAGE-1 OBSERVATIONS (shape {ex:{rep:{parsed_answers}}}), NOT the
 # single-stage SEVERITY json evaluate.py emits ({metadata,metrics,per_sample_results:[...]}) —
@@ -57,9 +70,10 @@ VO_OBS_GEN=/home/sgsilva/vlm-post-training/visual_obs/generate_visual_observatio
 # data_preparation/results/evaluate_v2.py), co-located with the evaluate.py it modifies.
 # Agreement (stage-1, index-based) does NOT need it.
 VO_EVAL_V2=/home/sgsilva/vlm-post-training/eval/evaluate_vo.py
-VO_PROCESSED_DIR=/mnt/data/sgsilva/datasets/1105/1105_test_processed_symlinks   # moved under 1105/ (was datasets/ root)
+VO_PROCESSED_DIR="${VO_PROCESSED_DIR:-/mnt/data/sgsilva/datasets/1105/1105_test_processed_symlinks}"   # moved under 1105/ (was datasets/ root)
 # (the categorical question file resolves automatically from --visual-obs-variant categorical →
-#  repo-root visual_obs/visual_observations_categorical.json; no explicit --visual-obs-file needed.)
+#  repo-root visual_obs/visual_observations_categorical.json; no explicit --visual-obs-file needed.
+#  For 2906 schema pass VO_OBS_FILE=…/visual_obs/visual_observations_{categorical,angle}_2906.json.)
 
 # ---- args ----
 MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1"
@@ -424,7 +438,7 @@ PY
     # ---- OUTPUT MANIFEST: every file this run WILL create, with a per-file status so a collision is
     # visible BEFORE launch (2026-06-22). Stem = same derivation as the run (full served basename).
     # At preflight SERVED_ID may be unset (server not up for --serve) → fall back to MODEL/RUN_ID.
-    _pf_stem="$(basename "${SERVED_ID:-${RUN_ID:-$MODEL}}")"
+    _pf_stem="$(basename "${SERVED_ID:-${RUN_ID:-$MODEL}}")"; [[ -n "${VO_COHORT_TAG:-}" ]] && _pf_stem="${_pf_stem}_${VO_COHORT_TAG}"
     _pf_real="$("$VPT_PY" -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$MODEL" 2>/dev/null)"
     echo "  visualobs OUTPUT MANIFEST (stem='$_pf_stem') — FULL PATHS so you can inspect/cat them:"
     _pf_made=()
@@ -529,6 +543,12 @@ if have_stage visualobs; then
   # two and the 27B run overwrote the 4B's VO (data loss, 2026-06-22). The full basename is already
   # unique — pmartins resolves to a unique _ext/<run_id> symlink, not 'hf'. Keep the full basename.
   stem="$(basename "$SERVED_ID")"
+  # VO_COHORT_TAG (2026-07-01): the obs/singlestage/agreement filenames derive from $stem (the served
+  # model basename) — which is IDENTICAL for two cohorts of the same model (e.g. the vobs2906 bake-off
+  # ran each 4B on BOTH 1105 and 1806). Without a cohort suffix the second cohort's run CLOBBERS the
+  # first's obs (cohort contamination). Append the tag so each cohort gets its own file:
+  #   obs_<model>_1105_thinkoff.json vs obs_<model>_1806_thinkoff.json. Empty => unchanged (single-cohort).
+  [[ -n "${VO_COHORT_TAG:-}" ]] && stem="${stem}_${VO_COHORT_TAG}"
   vmax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
   mkdir -p "$VO_OUT"
   # ---- COLLISION GUARD (defense-in-depth, 2026-06-22): never overwrite ANOTHER model's VO file.
@@ -598,12 +618,26 @@ if have_stage visualobs; then
       oargs=( "$VPT_PY" "$VO_OBS_GEN"
         --model "$SERVED_ID" --server-url "$BASE_URL"
         --processed-dir "$VO_PROCESSED_DIR"
-        --visual-obs-variant categorical
+        --visual-obs-variant "$VO_SCHEMA"
         --max-tokens "$omax" --max-workers 16
         --output-file "$obs_out" --resume )
+      # 2906 schema: pass the explicit question file (categorical/angle _2906.json) — else the
+      # generator resolves the OLD repo-root categorical file from the variant name. (feedback: 2906)
+      [[ -n "$VO_OBS_FILE" ]] && oargs+=( --visual-obs-file "$VO_OBS_FILE" )
+      # 1806 test-scoping: restrict the processed-dir walk to the test split's session_ids (added
+      # 2026-06-30, symmetric with --exclude-csv). Empty for 1105 (its symlink dir is already scoped).
+      [[ -n "$VO_SESSIONS_FROM" ]] && oargs+=( --sessions-from "$VO_SESSIONS_FROM" )
       [[ "$THINKING" == off ]] && oargs+=( --disable-thinking )
       [[ -n "$MAX_SAMPLES" ]] && oargs+=( --limit "$MAX_SAMPLES" )
       if ( cd "$VPT" && "${oargs[@]}" ); then
+        # obs-gen (the reasoner input) ALWAYS runs above; the agreement COMPARISON below is skippable
+        # (VO_SKIP_AGREEMENT=1) for cohorts with no schema-matched GT — e.g. 1105 has no 2906 oracle,
+        # so comparing 2906 model-obs against the old-schema GT would be a mismatched, misleading number.
+        # Added 2026-07-01 for the vobs2906 bake-off (skip on 1105, run on 1806 vs the GT-on oracle).
+        if [[ "${VO_SKIP_AGREEMENT:-0}" == 1 ]]; then
+          echo "[agreement] SKIP: VO_SKIP_AGREEMENT=1 (obs-gen kept; no schema-matched GT for this cohort)" >&2
+          STAGE_RESULTS+=("agreement: SKIPPED (VO_SKIP_AGREEMENT=1); obs-gen OK -> $obs_out")
+        else
         echo ">>> STAGE: agreement — step 2/2: obs vs human GT"
         agree_out="$VO_OUT/agreement_${stem}_think${THINKING}.json"
         aargs=( "$VPT_PY" "$AGREE_PY"
@@ -613,6 +647,7 @@ if have_stage visualobs; then
         ( cd "$VPT" && "${aargs[@]}" ) \
           && STAGE_RESULTS+=("agreement: OK -> $agree_out") \
           || STAGE_RESULTS+=("agreement: FAILED")
+        fi
       else
         STAGE_RESULTS+=("agreement: FAILED (obs generation)")
       fi

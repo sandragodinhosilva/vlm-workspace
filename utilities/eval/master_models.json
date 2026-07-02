@@ -6,7 +6,7 @@
     "  pattern        = case-insensitive SUBSTRING matched vs a row's served PATH or display;",
     "                   a row is KEPT iff it matches any pattern (first match wins for display/treas).",
     "  display        = clean name shown in the board's `display` column.",
-    "  train_reasoning= yes|no|NA \u2014 TRAINED on reasoning data (curated; not in eval_matrix).",
+    "  train_reasoning= yes|no|NA — TRAINED on reasoning data (curated; not in eval_matrix).",
     "  group          = ordering bucket; ROWS APPEAR IN THIS FILE'S ORDER, and a BLANK ROW is",
     "                   inserted between groups in the board CSV. Rows within a group keep file order",
     "                   (e.g. thinkoff/thinkon pairs).",
@@ -63,7 +63,7 @@
       "display": "Qwen3.5-397B (distillation target; plain obs not oracle)",
       "train_reasoning": "NA",
       "group": "oracle_397b",
-      "note": "distillation target. Board vo_s2 = 47.52 (sft2812 reasoner over 397B PLAIN obs); single-stage plain VO err-F1 45.21. NOTE: the historical 0.788 'oracle ceiling' (base-27B reasoner over 397B ORACLE obs) is EXCLUDED by the sft2812-only s2 policy \u2014 it is NOT what this row shows. HEAVY serve (TP8)",
+      "note": "distillation target. Board vo_s2 = 47.52 (sft2812 reasoner over 397B PLAIN obs); single-stage plain VO err-F1 45.21. NOTE: the historical 0.788 'oracle ceiling' (base-27B reasoner over 397B ORACLE obs) is EXCLUDED by the sft2812-only s2 policy — it is NOT what this row shows. HEAVY serve (TP8)",
       "vo_path": "/mnt/data/shared/models/Qwen3.5-397B-A17B",
       "vo_tokens": [
         "oracle_397b_categorical",
@@ -75,7 +75,7 @@
       "display": "Oracle 397B visual-obs cat (ceiling)",
       "train_reasoning": "NA",
       "group": "oracle_397b",
-      "note": "CEILING/reference row: the 397B ORACLE visual-obs (categorical) scored vs HUMAN GT \u2014 the agreement side=b (b=oracle) constant present in every testonly agreement file. Agree-F1 0.8608 / Acc 0.9177 / Prec 0.8619 / Rec 0.8597. NOT a deployable model: it's the oracle-obs-vs-human upper bound the SFT models are distilled toward. Distinct from the 397B-plain row above (that's side=a, the model run plain, agree-F1 33.07).",
+      "note": "CEILING/reference row: the 397B ORACLE visual-obs (categorical) scored vs HUMAN GT — the agreement side=b (b=oracle) constant present in every testonly agreement file. Agree-F1 0.8608 / Acc 0.9177 / Prec 0.8619 / Rec 0.8597. NOT a deployable model: it's the oracle-obs-vs-human upper bound the SFT models are distilled toward. Distinct from the 397B-plain row above (that's side=a, the model run plain, agree-F1 33.07).",
       "oracle_ceiling": true,
       "vo_agree_side": "b",
       "vo_agree_source": "agreement_oracle_obs_cat_union5_step339_testonly_thinkoff.json"
@@ -160,7 +160,7 @@
       "display": "27B oracle-cat reasoning ep3",
       "train_reasoning": "yes",
       "group": "vo_reasoning",
-      "note": "reasoning CONTRAST line, thinkON only (thinkoff row dropped \u2014 degenerate trace-suppressed collapse, agree 10.81). UNDER-performs answer-only on F1.",
+      "note": "reasoning CONTRAST line, thinkON only (thinkoff row dropped — degenerate trace-suppressed collapse, agree 10.81). UNDER-performs answer-only on F1.",
       "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-reasoning-step330",
       "vo_tokens": [
         "reasoning_oracleobs_cat_ep3",
@@ -266,6 +266,50 @@
       "vo_tokens": [
         "grpo_step492"
       ]
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-categorical_k5majority-sft-step987",
+      "display": "4B vobs2906 cat k5maj (stage-1)",
+      "train_reasoning": "no",
+      "group": "vobs2906_bakeoff",
+      "note": "2906 dualform stage-1 SFT; categorical schema, K=5 majority; thinkOFF; step987 (val 0.0159). 4-variant bake-off vs angle x maj/sev.",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-categorical_k5majority-sft-step987"
+      ],
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-categorical_k5majority-sft-step987"
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-angle_k5majority-sft-step987",
+      "display": "4B vobs2906 angle k5maj (stage-1)",
+      "train_reasoning": "no",
+      "group": "vobs2906_bakeoff",
+      "note": "2906 dualform stage-1 SFT; angle (numeric) schema, K=5 majority; thinkOFF; step987 (val 0.0280).",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-angle_k5majority-sft-step987"
+      ],
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-angle_k5majority-sft-step987"
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-categorical_k5severity-sft-step987",
+      "display": "4B vobs2906 cat k5sev (stage-1)",
+      "train_reasoning": "no",
+      "group": "vobs2906_bakeoff",
+      "note": "2906 dualform stage-1 SFT; categorical schema, K=5 severity(union); thinkOFF; step987.",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-categorical_k5severity-sft-step987"
+      ],
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-categorical_k5severity-sft-step987"
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-angle_k5severity-sft-step880",
+      "display": "4B vobs2906 angle k5sev (stage-1)",
+      "train_reasoning": "no",
+      "group": "vobs2906_bakeoff",
+      "note": "2906 dualform stage-1 SFT; angle(numeric) schema, K=5 severity(union); thinkOFF; step987. [step880 = best saved; step987 lost to Ray-actor crash at step986]",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-angle_k5severity-sft-step880"
+      ],
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-angle_k5severity-sft-step880"
     }
   ],
   "vo_exclude": [
