@@ -1,0 +1,341 @@
+{
+  "_comment": [
+    "Curated model allowlist + display/provenance for the LIVE eval_master* files (new-era board).",
+    "Full historical dump frozen under /mnt/data/sgsilva/results/master/v1/.",
+    "Each entry: {pattern, display?, train_reasoning?, group?, note?}.",
+    "  pattern        = case-insensitive SUBSTRING matched vs a row's served PATH or display;",
+    "                   a row is KEPT iff it matches any pattern (first match wins for display/treas).",
+    "  display        = clean name shown in the board's `display` column.",
+    "  train_reasoning= yes|no|NA — TRAINED on reasoning data (curated; not in eval_matrix).",
+    "  group          = ordering bucket; ROWS APPEAR IN THIS FILE'S ORDER, and a BLANK ROW is",
+    "                   inserted between groups in the board CSV. Rows within a group keep file order",
+    "                   (e.g. thinkoff/thinkon pairs).",
+    "  note           = free-text rationale (not shown on the board).",
+    "  vo_path        = served checkpoint PATH this model's VO/obs/stage2 files resolve to. SINGLE",
+    "                   SOURCE OF TRUTH for the visual-obs filename->model join: the compiler builds",
+    "                   VO_FILE_TO_MODEL from these, and reasoner_sweep.sh derives its obs->stage2",
+    "                   targets from them (no hardcoded model lists in scripts). Omit for a model with",
+    "                   no VO checkpoint (bare baselines resolve via their own tokens in the compiler).",
+    "Edit + re-run:  vlm-post-training-home-venv/bin/python compile_eval_results.py"
+  ],
+  "models": [
+    {
+      "pattern": "/mnt/data/shared/models/qwen3.5-4b",
+      "display": "Qwen3.5-4B (baseline)",
+      "train_reasoning": "NA",
+      "group": "baseline_4b",
+      "note": "bare upstream; benchmarks+VO REUSED, only 1506 aux re-run",
+      "vo_tokens": [
+        "baseline_qwen35_4b",
+        "qwen3.5-4b"
+      ],
+      "vo_path": "/mnt/data/shared/models/Qwen3.5-4B"
+    },
+    {
+      "pattern": "baseline_4b_newpipeline",
+      "display": "Qwen3.5-4B (baseline)",
+      "train_reasoning": "NA",
+      "group": "baseline_4b",
+      "note": "fresh 1506 aux run-id (job 93607)"
+    },
+    {
+      "pattern": "/mnt/data/shared/models/qwen3.5-27b",
+      "display": "Qwen3.5-27B (baseline)",
+      "train_reasoning": "NA",
+      "group": "baseline_27b",
+      "note": "bare upstream; benchmarks+VO REUSED, only 1506 aux re-run",
+      "vo_tokens": [
+        "baseline_qwen35_27b_cat",
+        "baseline_qwen35_27b",
+        "qwen3.5-27b"
+      ],
+      "vo_path": "/mnt/data/shared/models/Qwen3.5-27B"
+    },
+    {
+      "pattern": "baseline_27b_newpipeline",
+      "display": "Qwen3.5-27B (baseline)",
+      "train_reasoning": "NA",
+      "group": "baseline_27b",
+      "note": "fresh 1506 aux run-id (when nodes free)"
+    },
+    {
+      "pattern": "shared/models/qwen3.5-397b",
+      "display": "Qwen3.5-397B (distillation target; plain obs not oracle)",
+      "train_reasoning": "NA",
+      "group": "oracle_397b",
+      "note": "distillation target. Board vo_s2 = 47.52 (sft2812 reasoner over 397B PLAIN obs); single-stage plain VO err-F1 45.21. NOTE: the historical 0.788 'oracle ceiling' (base-27B reasoner over 397B ORACLE obs) is EXCLUDED by the sft2812-only s2 policy — it is NOT what this row shows. HEAVY serve (TP8)",
+      "vo_path": "/mnt/data/shared/models/Qwen3.5-397B-A17B",
+      "vo_tokens": [
+        "oracle_397b_categorical",
+        "qwen3.5-397b-a17b"
+      ]
+    },
+    {
+      "pattern": "ORACLE_CEILING_397B",
+      "display": "Oracle 397B visual-obs cat (ceiling)",
+      "train_reasoning": "NA",
+      "group": "oracle_397b",
+      "note": "CEILING/reference row: the 397B ORACLE visual-obs (categorical) scored vs HUMAN GT — the agreement side=b (b=oracle) constant present in every testonly agreement file. Agree-F1 0.8608 / Acc 0.9177 / Prec 0.8619 / Rec 0.8597. NOT a deployable model: it's the oracle-obs-vs-human upper bound the SFT models are distilled toward. Distinct from the 397B-plain row above (that's side=a, the model run plain, agree-F1 33.07).",
+      "oracle_ceiling": true,
+      "vo_agree_side": "b",
+      "vo_agree_source": "agreement_oracle_obs_cat_union5_step339_testonly_thinkoff.json"
+    },
+    {
+      "pattern": "qwen35-4b-mix-12k-1506-sft-step1299",
+      "display": "4B mix-12k-1506 SFT step1299",
+      "train_reasoning": "no",
+      "group": "mix_4b",
+      "note": "experimental aux-mix SFT (job 94512)",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-mix-12k-1506-sft-step1299",
+      "vo_tokens": [
+        "qwen35-4b-mix-12k-1506-sft-step1299",
+        "mix-12k-1506-sft-step1299"
+      ],
+      "train_sample_count": "13887"
+    },
+    {
+      "pattern": "qwen35-4b-mix-12k-1506-grpo-thinkoff-step150",
+      "display": "4B mix-12k-1506 GRPO step150",
+      "train_reasoning": "no",
+      "group": "mix_4b",
+      "note": "GRPO on verifiable subset (7794 rows) from SFT step1299; +7.2 internal val (0.632->0.704); job 100841",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-mix-12k-1506-grpo-thinkoff-step150",
+      "vo_tokens": [
+        "qwen35-4b-mix-12k-1506-grpo-thinkoff-step150",
+        "mix-12k-1506-grpo-thinkoff-step150"
+      ],
+      "train_sample_count": "7794"
+    },
+    {
+      "pattern": "oracle-obs-cat-1105-step357",
+      "display": "4B oracle-cat ep3",
+      "train_reasoning": "no",
+      "group": "vo_4b",
+      "note": "small-model contender (err-F1 0.473); answer-only",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-oracle-obs-cat-1105-step357",
+      "vo_tokens": [
+        "oracle_obs_cat_step357",
+        "oracle-obs-cat-1105-step357"
+      ],
+      "train_sample_count": "3814"
+    },
+    {
+      "pattern": "models/qwen3.5-27b-mix-image10k-text5k-video10k-0804-step768",
+      "display": "27B mix img10k/txt5k/vid10k-0804 step768",
+      "train_reasoning": "no",
+      "group": "mix_27b",
+      "note": "experimental aux-mix SFT, TP2 (job 94511); pattern is path-anchored to NOT swallow the -linear-085 merge variant",
+      "vo_path": "/mnt/data/sgsilva/models/qwen3.5-27b-mix-image10k-text5k-video10k-0804-step768",
+      "vo_tokens": [
+        "qwen3.5-27b-mix-image10k-text5k-video10k-0804-step768"
+      ]
+    },
+    {
+      "pattern": "qwen35-27b-mix-12k-1506-sft-step1299",
+      "display": "27B mix-12k-1506 SFT step1299",
+      "train_reasoning": "no",
+      "group": "mix_27b",
+      "note": "27B aux-mix SFT (distinct from the 4B mix-12k row)",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-mix-12k-1506-sft-step1299",
+      "vo_tokens": [
+        "qwen35-27b-mix-12k-1506-sft-step1299"
+      ],
+      "train_sample_count": "13887"
+    },
+    {
+      "pattern": "qwen35-27b-mix-reasoning-12k-1506-sft-step1299",
+      "display": "27B mix-reas-12k-1506 SFT step1299",
+      "train_reasoning": "yes",
+      "group": "mix_27b",
+      "note": "27B reasoning aux-mix SFT, thinkON",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-mix-reasoning-12k-1506-sft-step1299",
+      "vo_tokens": [
+        "qwen35-27b-mix-reasoning-12k-1506-sft-step1299",
+        "mix-reasoning-12k-1506-sft-step1299"
+      ],
+      "train_sample_count": "13887"
+    },
+    {
+      "pattern": "oracle-obs-cat-reasoning-step330",
+      "display": "27B oracle-cat reasoning ep3",
+      "train_reasoning": "yes",
+      "group": "vo_reasoning",
+      "note": "reasoning CONTRAST line, thinkON only (thinkoff row dropped — degenerate trace-suppressed collapse, agree 10.81). UNDER-performs answer-only on F1.",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-reasoning-step330",
+      "vo_tokens": [
+        "reasoning_oracleobs_cat_ep3",
+        "reasoning_oracleobs_cat_step330"
+      ],
+      "keep_thinking": "on",
+      "train_sample_count": "3813"
+    },
+    {
+      "pattern": "oracle-obs-cat-plus-llm-fms-step1785",
+      "display": "27B oracle-cat+LLM-FMS ep3",
+      "train_reasoning": "no",
+      "group": "vo_llmfms",
+      "note": "+LLM-FMS additive (err-F1 0.485); answer-only",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-plus-llm-fms-step1785",
+      "vo_tokens": [
+        "oracle-obs-cat-plus-llm-fms-step1785",
+        "union_oracleobs_llmfms_ep3"
+      ],
+      "train_sample_count": "20054"
+    },
+    {
+      "pattern": "oracle-obs-cat-union5-step339",
+      "display": "27B union5-cat ep3",
+      "train_reasoning": "no",
+      "group": "vo_union5",
+      "note": "BEST DEPLOYABLE VO (err-F1 0.504); answer-only",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-union5-step339",
+      "vo_tokens": [
+        "oracle_obs_cat_union5_step339",
+        "oracle-obs-cat-union5-step339"
+      ],
+      "train_sample_count": "3814"
+    },
+    {
+      "pattern": "oracle-obs-merged-1805-step2558",
+      "display": "27B merged-1805 ep1",
+      "train_reasoning": "no",
+      "group": "vo_union5",
+      "note": "next data scale-up (86k), UNTESTED; answer-only",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-step2558",
+      "vo_tokens": [
+        "oracle_obs_merged_1805_step2558",
+        "oracle-obs-merged-1805-step2558"
+      ],
+      "train_sample_count": "86172"
+    },
+    {
+      "pattern": "oracle-obs-merged-1805-binary-aux12k-union-sft-step4127",
+      "display": "27B aux12k-union SFT step4127",
+      "train_reasoning": "no",
+      "group": "aux12k_union",
+      "note": "1805_binary + aux12k union SFT (job 94484)",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-sft-step4127",
+      "vo_tokens": [
+        "oracle-obs-merged-1805-binary-aux12k-union-sft-step4127"
+      ],
+      "train_sample_count": "139034"
+    },
+    {
+      "pattern": "oracle-obs-merged-1805-binary-aux12k-union-reasoning-sft-step4125",
+      "display": "27B aux12k-union REASONING SFT step4125",
+      "train_reasoning": "yes",
+      "group": "aux12k_union_reasoning",
+      "note": "1805_binary + aux12k union REASONING SFT (job 97856); reasoning variant of step4127 / EXP-A",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-reasoning-sft-step4125",
+      "vo_tokens": [
+        "oracle-obs-merged-1805-binary-aux12k-union-reasoning-sft-step4125"
+      ],
+      "train_sample_count": "138964"
+    },
+    {
+      "pattern": "oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751",
+      "display": "27B aux12k-union small25 SFT step751",
+      "train_reasoning": "no",
+      "group": "aux12k_union",
+      "note": "small25 variant of 1805_binary+aux12k union SFT (UNDER-TRAINED, step751). VO agree-F1 11.49 is REAL not an artifact: collapsed to always-'no-error' (recall 6.5%, fires 163/1212); s1 also low (err-F1 25.48/sample-F1 28.86). Use the full step4127 (agree 46.7); small25 is the degenerate short run.",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751",
+      "vo_tokens": [
+        "oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751"
+      ],
+      "train_sample_count": "139034"
+    },
+    {
+      "pattern": "sft_step2812",
+      "display": "27B SFT fe-cmp3-mix2005 step2812 (pmartins)",
+      "train_reasoning": "yes",
+      "group": "newpipeline",
+      "note": "new-pipeline; fe_comparison_3_mix_reas_12k_full_2005",
+      "vo_path": "/mnt/data/pmartins/vlm_ckpts/sft_qwen_35_27b_1805_not_reviewed_diverse_reasoning_merged_rep_fe_comparison_3_mix_reas_12k_full_2005/step_2812/hf",
+      "vo_tokens": [
+        "sft_step2812",
+        "hf_singlestage"
+      ]
+    },
+    {
+      "pattern": "grpo_step492",
+      "display": "27B GRPO fe-cmp3-mix2005 step492 (pmartins)",
+      "train_reasoning": "yes",
+      "group": "newpipeline",
+      "note": "new-pipeline; same mix + aux_12k",
+      "vo_path": "/mnt/data/pmartins/vlm_ckpts/grpo_sft_qwen_35_27b_1805_not_reviewed_diverse_reasoning_merged_rep_fe_comparison_3_mix_reas_12k_full_2005_dcs_101_multiplicative_format_03020401_ds_101_vanilla_02505025_c_0802_aux_12k/step_492/hf",
+      "vo_tokens": [
+        "grpo_step492"
+      ]
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-categorical_k5majority-sft-step987",
+      "display": "4B vobs2906 cat k5maj (obs-SFT)",
+      "train_reasoning": "no",
+      "group": "vobs2906_bakeoff",
+      "note": "2906 dualform stage-1 SFT; categorical schema, K=5 majority; thinkOFF; step987 (val 0.0159). 4-variant bake-off vs angle x maj/sev.",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-categorical_k5majority-sft-step987"
+      ],
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-categorical_k5majority-sft-step987"
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-angle_k5majority-sft-step987",
+      "display": "4B vobs2906 angle k5maj (obs-SFT)",
+      "train_reasoning": "no",
+      "group": "vobs2906_bakeoff",
+      "note": "2906 dualform stage-1 SFT; angle (numeric) schema, K=5 majority; thinkOFF; step987 (val 0.0280).",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-angle_k5majority-sft-step987"
+      ],
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-angle_k5majority-sft-step987"
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-categorical_k5severity-sft-step987",
+      "display": "4B vobs2906 cat k5sev (obs-SFT)",
+      "train_reasoning": "no",
+      "group": "vobs2906_bakeoff",
+      "note": "2906 dualform stage-1 SFT; categorical schema, K=5 severity(union); thinkOFF; step987.",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-categorical_k5severity-sft-step987"
+      ],
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-categorical_k5severity-sft-step987"
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-angle_k5severity-sft-step880",
+      "display": "4B vobs2906 angle k5sev (obs-SFT)",
+      "train_reasoning": "no",
+      "group": "vobs2906_bakeoff",
+      "note": "2906 dualform stage-1 SFT; angle(numeric) schema, K=5 severity(union); thinkOFF; step987. [step880 = best saved; step987 lost to Ray-actor crash at step986]",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-angle_k5severity-sft-step880"
+      ],
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-angle_k5severity-sft-step880"
+    },
+    {
+      "pattern": "qwen35-4b-vobs2906-categorical_k5majority-reasoning-sft-step969",
+      "display": "4B vobs2906 cat k5maj REASONING",
+      "train_reasoning": "yes",
+      "group": "vobs2906_reasoning",
+      "note": "reasoning-arm twin of qwen35-4b-vobs2906-categorical_k5majority-sft-step987; SAME data/config/3ep/lr5e-6/gbs32, ONLY delta = train dataset has populated <think> (1806_..._reasoning_judged, 10367 rows) + thinkON serve/eval. Job 107004, TP4xDP2 (8 GPU). Target to beat: twin's 52.56 vs-human AgreeF1 (1806 test, thinkoff).",
+      "vo_tokens": [
+        "qwen35-4b-vobs2906-categorical_k5majority-reasoning-sft-step969"
+      ],
+      "keep_thinking": "on",
+      "vo_path": "/mnt/data/sgsilva/models/qwen35-4b-vobs2906-categorical_k5majority-reasoning-sft-step969",
+      "train_sample_count": "10367"
+    }
+  ],
+  "vo_exclude": [
+    "obsguide",
+    "textonly",
+    "plus_mix12k",
+    "_a_ep3",
+    "_b_ep3",
+    "_c_ep3",
+    "_d_ep3",
+    "baseline_ep3",
+    "reasoner-self",
+    "union5_decode",
+    "union_oracleobs_llmfms"
+  ]
+}

@@ -142,8 +142,7 @@ FIELDS = [
     #   s2 = TWO-STAGE (a stage-2 reasoner consumes the model's stage-1 obs → severity). s2 are
     #   PLACEHOLDERS for the reasoner run — they fill from stage2_* files where present, else BLANK.
     "vo_s1_error_f1", "vo_s1_sample_f1", "vo_s1_severity_acc",
-    "_spacer_two_stage",   # blank spacer: single-stage │ ⎵ │ two-stage; carries the "Error Detection
-                           # (error-based)" band label over the two-stage block.
+    "_spacer_two_stage",   # blank spacer: single-stage │ ⎵ │ two-stage
     "vo_s2_error_f1", "vo_s2_sample_f1", "vo_s2_severity_acc",
     #   visual-obs AGREEMENT vs HUMAN GT (single-stage obs; error_relevant.vs_gt.a.overall) —
     #   the comparable no-reasoner signal the old formatted CSV showed as its own band
@@ -233,7 +232,6 @@ def _header(field: str) -> str:
 GROUP_BANDS = {
     "MMMU_val": "General benchmarks",
     "vo_s1_error_f1": "Visual-obs: SINGLE-STAGE (model emits severity directly)",
-    "_spacer_two_stage": "Error Detection (error-based)",
     "vo_s2_error_f1": "Visual-obs: TWO-STAGE (stage-1 obs -> stage-2 reasoner)",
     "vo_agree_errf1": "Visual-obs: AGREEMENT vs human GT (stage-1 obs + rules)",
     "aux_acc_weighted_3mod": "Aux tasks",
@@ -970,13 +968,22 @@ def _rows():
                 # file is cohort-tagged (so this never resurrects a historical base-27B stage2 for some
                 # other single-cohort model). Otherwise keep the sft2812-only board rule.
                 _is_cohort_bakeoff = bool(_vo_cohort(name)) and "vobs2906" in name
-                if not _is_cohort_bakeoff and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
+                # EXP-B NATIVE-REASONER EXCEPTION (2026-07-06): the EXP-B stage-2 ondemand model IS
+                # its own reasoner (single-pass, GT-obs arm on the test BUILD: 2906 k5majority obs
+                # inlined in a byte-exact trained prompt). metadata.model = the EXP-B ckpt itself,
+                # so the sft2812-only rule would drop it. Admit ONLY cohort-tagged expb gtobsbuild
+                # files; vo_s2_source/vo_s2_reasoner columns disambiguate the arm on the board.
+                _is_expb_native = bool(_vo_cohort(name)) and "expb" in name and "gtobsbuild" in name
+                if not (_is_cohort_bakeoff or _is_expb_native) and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
                     continue   # not the sft2812 reasoner → historical, don't put it on the board
                 # Accept a near-complete sweep result. Threshold scales with the cohort's N (1806 ≈
                 # 2260 vs 1105 = 1181) — a fixed 1170 would wrongly reject a full 1806 run's tail. Use
                 # 99% of the file's own expected N when cohort-tagged, else the legacy 1170 floor.
+                # EXP-B gtobsbuild runs on the obs-covered BUILD (N=2157, = 2260 − 103 no-GT-obs reps)
+                # → floor 2135 (99% of 2157), not the full-cohort 2237.
                 _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
-                _min = (2237 if _vo_cohort(name) == "1806" else 1169) if _is_cohort_bakeoff else 1170
+                _min = (2135 if _is_expb_native else
+                        (2237 if _vo_cohort(name) == "1806" else 1169) if _is_cohort_bakeoff else 1170)
                 if _eN < _min:
                     continue
             _cohort = _vo_cohort(name)
