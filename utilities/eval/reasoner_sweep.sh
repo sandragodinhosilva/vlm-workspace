@@ -147,10 +147,21 @@ for entry in "${MAP[@]}"; do
     n_skip=$((n_skip+1)); continue
   fi
   # cohort routing: derive GT test dir + expected N from the obs stem's cohort tag.
-  case "$obs_stem" in
-    *_1806*) cohort=1806; TEST_DIR="$VO_TEST_1806"; expect_n="$VO_N_1806" ;;
-    *)       cohort=1105; TEST_DIR="$VO_TEST_1105"; expect_n="$VO_N_1105" ;;
-  esac
+  # 2026-07-06 audit fix (P2.2/P2.7): the old bare `*) cohort=1105` default silently routed ANY
+  # untagged-for-1806 stem to 1105 GT — including a future THIRD cohort's obs (e.g. a `_1907_` tag),
+  # which would then be scored against the WRONG ground truth with no warning. Detect a recognizable
+  # but UNWIRED 4-digit cohort tag first and hard-fail on it; only a genuinely untagged (no 4-digit
+  # tag at all — the legacy single-cohort naming) stem falls through to the 1105 default.
+  if [[ "$obs_stem" =~ _1806(_|$) ]]; then
+    cohort=1806; TEST_DIR="$VO_TEST_1806"; expect_n="$VO_N_1806"
+  elif [[ "$obs_stem" =~ _1105(_|$) ]]; then
+    cohort=1105; TEST_DIR="$VO_TEST_1105"; expect_n="$VO_N_1105"
+  elif [[ "$obs_stem" =~ _([0-9]{4})(_|$) ]]; then
+    echo "[FAIL] $obs_stem: unrecognized cohort tag '${BASH_REMATCH[1]}' (only 1105/1806 wired to a GT source) — refusing to guess"
+    n_fail=$((n_fail+1)); continue
+  else
+    cohort=1105; TEST_DIR="$VO_TEST_1105"; expect_n="$VO_N_1105"  # genuinely untagged legacy stem
+  fi
   if [[ ! -d "$TEST_DIR" ]]; then
     echo "[FAIL] cohort $cohort test dir missing: $TEST_DIR — skipping $obs_stem (would score vs nothing)"
     n_fail=$((n_fail+1)); continue

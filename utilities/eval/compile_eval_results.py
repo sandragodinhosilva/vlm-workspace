@@ -31,6 +31,7 @@ import csv
 import glob
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -162,8 +163,8 @@ FIELDS = [
     #     spacers between provenance groups: BENCHMARKS │ ⎵ │ VO │ ⎵ │ AUX. ---
     "bench_method", "bench_source",
     "_spacer_prov_bench",   # blank spacer: benchmark provenance │ ⎵ │ VO provenance
-    "vo_s1_source", "vo_s2_source", "vo_s2_reasoner", "vo_s2_reasoner_thinking",
-    "vo_s2_eval_n", "vo_test_set",
+    "vo_s1_source", "vo_s1_eval_n", "vo_s2_source", "vo_s2_reasoner", "vo_s2_reasoner_thinking",
+    "vo_s2_obs_source", "vo_s2_eval_n", "vo_test_set", "vo_agree_eval_n",
     "_spacer_prov_vo",      # blank spacer: VO provenance │ ⎵ │ AUX provenance
     "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source",
     # --- FULL VO METRIC DETAIL (appended AFTER all metadata; mirrors the formatted_1105 CSV's
@@ -205,9 +206,12 @@ HEADER_LABELS = {
     "train_group_id": "Train Group", "train_sample_count": "Train Samples",
     "aux_run_ts": "Aux Run TS", "aux_run_id": "Aux Run ID", "aux_run_dir": "Aux Run Dir",
     "aux_source": "Aux Source", "bench_source": "Benchmark Source",
-    "vo_s1_source": "VO Source (single-stage)", "vo_s2_source": "VO Source (two-stage)",
+    "vo_s1_source": "VO Source (single-stage)", "vo_s1_eval_n": "VO Eval N (single-stage, eval/failed)",
+    "vo_s2_source": "VO Source (two-stage)",
     "vo_s2_reasoner": "Stage2 Reasoner", "vo_s2_reasoner_thinking": "Stage2 Reasoner Thinking",
-    "vo_s2_eval_n": "VO Eval N (eval/failed)", "vo_test_set": "VO Test Set",
+    "vo_s2_obs_source": "Stage2 Obs Source",
+    "vo_s2_eval_n": "VO Eval N (two-stage, eval/failed)", "vo_test_set": "VO Test Set",
+    "vo_agree_eval_n": "VO Eval N (agreement, matched slots)",
     # blank spacer columns between metric groups (identity │ benchmarks │ VO │ aux │ metadata)
     "_spacer_identity": "", "_spacer_bench": "", "_spacer_vo": "", "_spacer_aux": "",
     "_spacer_prov_bench": "", "_spacer_prov_vo": "", "_spacer_prov_train": "",
@@ -235,9 +239,11 @@ GROUP_BANDS = {
     "vo_s2_error_f1": "Visual-obs: TWO-STAGE (stage-1 obs -> stage-2 reasoner)",
     "vo_agree_errf1": "Visual-obs: AGREEMENT vs human GT (stage-1 obs + rules)",
     "aux_acc_weighted_3mod": "Aux tasks",
-    # full VO detail block sub-bands (mirrors the formatted_1105 CSV's band groups), per stage
-    "_spacer_detail_s1": "── FULL VO DETAIL (single-stage) ──",
-    "_spacer_detail_s2": "── FULL VO DETAIL (two-stage; fills from reasoner sweep) ──",
+    # NOTE: there is only ONE detail-block spacer field (`_spacer_detail`, see FIELDS) — the
+    # per-stage sub-band labels below already say "single-stage:"/"two-stage:" so no separate
+    # "FULL VO DETAIL (single-stage)"/"(two-stage)" banner is needed (a pair of such keys existed
+    # here pointing at fields ("_spacer_detail_s1"/"_spacer_detail_s2") that were never in FIELDS —
+    # dead code, removed 2026-07-06 audit fix, no information was lost).
 }
 for _pfx, _stage in (("vo_s1", "single-stage"), ("vo_s2", "two-stage")):
     for _suffix, _subband in _VO_BLOCK_SUBBANDS.items():
@@ -821,7 +827,13 @@ def _rows():
                     except ValueError:
                         return ""
                 mmmu, vmme, vsi = num("MMMU-val"), num("Video-MME"), num("VSI-Bench")
-                ifb = num("IF-Bench")
+                # IFBench can carry the distinct string sentinel "apifail" (collect_results.py,
+                # 2026-07-06 audit fix P1.4) when >2% of predictions were API/infra failures rather
+                # than genuine rule non-compliance — num() would silently swallow that into "" (a
+                # blank cell reads as "never run", masking a real but poisoned/deflated run). Surface
+                # it as its own value so the board cell is visibly "apifail", not blank.
+                _ifb_raw = (rec.get("IF-Bench") or "").strip()
+                ifb = "apifail" if _ifb_raw == "apifail" else num("IF-Bench")
                 # which summary file is this? raw=non-responses counted wrong; judged=LLM-judged
                 method = "judged" if "judge" in bench_csv.name.lower() else "raw"
                 meth = dict(_kv.split("=", 1) for _kv in (r.get("bench_method") or "").split(";") if "=" in _kv)
@@ -908,9 +920,13 @@ def _rows():
         # rows, fold the cohort into the row key + display for cohort-tagged VO files ONLY. A file
         # with NO cohort tag (every historical single-cohort run) is unchanged → still one row.
         def _vo_cohort(fname: str) -> str:
-            if "_1806" in fname: return "1806"
-            if "_1105" in fname: return "1105"
-            return ""
+            # Anchor to the known eval-cohort filename positions (immediately before a think-token
+            # or the gtobsbuild/modelobs arm tag, or right before .json) — NOT a bare substring test.
+            # A bare "_1105" in fname" also matches a model's TRAINING-DATA tag baked into its own
+            # checkpoint name (e.g. "oracle_obs_cat_reasoning_1105_step336_singlestage_*.json"),
+            # which would silently detach that model's VO cells onto a phantom cohort row.
+            m = re.search(r"_(1105|1806)(?=_think|_gtobsbuild|_modelobs|\.json$)", fname)
+            return m.group(1) if m else ""
         def _vo_row_path(model_path: str, cohort: str) -> str:
             # cohort-suffixed PSEUDO-path = the row key; only when a cohort tag is present so
             # single-cohort models keep their bare path (one row, exactly as before).
@@ -969,25 +985,49 @@ def _rows():
                 # other single-cohort model). Otherwise keep the sft2812-only board rule.
                 _is_cohort_bakeoff = bool(_vo_cohort(name)) and "vobs2906" in name
                 # EXP-B NATIVE-REASONER EXCEPTION (2026-07-06): the EXP-B stage-2 ondemand model IS
-                # its own reasoner (single-pass, GT-obs arm on the test BUILD: 2906 k5majority obs
-                # inlined in a byte-exact trained prompt). metadata.model = the EXP-B ckpt itself,
-                # so the sft2812-only rule would drop it. Admit ONLY cohort-tagged expb gtobsbuild
-                # files; vo_s2_source/vo_s2_reasoner columns disambiguate the arm on the board.
-                _is_expb_native = bool(_vo_cohort(name)) and "expb" in name and "gtobsbuild" in name
+                # its own reasoner. metadata.model = the EXP-B ckpt itself, so the sft2812-only rule
+                # would drop it. Two admitted arms, both cohort-tagged `expb`:
+                #   - gtobsbuild: single-pass on the test BUILD (2906 GT obs inlined, byte-exact
+                #     trained prompt) — GATE-B GT-obs arm, PASSED (err-F1 75.90 @ step562).
+                #   - modelobs: two-stage on repetitions_test with REAL 4B stage-1 obs — GATE-B
+                #     drop-in arm, FAILED (err-F1 45.07 @ step562, vs the 55.1 bar). Given its OWN
+                #     row (via the `__arm_modelobs` pseudo-path suffix below) so it never conflates
+                #     with (overwrites/is-overwritten-by) the GT-obs row for the same checkpoint —
+                #     they are different eval conditions, not competing files for one cell.
+                _is_expb_gtobs = bool(_vo_cohort(name)) and "expb" in name and "gtobsbuild" in name
+                _is_expb_modelobs = bool(_vo_cohort(name)) and "expb" in name and "modelobs" in name
+                _is_expb_native = _is_expb_gtobs or _is_expb_modelobs
                 if not (_is_cohort_bakeoff or _is_expb_native) and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
                     continue   # not the sft2812 reasoner → historical, don't put it on the board
                 # Accept a near-complete sweep result. Threshold scales with the cohort's N (1806 ≈
                 # 2260 vs 1105 = 1181) — a fixed 1170 would wrongly reject a full 1806 run's tail. Use
                 # 99% of the file's own expected N when cohort-tagged, else the legacy 1170 floor.
-                # EXP-B gtobsbuild runs on the obs-covered BUILD (N=2157, = 2260 − 103 no-GT-obs reps)
-                # → floor 2135 (99% of 2157), not the full-cohort 2237.
+                # EXP-B gtobsbuild/modelobs both run on the obs-covered subset (N=2157, = 2260 − 103
+                # no-GT-obs reps) → floor 2135 (99% of 2157), not the full-cohort 2237.
                 _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
                 _min = (2135 if _is_expb_native else
                         (2237 if _vo_cohort(name) == "1806" else 1169) if _is_cohort_bakeoff else 1170)
                 if _eN < _min:
                     continue
+            else:
+                # SINGLE-STAGE COMPLETENESS GATE (2026-07-06 audit fix, P1.1): single-stage files had
+                # NO gate at all — a run where e.g. only 464/2260 (21%) samples evaluated (parse/
+                # non-response failures) landed on the board with no flag, indistinguishable from a
+                # 97%-evaluated sibling in the same bake-off comparison. Same 99%-of-cohort-N floor as
+                # two-stage; 1170/1181 legacy floor when untagged (matches the historical single-cohort
+                # single-stage runs, which are already near-complete in practice).
+                _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
+                _cohort_s1 = _vo_cohort(name)
+                _min_s1 = 2237 if _cohort_s1 == "1806" else (1169 if _cohort_s1 == "1105" else 1170)
+                if _eN < _min_s1:
+                    print(f"[vo-s1 SKIP] {vj.name}: evaluated_samples={_eN} < floor {_min_s1} "
+                          f"(partial run, not admitted to the board)")
+                    continue
             _cohort = _vo_cohort(name)
             _row_path = _vo_row_path(model_path, _cohort)
+            if is_two and _is_expb_modelobs:
+                # Distinct row key from the GT-obs arm of the SAME checkpoint (see comment above).
+                _row_path = _row_path + "__arm_modelobs"
             key = (_norm_path(_row_path), thinking)
             best = ts_best if is_two else ss_best
             tier = _vo_v2_tier(name)
@@ -1001,6 +1041,8 @@ def _rows():
                 r["model"] = model_path
                 if not r.get("_cohort"):
                     r["_cohort"] = _cohort
+            if is_two and _is_expb_modelobs and not r.get("_arm"):
+                r["_arm"] = "modelobs"
             def vm(k):
                 v = m.get(k)
                 return round(v * 100, 2) if isinstance(v, (int, float)) else ""
@@ -1009,6 +1051,14 @@ def _rows():
             r[f"{pfx}sample_f1"] = vm("sample_error_detection_f1")
             r[f"{pfx}severity_acc"] = vm("overall_severity_accuracy")
             r[f"{pfx}source"] = vj.name
+            if not is_two:
+                # VO eval completeness for single-stage (mirrors vo_s2_eval_n) — the fix for P1.1:
+                # a partial run that clears the floor above is still worth SHOWING as partial, not
+                # implying full-N silently.
+                _ev1 = (d.get("metadata") or {}).get("evaluated_samples")
+                _fl1 = (d.get("metadata") or {}).get("failed_samples")
+                if _ev1 is not None:
+                    r["vo_s1_eval_n"] = f"{_ev1}/{_fl1}" if _fl1 else str(_ev1)
             # full detail block (all formatted-CSV metrics) for this stage — appended after metadata
             _write_vo_block(r, m, "vo_s2" if is_two else "vo_s1")
             # VO test-set path each eval ran on (1181-rep split) — read per-file, not hardcoded
@@ -1026,6 +1076,30 @@ def _rows():
                 _st = _md2.get("served_thinking")
                 if _st is not None:
                     r["vo_s2_reasoner_thinking"] = "on" if _st else "off"
+                # STAGE-2 VOBS SOURCE (2026-07-06) — what fed the stage-2 reasoner's obs block:
+                #   - a served MODEL's own stage-1 predictions (real drop-in condition) -> that
+                #     model's checkpoint/display name, recovered from precomputed_visual_obs_file's
+                #     filename (the obs-gen output naming carries the stage-1 model token) via the
+                #     SAME curated map used for VO_FILE_TO_MODEL, so it reads as a real name not a path;
+                #   - "GT" -> ground-truth/oracle observations (the EXP-B gtobsbuild arm: GT obs
+                #     inlined into the trained prompt itself, single API call, no stage-1 query;
+                #     detected by the `_is_expb_gtobs` file-naming convention since metadata alone
+                #     can't distinguish "obs baked into prompt" from "no obs at all");
+                #   - "unrecorded" -> a two-stage file ALWAYS implies some obs, so this is a
+                #     missing-metadata FAILURE, not a real "no obs" condition — distinct sentinel
+                #     (never coalesce a metadata gap into a happy-path-shaped value like "none").
+                if _is_expb_gtobs:
+                    r["vo_s2_obs_source"] = "GT"
+                else:
+                    _pvof = str(_md2.get("precomputed_visual_obs_file") or "").strip()
+                    if _pvof:
+                        _obs_model = _vo_model_path(Path(_pvof).name.lower())
+                        r["vo_s2_obs_source"] = _obs_model or Path(_pvof).stem
+                    else:
+                        # No precomputed file -> stage-1 was a live model call; the served
+                        # stage-1 model is recorded separately in stage1_model when present.
+                        _s1m = str(_md2.get("stage1_model") or "").strip()
+                        r["vo_s2_obs_source"] = _s1m or "unrecorded"
 
         # ---- AGREEMENT vs HUMAN GT (separate family: agreement_*.json). The OLD formatted CSV's
         # "agreement with human annotations" band read error_relevant.vs_gt.a.overall (a = model
@@ -1069,6 +1143,11 @@ def _rows():
             r["vo_agree_acc"] = am("accuracy")
             r["vo_agree_prec"] = am("precision")
             r["vo_agree_rec"] = am("recall")
+            # matched (rep x error-slot) count actually scored — the P1.1 fix's agreement-side N,
+            # so a join over few matched slots (e.g. a stale/short GT file) doesn't read as full-N.
+            _n_agree = ov.get("n")
+            if isinstance(_n_agree, (int, float)):
+                r["vo_agree_eval_n"] = int(_n_agree)
             # "Avg Dist Exercise" (the Variability column) = mean over per-exercise categorical
             # index-distances between the model's answers and the reference (raw-answer agreement,
             # a=model vs b=gt). Lower = closer. RAW (a distance, not a pct). It lives in the agreement
@@ -1131,18 +1210,27 @@ def _rows():
     #  last_eval_ts  = newest mtime across the eval artifacts that fed THIS row (aux run dir,
     #                  the benchmark result dirs, the visual-obs JSON) — the last eval performed.
     for (model_path, _think), r in rows.items():
-        r["is_baseline"] = "yes" if _is_baseline(model_path, r.get("display", "")) else "no"
+        # For cohort/arm rows, `model_path` (the dict key) is a pseudo-path with a
+        # `__cohort_*`/`__arm_*` suffix appended for row-key uniqueness; the REAL served checkpoint
+        # path lives in `r["model"]` (set explicitly wherever a cohort/arm tag is applied above).
+        # Using the raw key here made model_created mtime-lookups miss (no such file) -> blank on
+        # every cohort/arm row (2026-07-06 audit fix).
+        _real_model_path = r.get("model") or model_path
+        r["is_baseline"] = "yes" if _is_baseline(_real_model_path, r.get("display", "")) else "no"
         # model_created = ckpt export mtime. Meaningless for a BASELINE (bare upstream Qwen3.5 —
         # the dir mtime is just when the shared files synced to disk, not a real creation date) ->
         # leave blank for baselines.
-        r["model_created"] = "" if r["is_baseline"] == "yes" else _model_created(model_path)
+        r["model_created"] = "" if r["is_baseline"] == "yes" else _model_created(_real_model_path)
         # benchmark result dirs are keyed by the BENCHMARK display (`_bench_display`), NOT the row's
         # `display` (which is the aux `<base>:<run_id>` for any model with an aux row, since aux runs
         # first). Using `display` here made BENCH_RESULTS/<bench>/<aux-display> never exist → benchmark
         # mtime never counted toward last_eval_ts. Fall back to `display` only when no bench ran.
         bench_disp = r.get("_bench_display") or r.get("display", "")
         ev_paths = [r.get("aux_run_dir", "")]
-        for bench in ("mmmu_val", "video_mme", "vsibench"):
+        # ifbench added (2026-07-06 audit fix): this loop omitted it, so an IFBench-only re-run's
+        # mtime never counted toward last_eval_ts (the board's "Last Eval" column could understate
+        # how recently a model was actually touched).
+        for bench in ("mmmu_val", "video_mme", "vsibench", "ifbench"):
             ev_paths.append(str(BENCH_RESULTS / bench / bench_disp))
         for vo in (r.get("vo_s1_source", ""), r.get("vo_s2_source", "")):
             if vo:
@@ -1170,9 +1258,19 @@ def _rows():
     # (2) ORPHAN rows: an aux fallback that couldn't find RUN_METADATA.model synthesizes a
     #     non-path key '<base>/<run_id>' that _norm_path can't resolve, so it never merges with the
     #     real-path bench/VO rows for that model — a fragmentary orphan. Count + name them.
-    orphans = [(mp, th) for (mp, th) in rows if mp and not mp.startswith("/")]
+    #     Exclude INTENTIONAL synthetic keys (oracle-ceiling rows key on the allowlist `pattern`
+    #     string by design, per the oracle_ceiling block above — not an aux-join failure). Reload
+    #     the allowlist independently here (not the `_cfg` local from the VO_RUNS block, which
+    #     doesn't exist when VO_RUNS is absent — this check must not depend on that branch running).
+    try:
+        _oc_cfg = json.loads(MODEL_ALLOWLIST.read_text()) if MODEL_ALLOWLIST.exists() else {}
+    except Exception:
+        _oc_cfg = {}
+    _oracle_ceiling_keys = {(_e["pattern"], "off") for _e in _oc_cfg.get("models", []) if _e.get("oracle_ceiling")}
+    orphans = [(mp, th) for (mp, th) in rows
+               if mp and not mp.startswith("/") and (mp, th) not in _oracle_ceiling_keys]
     if orphans:
-        print(f"[orphan-rows] {len(orphans)} aux row(s) keyed on a synthesized '<base>/<run_id>' "
+        print(f"[orphan-rows] {len(orphans)} row(s) keyed on a synthesized non-path string "
               f"(no RUN_METADATA.model → won't merge with bench/VO for that model):")
         for mp, th in orphans:
             print(f"             · {mp} [{th}]")
@@ -1205,6 +1303,19 @@ def main() -> int:
                 continue
             if entry["display"]:               # curated clean display name overrides the raw one
                 r["display"] = entry["display"]
+            # COHORT/ARM DISPLAY SUFFIX (2026-07-06 audit fix, P1.3): the curated display override
+            # above previously clobbered the cohort tag stashed on `r["_cohort"]` in `_rows()`
+            # (comment there promised "[1806]" but nothing ever rendered it) — 4 models' 1105-cohort
+            # and 1806-cohort rows shared one identical display string with materially different
+            # numbers, distinguishable only via the far-right VO Test Set column. Apply it HERE,
+            # after any curated-display override, so it can never be silently dropped again.
+            if r.get("_cohort") and f"[{r['_cohort']}]" not in r["display"]:
+                r["display"] = f"{r['display']} [{r['_cohort']}]"
+            # Only auto-append the arm label if the curated display doesn't already spell it out
+            # (some allowlist entries, like the EXP-B modelobs row, curate their own "(MODEL-obs
+            # arm)" text — this is the fallback for any FUTURE arm row without a curated label).
+            if r.get("_arm") == "modelobs" and "MODEL-obs arm" not in r["display"]:
+                r["display"] = f"{r['display']} (MODEL-obs arm)"
             if entry["train_reasoning"]:        # curated train_reasoning is AUTHORITATIVE — it OVERRIDES
                 # the eval_matrix value. The matrix's train_reasoning is auto-derived per aux-run and is
                 # WRONG for some (e.g. pmartins sft2812/grpo492 trained on diverse_reasoning+mix_reas

@@ -391,8 +391,12 @@ PY
     # goes (correctly) BLANK while the run looks successful (the 4B-baseline VSI carried this across 3
     # runs: T20260618→20→21). Detect it BEFORE launch: any reuse-target *_score.xlsx that is
     # >=90% API-failure → [FAIL] (delete the poisoned T*/ dir and re-run WITHOUT --reuse). [[feedback_eval_gotchas]]
+    # ifbench included (2026-07-06 audit fix, P1.4): it was excluded from this loop, so a dead-server
+    # IFBench cache re-scored to a low-but-plausible number with NO poisoned-reuse warning (unlike
+    # vsibench/mmmu/video_mme, which at least get flagged). IFBench also has no judge-rescue fallback
+    # (rule-scored only), so a poisoned cache there is a permanently wrong number until caught here.
     _bench_disp="$(basename "${SERVED_ID:-${RUN_ID:-$MODEL}}")-think${THINKING}"
-    for _b in vsibench mmmu_val video_mme; do
+    for _b in vsibench mmmu_val video_mme ifbench; do
       _bdir="/mnt/data/sgsilva/results/benchmarks/$_b/$_bench_disp"
       [[ -d "$_bdir" ]] || continue
       _poison="$("$VPT_PY" - "$_bdir" <<'PY'
@@ -401,7 +405,15 @@ try: import pandas as pd
 except Exception: sys.exit(0)   # can't check -> stay silent (don't false-FAIL)
 bdir=sys.argv[1]; FAIL="Failed to obtain answer via API"
 worst=None
-for f in glob.glob(os.path.join(bdir,"**","*_score.xlsx"),recursive=True)+glob.glob(os.path.join(bdir,"*_score.xlsx")):
+# IFBench result files are named "*_IFBench.xlsx"/"*_IFBench_result.xlsx", not "*_score.xlsx"
+# (VLMEvalKit's naming for the other 3 benchmarks) — without this pattern the guard silently
+# never matched any ifbench file (2026-07-06 audit fix, P1.4).
+_globs = ["*_score.xlsx", "*_IFBench.xlsx", "*_IFBench_result.xlsx"]
+_files = set()
+for _g in _globs:
+    _files.update(glob.glob(os.path.join(bdir,"**",_g),recursive=True))
+    _files.update(glob.glob(os.path.join(bdir,_g)))
+for f in sorted(_files):
     try: df=pd.read_excel(f)
     except Exception: continue
     col="prediction" if "prediction" in df.columns else None
@@ -566,7 +578,11 @@ if have_stage visualobs; then
       echo "         existing: $_existing_model"
       echo "         this run: $SERVED_ID"
       echo "         Refusing to overwrite (would lose the other model's VO). Use a distinct --run-id/stem."
-      STAGE_RESULTS+=("visualobs: FAIL (stem collision — would overwrite $_existing_model)")
+      # NOTE: must contain the literal substring "FAILED" (not "FAIL") — the exit-code check
+      # at the bottom of this script greps STAGE_RESULTS for *FAILED*; "FAIL (...)" alone was
+      # silently passing the run as exit 0 while the whole visualobs stage was refused
+      # (2026-07-06 audit fix, P2.4).
+      STAGE_RESULTS+=("visualobs: FAILED (stem collision — would overwrite $_existing_model)")
       _vo_collision=1
     fi
   fi
@@ -609,7 +625,8 @@ if have_stage visualobs; then
       echo "         owner:    $(cat "$_obs_owner" 2>/dev/null)"
       echo "         this run: $_served_real"
       echo "         Refusing to reuse/overwrite. Use a distinct --run-id/stem."
-      STAGE_RESULTS+=("agreement: FAIL (obs stem collision)")
+      # Must contain "FAILED" (see the visualobs collision-guard fix above for why).
+      STAGE_RESULTS+=("agreement: FAILED (obs stem collision)")
       _vo_collision=1
     fi
     if [[ "${_vo_collision:-0}" != 1 ]]; then echo "$_served_real" > "$_obs_owner"; fi

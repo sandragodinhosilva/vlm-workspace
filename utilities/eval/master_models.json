@@ -177,8 +177,7 @@
    "note": "+LLM-FMS additive (err-F1 0.485); answer-only",
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-cat-plus-llm-fms-step1785",
    "vo_tokens": [
-    "oracle-obs-cat-plus-llm-fms-step1785",
-    "union_oracleobs_llmfms_ep3"
+    "oracle-obs-cat-plus-llm-fms-step1785"
    ],
    "train_sample_count": "20054"
   },
@@ -336,11 +335,22 @@
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step281"
   },
   {
+   "pattern": "step562_1806_modelobs_4bcatk5maj987",
+   "display": "27B EXP-B stage-2 ondemand reasoner step562 (MODEL-obs arm)",
+   "train_reasoning": "yes",
+   "group": "expb_stage2_27b",
+   "note": "EXP-B native stage-2 reasoner, step562 \u2014 MODEL-obs drop-in arm (GATE-B second condition): two-stage stance eval on repetitions_test with REAL stage-1 obs from the 4B vobs2906 bake-off winner (categorical_k5majority step987, thinkoff), N=2157. FAILED the >=55.1 drop-in bar (err-F1 45.07 vs the GT-obs arm's 75.90 on the SAME checkpoint) -- see 2026-07-06_expb_gateb_gtobs_eval.md SS7. Distinct row from the GT-obs arm by design (different eval condition, not a competing file for one cell).",
+   "vo_tokens": [
+    "expb_stage2_ondemand_step562_1806_modelobs"
+   ],
+   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step562"
+  },
+  {
    "pattern": "expb-stage2-ondemand-sft-step562",
    "display": "27B EXP-B stage-2 ondemand reasoner step562",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b",
-   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage.",
+   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage. See the separate 'step562 (MODEL-obs arm)' row for the real-stage-1-obs drop-in result (FAILED, err-F1 45.07).",
    "vo_tokens": [
     "expb_stage2_ondemand_step562"
    ],
