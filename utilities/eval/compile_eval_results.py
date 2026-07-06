@@ -887,6 +887,16 @@ def _rows():
     # The dashed↔underscored sibling tokens, the llmfms-probe exclude (so the clean dashed file wins,
     # Audit 2026-06-22 F4), and the bare-baseline dotted variants all live in the JSON now.
     VO_FILE_TO_MODEL, VO_EXCLUDE = _vo_map_from_config()
+    # path -> curated display name, for resolving an OBS-SOURCE model's path to a readable label
+    # (vo_s2_obs_source column) rather than a raw /mnt/data/... path. Built once here since it's
+    # only needed by that one column, not the filename->path resolution VO_FILE_TO_MODEL does.
+    _VO_PATH_TO_DISPLAY = {}
+    if MODEL_ALLOWLIST.exists():
+        for _e in json.loads(MODEL_ALLOWLIST.read_text()).get("models", []):
+            _vp = (_e.get("vo_path") or "").strip()
+            _disp = (_e.get("display") or "").strip()
+            if _vp and _disp and _norm_path(_vp) not in _VO_PATH_TO_DISPLAY:
+                _VO_PATH_TO_DISPLAY[_norm_path(_vp)] = _disp
     def _vo_model_path(name: str) -> str:
         """Resolve a VO JSON filename -> served checkpoint path via the curated map. '' if no
         match OR an excluded probe (distinct sentinel — the row is then skipped, not joined to a
@@ -925,7 +935,7 @@ def _rows():
             # A bare "_1105" in fname" also matches a model's TRAINING-DATA tag baked into its own
             # checkpoint name (e.g. "oracle_obs_cat_reasoning_1105_step336_singlestage_*.json"),
             # which would silently detach that model's VO cells onto a phantom cohort row.
-            m = re.search(r"_(1105|1806)(?=_think|_gtobsbuild|_modelobs|\.json$)", fname)
+            m = re.search(r"_(1105|1806)(?=_think|_gtobsbuild|_modelobs|_selfloop|\.json$)", fname)
             return m.group(1) if m else ""
         def _vo_row_path(model_path: str, cohort: str) -> str:
             # cohort-suffixed PSEUDO-path = the row key; only when a cohort tag is present so
@@ -986,17 +996,22 @@ def _rows():
                 _is_cohort_bakeoff = bool(_vo_cohort(name)) and "vobs2906" in name
                 # EXP-B NATIVE-REASONER EXCEPTION (2026-07-06): the EXP-B stage-2 ondemand model IS
                 # its own reasoner. metadata.model = the EXP-B ckpt itself, so the sft2812-only rule
-                # would drop it. Two admitted arms, both cohort-tagged `expb`:
+                # would drop it. Three admitted arms, all cohort-tagged `expb`:
                 #   - gtobsbuild: single-pass on the test BUILD (2906 GT obs inlined, byte-exact
                 #     trained prompt) — GATE-B GT-obs arm, PASSED (err-F1 75.90 @ step562).
                 #   - modelobs: two-stage on repetitions_test with REAL 4B stage-1 obs — GATE-B
-                #     drop-in arm, FAILED (err-F1 45.07 @ step562, vs the 55.1 bar). Given its OWN
-                #     row (via the `__arm_modelobs` pseudo-path suffix below) so it never conflates
-                #     with (overwrites/is-overwritten-by) the GT-obs row for the same checkpoint —
-                #     they are different eval conditions, not competing files for one cell.
+                #     drop-in arm, FAILED (err-F1 45.07 @ step562, vs the 55.1 bar).
+                #   - selfloop: two-stage on repetitions_test, checkpoint answers its OWN stage-1
+                #     Q/A prompt (untrained task) then consumes those in its own stage-2 call —
+                #     WORST of the three arms (err-F1 23.89 @ step562), confirming the model can't
+                #     bootstrap decent obs on a task it never trained on.
+                #   Each gets its OWN row (via a pseudo-path suffix below) so none can conflate
+                #   with (overwrite/be overwritten by) another arm's row for the same checkpoint —
+                #   they are different eval conditions, not competing files for one cell.
                 _is_expb_gtobs = bool(_vo_cohort(name)) and "expb" in name and "gtobsbuild" in name
                 _is_expb_modelobs = bool(_vo_cohort(name)) and "expb" in name and "modelobs" in name
-                _is_expb_native = _is_expb_gtobs or _is_expb_modelobs
+                _is_expb_selfloop = bool(_vo_cohort(name)) and "expb" in name and "selfloop" in name
+                _is_expb_native = _is_expb_gtobs or _is_expb_modelobs or _is_expb_selfloop
                 if not (_is_cohort_bakeoff or _is_expb_native) and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
                     continue   # not the sft2812 reasoner → historical, don't put it on the board
                 # Accept a near-complete sweep result. Threshold scales with the cohort's N (1806 ≈
@@ -1028,6 +1043,8 @@ def _rows():
             if is_two and _is_expb_modelobs:
                 # Distinct row key from the GT-obs arm of the SAME checkpoint (see comment above).
                 _row_path = _row_path + "__arm_modelobs"
+            elif is_two and _is_expb_selfloop:
+                _row_path = _row_path + "__arm_selfloop"
             key = (_norm_path(_row_path), thinking)
             best = ts_best if is_two else ss_best
             tier = _vo_v2_tier(name)
@@ -1043,6 +1060,8 @@ def _rows():
                     r["_cohort"] = _cohort
             if is_two and _is_expb_modelobs and not r.get("_arm"):
                 r["_arm"] = "modelobs"
+            elif is_two and _is_expb_selfloop and not r.get("_arm"):
+                r["_arm"] = "selfloop"
             def vm(k):
                 v = m.get(k)
                 return round(v * 100, 2) if isinstance(v, (int, float)) else ""
@@ -1085,16 +1104,25 @@ def _rows():
                 #     inlined into the trained prompt itself, single API call, no stage-1 query;
                 #     detected by the `_is_expb_gtobs` file-naming convention since metadata alone
                 #     can't distinguish "obs baked into prompt" from "no obs at all");
+                #   - "self" -> the reasoner answered its OWN stage-1 prompt then consumed those
+                #     (the selfloop arm) — metadata.stage1_model == metadata.model in this case,
+                #     which would otherwise render as a real external model name; call it out
+                #     explicitly so the board doesn't misread self-generated obs as sourced obs;
                 #   - "unrecorded" -> a two-stage file ALWAYS implies some obs, so this is a
                 #     missing-metadata FAILURE, not a real "no obs" condition — distinct sentinel
                 #     (never coalesce a metadata gap into a happy-path-shaped value like "none").
                 if _is_expb_gtobs:
                     r["vo_s2_obs_source"] = "GT"
+                elif _is_expb_selfloop:
+                    r["vo_s2_obs_source"] = "self"
                 else:
                     _pvof = str(_md2.get("precomputed_visual_obs_file") or "").strip()
                     if _pvof:
-                        _obs_model = _vo_model_path(Path(_pvof).name.lower())
-                        r["vo_s2_obs_source"] = _obs_model or Path(_pvof).stem
+                        _obs_model_path = _vo_model_path(Path(_pvof).name.lower())
+                        # Resolve the PATH to its curated DISPLAY name (the board should read a
+                        # name like "4B vobs2906 cat k5maj", not a raw /mnt/data/... path).
+                        _obs_display = _VO_PATH_TO_DISPLAY.get(_norm_path(_obs_model_path), "") if _obs_model_path else ""
+                        r["vo_s2_obs_source"] = _obs_display or _obs_model_path or Path(_pvof).stem
                     else:
                         # No precomputed file -> stage-1 was a live model call; the served
                         # stage-1 model is recorded separately in stage1_model when present.
@@ -1120,6 +1148,20 @@ def _rows():
             tier = 1 if name.endswith("_v2.json") else 0
             _cohort = _vo_cohort(name)
             _row_path = _vo_row_path(model_path, _cohort)  # cohort-aware, same as scored families
+            # EXP-B arm-aware routing (2026-07-06 fix): agreement files share the SAME real
+            # checkpoint path across all 3 EXP-B arms (GT-obs/model-obs/self-loop) — without an
+            # arm suffix here (unlike the two-stage block above, which already had one), an
+            # agreement run for the model-obs or self-loop arm silently landed on the GT-obs row's
+            # key instead of getting its own row (caught live: a modelobs agreement F1 of 52.42
+            # merged onto the GT-obs row before this fix, indistinguishable from that arm's own
+            # 75.90 err-F1). Mirrors the exact `_is_expb_modelobs`/`_is_expb_selfloop` detection
+            # and `__arm_*` suffix used in the two-stage block.
+            _is_expb_modelobs_agree = bool(_cohort) and "expb" in name and "modelobs" in name
+            _is_expb_selfloop_agree = bool(_cohort) and "expb" in name and "selfloop" in name
+            if _is_expb_modelobs_agree:
+                _row_path = _row_path + "__arm_modelobs"
+            elif _is_expb_selfloop_agree:
+                _row_path = _row_path + "__arm_selfloop"
             key = (_norm_path(_row_path), thinking)
             if agree_best.get(key, -1) >= tier:
                 continue
@@ -1136,6 +1178,10 @@ def _rows():
                 r["model"] = model_path
                 if not r.get("_cohort"):
                     r["_cohort"] = _cohort
+            if _is_expb_modelobs_agree and not r.get("_arm"):
+                r["_arm"] = "modelobs"
+            elif _is_expb_selfloop_agree and not r.get("_arm"):
+                r["_arm"] = "selfloop"
             def am(k):
                 v = ov.get(k)
                 return round(v * 100, 2) if isinstance(v, (int, float)) else ""
@@ -1312,10 +1358,12 @@ def main() -> int:
             if r.get("_cohort") and f"[{r['_cohort']}]" not in r["display"]:
                 r["display"] = f"{r['display']} [{r['_cohort']}]"
             # Only auto-append the arm label if the curated display doesn't already spell it out
-            # (some allowlist entries, like the EXP-B modelobs row, curate their own "(MODEL-obs
-            # arm)" text — this is the fallback for any FUTURE arm row without a curated label).
+            # (some allowlist entries, like the EXP-B modelobs/selfloop rows, curate their own
+            # "(...arm)" text — this is the fallback for any FUTURE arm row without a curated label).
             if r.get("_arm") == "modelobs" and "MODEL-obs arm" not in r["display"]:
                 r["display"] = f"{r['display']} (MODEL-obs arm)"
+            elif r.get("_arm") == "selfloop" and "SELF-LOOP arm" not in r["display"]:
+                r["display"] = f"{r['display']} (SELF-LOOP arm)"
             if entry["train_reasoning"]:        # curated train_reasoning is AUTHORITATIVE — it OVERRIDES
                 # the eval_matrix value. The matrix's train_reasoning is auto-derived per aux-run and is
                 # WRONG for some (e.g. pmartins sft2812/grpo492 trained on diverse_reasoning+mix_reas
