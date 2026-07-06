@@ -235,7 +235,7 @@
    "pattern": "oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751",
    "display": "27B aux12k-union small25 SFT step751",
    "train_reasoning": "no",
-   "group": "aux12k_union",
+   "group": "aux12k_union_small25",
    "note": "small25 variant of 1805_binary+aux12k union SFT (UNDER-TRAINED, step751). VO agree-F1 11.49 is REAL not an artifact: collapsed to always-'no-error' (recall 6.5%, fires 163/1212); s1 also low (err-F1 25.48/sample-F1 28.86). Use the full step4127 (agree 46.7); small25 is the degenerate short run.",
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-small25-sft-step751",
    "vo_tokens": [
@@ -270,7 +270,8 @@
    "pattern": "qwen35-4b-vobs2906-categorical_k5majority-sft-step987",
    "display": "4B vobs2906 cat k5maj (obs-SFT)",
    "train_reasoning": "no",
-   "group": "vobs2906_bakeoff",
+   "group": "vobs2906_bakeoff_catmaj",
+   "section": "VOBs experiments",
    "note": "2906 dualform stage-1 SFT; categorical schema, K=5 majority; thinkOFF; step987 (val 0.0159). 4-variant bake-off vs angle x maj/sev.",
    "vo_tokens": [
     "qwen35-4b-vobs2906-categorical_k5majority-sft-step987"
@@ -281,7 +282,7 @@
    "pattern": "qwen35-4b-vobs2906-angle_k5majority-sft-step987",
    "display": "4B vobs2906 angle k5maj (obs-SFT)",
    "train_reasoning": "no",
-   "group": "vobs2906_bakeoff",
+   "group": "vobs2906_bakeoff_anglemaj",
    "note": "2906 dualform stage-1 SFT; angle (numeric) schema, K=5 majority; thinkOFF; step987 (val 0.0280).",
    "vo_tokens": [
     "qwen35-4b-vobs2906-angle_k5majority-sft-step987"
@@ -292,7 +293,7 @@
    "pattern": "qwen35-4b-vobs2906-categorical_k5severity-sft-step987",
    "display": "4B vobs2906 cat k5sev (obs-SFT)",
    "train_reasoning": "no",
-   "group": "vobs2906_bakeoff",
+   "group": "vobs2906_bakeoff_catsev",
    "note": "2906 dualform stage-1 SFT; categorical schema, K=5 severity(union); thinkOFF; step987.",
    "vo_tokens": [
     "qwen35-4b-vobs2906-categorical_k5severity-sft-step987"
@@ -303,7 +304,7 @@
    "pattern": "qwen35-4b-vobs2906-angle_k5severity-sft-step880",
    "display": "4B vobs2906 angle k5sev (obs-SFT)",
    "train_reasoning": "no",
-   "group": "vobs2906_bakeoff",
+   "group": "vobs2906_bakeoff_anglesev",
    "note": "2906 dualform stage-1 SFT; angle(numeric) schema, K=5 severity(union); thinkOFF; step987. [step880 = best saved; step987 lost to Ray-actor crash at step986]",
    "vo_tokens": [
     "qwen35-4b-vobs2906-angle_k5severity-sft-step880"
@@ -324,21 +325,11 @@
    "train_sample_count": "10367"
   },
   {
-   "pattern": "expb-stage2-ondemand-sft-step281",
-   "display": "27B EXP-B stage-2 ondemand reasoner step281",
-   "train_reasoning": "yes",
-   "group": "expb_stage2_27b",
-   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage.",
-   "vo_tokens": [
-    "expb_stage2_ondemand_step281"
-   ],
-   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step281"
-  },
-  {
    "pattern": "step562_1806_modelobs_4bcatk5maj987",
    "display": "27B EXP-B stage-2 ondemand reasoner step562 (MODEL-obs arm)",
    "train_reasoning": "yes",
-   "group": "expb_stage2_27b",
+   "group": "expb_stage2_27b_modelobs",
+   "section": "VObs ondemand reasoner",
    "note": "EXP-B native stage-2 reasoner, step562 \u2014 MODEL-obs drop-in arm (GATE-B second condition): two-stage stance eval on repetitions_test with REAL stage-1 obs from the 4B vobs2906 bake-off winner (categorical_k5majority step987, thinkoff), N=2157. FAILED the >=55.1 drop-in bar (err-F1 45.07 vs the GT-obs arm's 75.90 on the SAME checkpoint) -- see 2026-07-06_expb_gateb_gtobs_eval.md SS7. Distinct row from the GT-obs arm by design (different eval condition, not a competing file for one cell).",
    "vo_tokens": [
     "expb_stage2_ondemand_step562_1806_modelobs"
@@ -346,10 +337,54 @@
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step562"
   },
   {
+   "pattern": "step281_1806_selfloop",
+   "display": "27B EXP-B stage-2 ondemand reasoner step281 (SELF-LOOP arm)",
+   "train_reasoning": "yes",
+   "group": "expb_stage2_27b_selfloop",
+   "note": "EXP-B native stage-2 reasoner, step281 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
+   "vo_tokens": [
+    "step281_1806_selfloop"
+   ],
+   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step281"
+  },
+  {
+   "pattern": "step562_1806_selfloop",
+   "display": "27B EXP-B stage-2 ondemand reasoner step562 (SELF-LOOP arm)",
+   "train_reasoning": "yes",
+   "group": "expb_stage2_27b_selfloop",
+   "note": "EXP-B native stage-2 reasoner, step562 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
+   "vo_tokens": [
+    "step562_1806_selfloop"
+   ],
+   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step562"
+  },
+  {
+   "pattern": "step840_1806_selfloop",
+   "display": "27B EXP-B stage-2 ondemand reasoner step840 (SELF-LOOP arm)",
+   "train_reasoning": "yes",
+   "group": "expb_stage2_27b_selfloop",
+   "note": "EXP-B native stage-2 reasoner, step840 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
+   "vo_tokens": [
+    "step840_1806_selfloop"
+   ],
+   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step840"
+  },
+  {
+   "pattern": "expb-stage2-ondemand-sft-step281",
+   "display": "27B EXP-B stage-2 ondemand reasoner step281",
+   "train_reasoning": "yes",
+   "group": "expb_stage2_27b_gtobs",
+   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage.",
+   "vo_tokens": [
+    "expb_stage2_ondemand_step281"
+   ],
+   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step281"
+  },
+  {
    "pattern": "expb-stage2-ondemand-sft-step562",
    "display": "27B EXP-B stage-2 ondemand reasoner step562",
    "train_reasoning": "yes",
-   "group": "expb_stage2_27b",
+   "group": "expb_stage2_27b_gtobs",
    "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage. See the separate 'step562 (MODEL-obs arm)' row for the real-stage-1-obs drop-in result (FAILED, err-F1 45.07).",
    "vo_tokens": [
     "expb_stage2_ondemand_step562"
@@ -360,7 +395,7 @@
    "pattern": "expb-stage2-ondemand-sft-step840",
    "display": "27B EXP-B stage-2 ondemand reasoner step840",
    "train_reasoning": "yes",
-   "group": "expb_stage2_27b",
+   "group": "expb_stage2_27b_gtobs",
    "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage.",
    "vo_tokens": [
     "expb_stage2_ondemand_step840"

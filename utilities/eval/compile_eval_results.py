@@ -350,6 +350,12 @@ def _load_allowlist():
                 # optional: keep ONLY this thinking-mode row for this model ("on"/"off"). Used to drop a
                 # degenerate contrast row (e.g. a reasoning model served thinkoff collapses) — keep the on row.
                 "keep_thinking": (e.get("keep_thinking") or "").strip().lower(),
+                # optional: a labeled section banner row is written before this entry's group when
+                # `section` differs from the previous kept entry's section (2026-07-06). Distinct
+                # from `group` (which only controls the blank-row spacer) — a section groups several
+                # `group`s under one titled row, e.g. "VOBs experiments" spanning vobs2906_bakeoff +
+                # vobs2906_reasoning. Blank on most entries (no section = no banner).
+                "section": (e.get("section") or "").strip(),
             })
     # Both _match_allow and the VO map are FIRST-MATCH substring maps, so a BROAD pattern listed
     # before a more SPECIFIC one would steal the specific row's curated display/train_reasoning. That
@@ -461,13 +467,23 @@ def _write_csv(path: Path, row_items, fields):
             _th = {"off": 0, "on": 1, "unknown": 2}
             ordered = sorted(row_items, key=lambda kv: (kv[1].get("_order", 1e9),
                                                         _th.get(kv[1].get("eval_thinking", ""), 3)))
-            n, prev_group = 0, None
+            n, prev_group, prev_section = 0, None, None
             for _key, row in ordered:
                 g = row.get("_group", "")
+                sec = row.get("_section", "")
                 if prev_group is not None and g != prev_group:
                     w.writerow({k: "" for k in fields})  # blank separator row between groups
+                # SECTION BANNER (2026-07-06): a titled row spanning several `group`s, written once
+                # right after that blank separator when `_section` changes into a non-empty value —
+                # e.g. "VOBs experiments" ahead of the vobs2906 rows. `display` carries the title;
+                # every other field stays blank so it reads as a header, not a data row.
+                if sec and sec != prev_section:
+                    banner = {k: "" for k in fields}
+                    banner["display"] = sec
+                    w.writerow(banner)
                 w.writerow({k: row.get(k, "") for k in fields})
                 prev_group = g
+                prev_section = sec
                 n += 1
             return n
         ordered = sorted(row_items, key=lambda kv: (0 if _is_baseline(kv[1].get("model", ""), kv[1].get("display", "")) else 1, kv[0]))
@@ -1374,6 +1390,7 @@ def main() -> int:
                 r["train_sample_count"] = entry["train_sample_count"]
             r["_order"] = entry["order"]        # allowlist position (board ordering)
             r["_group"] = entry["group"]        # group bucket (blank row inserted between groups)
+            r["_section"] = entry["section"]    # section banner label (see _load_allowlist)
             kept.append((k, r))
         dropped = len(items) - len(kept)
         print(f"[allowlist] {MODEL_ALLOWLIST.name}: {len(allow)} patterns -> kept {len(kept)}/{len(items)} rows ({dropped} off-board)")
