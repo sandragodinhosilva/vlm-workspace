@@ -59,6 +59,17 @@
    "note": "fresh 1506 aux run-id (when nodes free)"
   },
   {
+   "pattern": "qwen3.5-397b-a17b__oracle_gtobs_1806",
+   "display": "Oracle 397B visual-obs cat (ceiling, GT-fed s1) [1806]",
+   "train_reasoning": "NA",
+   "group": "oracle_397b",
+   "note": "CEILING/reference row (2026-07-07), 1806 cohort: 397B REASONING over the PRECOMPUTED GT observations (oracle_2906_merged_k5majority_categorical_1806_test.json fed as stage-1 via --precomputed-visual-obs) \u2014 i.e. 'what if stage-2 always got perfect stage-1 obs'. NOT agreement (obs IS the GT here, agreement would be trivial/undefined) \u2014 this populates vo_s1/vo_s2 severity metrics instead, distinct from the 1105 agreement-only ceiling row below. 2260/2260 samples, 0 failures. Raw (v1): severity_acc=0.7715, severity_mae=0.3614, err_f1=0.7441. v2 (evaluate_vo rescore, name-join fix): severity_acc=0.7779, severity_mae=0.3543, err_f1=0.7461. LISTED BEFORE the plain-397B/agreement-ceiling entries below because its pattern is a substring of the plain-397B vo_path \u2014 first-match order matters here, don't reorder without re-testing.",
+   "vo_path": "/mnt/data/shared/models/Qwen3.5-397B-A17B__oracle_gtobs_1806",
+   "vo_tokens": [
+    "qwen3.5-397b-a17b_1806_gtobs_thinkon"
+   ]
+  },
+  {
    "pattern": "shared/models/qwen3.5-397b",
    "display": "Qwen3.5-397B (distillation target; plain obs not oracle)",
    "train_reasoning": "NA",
@@ -75,7 +86,7 @@
    "display": "Oracle 397B visual-obs cat (ceiling)",
    "train_reasoning": "NA",
    "group": "oracle_397b",
-   "note": "CEILING/reference row: the 397B ORACLE visual-obs (categorical) scored vs HUMAN GT \u2014 the agreement side=b (b=oracle) constant present in every testonly agreement file. Agree-F1 0.8608 / Acc 0.9177 / Prec 0.8619 / Rec 0.8597. NOT a deployable model: it's the oracle-obs-vs-human upper bound the SFT models are distilled toward. Distinct from the 397B-plain row above (that's side=a, the model run plain, agree-F1 33.07).",
+   "note": "CEILING/reference row: the 397B ORACLE visual-obs (categorical) scored vs HUMAN GT \u2014 the agreement side=b (b=oracle) constant present in every testonly agreement file. Agree-F1 0.8608 / Acc 0.9177 / Prec 0.8619 / Rec 0.8597. NOT a deployable model: it's the oracle-obs-vs-human upper bound the SFT models are distilled toward. Distinct from the 397B-plain row above (that's side=a, the model run plain, agree-F1 33.07). 1105 cohort only.",
    "oracle_ceiling": true,
    "vo_agree_side": "b",
    "vo_agree_source": "agreement_oracle_obs_cat_union5_step339_testonly_thinkoff.json"
@@ -326,7 +337,7 @@
   },
   {
    "pattern": "step562_1806_modelobs_4bcatk5maj987",
-   "display": "27B EXP-B stage-2 ondemand reasoner step562 (MODEL-obs arm)",
+   "display": "27B EXP-B stage-2 ondemand reasoner step562 (MODEL-obs arm) ⚠️ L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_modelobs",
    "section": "VObs ondemand reasoner",
@@ -338,7 +349,7 @@
   },
   {
    "pattern": "step281_1806_selfloop",
-   "display": "27B EXP-B stage-2 ondemand reasoner step281 (SELF-LOOP arm)",
+   "display": "27B EXP-B stage-2 ondemand reasoner step281 (SELF-LOOP arm) ⚠️ L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_selfloop",
    "note": "EXP-B native stage-2 reasoner, step281 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
@@ -349,7 +360,7 @@
   },
   {
    "pattern": "step562_1806_selfloop",
-   "display": "27B EXP-B stage-2 ondemand reasoner step562 (SELF-LOOP arm)",
+   "display": "27B EXP-B stage-2 ondemand reasoner step562 (SELF-LOOP arm) ⚠️ L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_selfloop",
    "note": "EXP-B native stage-2 reasoner, step562 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
@@ -360,7 +371,7 @@
   },
   {
    "pattern": "step840_1806_selfloop",
-   "display": "27B EXP-B stage-2 ondemand reasoner step840 (SELF-LOOP arm)",
+   "display": "27B EXP-B stage-2 ondemand reasoner step840 (SELF-LOOP arm) ⚠️ L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_selfloop",
    "note": "EXP-B native stage-2 reasoner, step840 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
@@ -371,7 +382,7 @@
   },
   {
    "pattern": "expb-stage2-ondemand-sft-step281",
-   "display": "27B EXP-B stage-2 ondemand reasoner step281",
+   "display": "27B EXP-B stage-2 ondemand reasoner step281 ⚠️ L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs",
    "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage.",
@@ -382,10 +393,10 @@
   },
   {
    "pattern": "expb-stage2-ondemand-sft-step562",
-   "display": "27B EXP-B stage-2 ondemand reasoner step562",
+   "display": "27B EXP-B stage-2 ondemand reasoner step562 ⚠️ L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs",
-   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage. See the separate 'step562 (MODEL-obs arm)' row for the real-stage-1-obs drop-in result (FAILED, err-F1 45.07). Agreement (2026-07-07): eval_all.sh's auto-agreement stage from the 07-07 full-eval run generated its own dedicated stage-1 obs (NOT the single-stage severity file) and scored it vs 1806 human GT -- micro-F1 21.30%, n=3213, acc=68.04%.",
+   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage. See the separate 'step562 (MODEL-obs arm)' row for the real-stage-1-obs drop-in result (FAILED, err-F1 45.07). Agreement (2026-07-07): eval_all.sh's auto-agreement stage from the 07-07 full-eval run generated its own dedicated stage-1 obs (NOT the single-stage severity file) and scored it vs 1806 human GT -- micro-F1 21.30%, n=3213, acc=68.04%. ⚠️ L/R-INVERSION (found 2026-07-07): this stage-1 obs was self-generated by the mirror-trained checkpoint -- the 21.30% agreement number is ALSO compromised (same defect class as the SELF-LOOP arm), disregard — redo after the _flipfix retrain.",
    "vo_tokens": [
     "expb_stage2_ondemand_step562",
     "expb-stage2-ondemand-sft-step562"
@@ -394,7 +405,7 @@
   },
   {
    "pattern": "expb-stage2-ondemand-sft-step840",
-   "display": "27B EXP-B stage-2 ondemand reasoner step840",
+   "display": "27B EXP-B stage-2 ondemand reasoner step840 ⚠️ L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs",
    "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage.",

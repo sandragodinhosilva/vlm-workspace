@@ -19,8 +19,26 @@
 # (verified 2,157/2,157; include-options is auto-forced OFF by evaluate.py).
 # GATE B target: beat fixed-sft2812 2-call vo_s2 = 55.1 on GT-obs.
 
+# MODE=gtobs (default): single-stage on the test BUILD (GT obs inlined in the stored prompt).
+# MODE=modelobs: two-stage stance eval on repetitions_test with MODEL stage-1 obs:
+#   OBS_JSON=<obs_*.json from the stage-1 model> OBS_TAG=<short stem for the output filename>
+#   Descriptions come byte-exact from the build via --stage2-desc-build (commit 4595fd0);
+#   the ~103 reps without obs coverage hard-error per sample (counted, never silent).
+# MODE=selfloop: two-stage on repetitions_test, NO --precomputed-visual-obs — the SAME EXP-B
+#   checkpoint answers its own stage-1 categorical Q/A prompt (build_stage1_prompt, live model
+#   call, one extra query per rep) then consumes those self-generated obs in its own stage-2
+#   stance prompt. This checkpoint was never trained on the stage-1 task; quality is unmeasured.
+#   Distinct row from gtobs/modelobs (2 rows, 2 strategies) via OBS_TAG=selfloop.
+# MODE=singlestage (2026-07-06): the SINGLE-STAGE VO family every other board model gets — plain
+#   eval/evaluate.py, NO --two-stage, NO obs of any kind, model emits severity directly from the
+#   video using the dataset's own stored prompt (byte-exact, same template as every other
+#   single-stage board row; verified 07-06 against the 1105 test set's prompt — only exercise-
+#   specific content differs per cohort, template identical). This is an intentional OFF-TRAINING
+#   probe: EXP-B was SFT'd on a stance/two-stage prompt expecting an obs block, so this measures
+#   whether it retains any severity-judgment ability without its trained scaffolding at all.
 set -uo pipefail
 CKPT="${CKPT:?set CKPT=/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-stepNNN}"
+MODE="${MODE:-gtobs}"
 STEP=$(basename "$CKPT" | grep -oE 'step[0-9]+')
 PORT=$(( 8300 + (SLURM_JOB_ID % 100) ))
 PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
@@ -34,9 +52,29 @@ VPT=/home/sgsilva/vlm-post-training
 # *_gtobs_DESCDRIFT_thinkon.json). Single-stage on the build uses the stored prompt verbatim —
 # no reconstruction, no drift. (The two-stage stance path is still needed for the MODEL-obs arm;
 # its description source must be fixed to build_ref_desc before that arm runs.)
-OUT=/mnt/data/sgsilva/results/visual_obs_runs/stage2_expb_stage2_ondemand_${STEP}_gtobsbuild_thinkon.json
-TESTDIR=/mnt/data/sgsilva/datasets/1806/expb_stage2_from_raw_ondemand_test_flagkeep
+BUILD=/mnt/data/sgsilva/datasets/1806/expb_stage2_from_raw_ondemand_test_flagkeep
 EXPECTED_N=2157
+if [ "$MODE" = "modelobs" ]; then
+    OBS_JSON="${OBS_JSON:?MODE=modelobs needs OBS_JSON=<stage-1 obs json>}"
+    OBS_TAG="${OBS_TAG:?MODE=modelobs needs OBS_TAG=<short output stem>}"
+    OUT=/mnt/data/sgsilva/results/visual_obs_runs/stage2_expb_stage2_ondemand_${STEP}_1806_modelobs_${OBS_TAG}_thinkon.json
+    TESTDIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test
+elif [ "$MODE" = "selfloop" ]; then
+    OUT=/mnt/data/sgsilva/results/visual_obs_runs/stage2_expb_stage2_ondemand_${STEP}_1806_selfloop_thinkon.json
+    TESTDIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test
+    # 2260 total reps in repetitions_test; selfloop has no GT-obs-coverage gate, so N=2260 not 2157.
+    EXPECTED_N=2260
+elif [ "$MODE" = "singlestage" ]; then
+    # Filename carries "singlestage" (not "stage2_") so the compiler's vo_s1 ingestion (not vo_s2)
+    # picks it up, matching every other board model's single-stage family.
+    OUT=/mnt/data/sgsilva/results/visual_obs_runs/expb_stage2_ondemand_${STEP}_1806_singlestage_thinkon.json
+    TESTDIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test
+    EXPECTED_N=2260
+else
+    # board files carry the _1806 cohort tag (the first run's files were renamed on disk)
+    OUT=/mnt/data/sgsilva/results/visual_obs_runs/stage2_expb_stage2_ondemand_${STEP}_1806_gtobsbuild_thinkon.json
+    TESTDIR=$BUILD
+fi
 
 echo "=== EXP-B GATE-B eval: $CKPT (thinkON, port $PORT, node $(hostname -s)) ==="
 
@@ -56,10 +94,19 @@ done
 
 # 3. Eval (two passes: --resume tops off stragglers)
 cd "$VPT"
+EXTRA_ARGS=()
+if [ "$MODE" = "modelobs" ]; then
+    EXTRA_ARGS=(--two-stage --stage2-stance ondemand --stage2-desc-build "$BUILD" --precomputed-visual-obs "$OBS_JSON")
+elif [ "$MODE" = "selfloop" ]; then
+    # NO --precomputed-visual-obs: evaluate.py falls through to a LIVE stage-1 call
+    # (build_stage1_prompt, 2906 categorical) served by this SAME checkpoint.
+    EXTRA_ARGS=(--two-stage --stage2-stance ondemand --stage2-desc-build "$BUILD" --visual-obs-variant categorical)
+fi
 for pass in 1 2; do
-    echo "=== eval pass $pass ==="
+    echo "=== eval pass $pass (mode=$MODE) ==="
     "$PY" eval/evaluate.py \
       --test-dataset-dir "$TESTDIR" \
+      "${EXTRA_ARGS[@]}" \
       --model "$CKPT" \
       --server-url "http://127.0.0.1:${PORT}/v1" \
       --max-tokens 32768 \

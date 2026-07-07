@@ -76,6 +76,14 @@ def _load_jsonl(p: Path):
         status = r.get("_row_status", r.get("_twin_status", "ok"))
         if status != "ok":
             continue
+        # some generators (e.g. image reasoning) store `messages` JSON-stringified
+        # rather than as a native list -- normalize so downstream code (which
+        # assumes a list of dicts) doesn't crash on `.get()` against a str.
+        if isinstance(r.get("messages"), str):
+            try:
+                r["messages"] = json.loads(r["messages"])
+            except json.JSONDecodeError:
+                pass
         rows.append(r)
     return _JsonlDataset(rows)
 
@@ -194,6 +202,7 @@ _DEFAULT_META_FIELDS = (
     "exercise_name", "body_region", "is_lr_pair", "task", "correct_answer",
     "reasoning_added", "reasoning_model",
     "reasoning_prompt_style", "reasoning_origin",
+    "_pitfall_tags", "_pitfall_retry_count",
     "reasoning_judge_decision", "reasoning_regenerated", "reasoning_judge_model",
     "reasoning_repair_tags", "reasoning_judge_prompt",
     # vlm-judge sample/audit output (surfaced in §0 when present):
@@ -323,7 +332,9 @@ def _render(label, d, n, w, meta_fields, group_cols=None):
             w("\n### 1. SAMPLE-QUALITY JUDGE PROMPT (judge → sample verdict) ###")
             w(judge_p)
         else:
-            w("\n### 1. GENERATION PROMPT ###")
+            w("\n### 1. GENERATION PROMPT (sent to the TEACHER only — includes the "
+              "correct answer/reference + instructions the student never sees; NOT "
+              "what the student model is trained on) ###")
             w(gen_p or _prompt_of(r) or "<no generation_prompt/judge_prompt column>")
 
         # For a reasoning pipeline this is the model's <think> trace; for a
@@ -342,7 +353,9 @@ def _render(label, d, n, w, meta_fields, group_cols=None):
         w("\n### 3. RAW MODEL OUTPUT ###")
         w(_raw_of(r) or "<no raw_model_output/raw_response column>")
 
-        w("\n### 4. PARSED OUTPUT (messages) ###")
+        w("\n### 4. PARSED OUTPUT (messages) — the actual SFT row; the [user] turn "
+          "here is what the student model is trained/served on, and MUST be "
+          "byte-identical to the NR source row's [user] turn (the _2706 contract) ###")
         msgs = r.get("messages")
         if msgs:
             for m in msgs:

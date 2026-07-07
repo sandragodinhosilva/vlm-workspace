@@ -56,6 +56,19 @@ COPY_DIR = MASTER_DIR / "runs"
 MODEL_ALLOWLIST = Path("/home/sgsilva/utilities/eval/master_models.json")
 ERA_FAMILIES = ("4b", "27b")  # only these families get split files in the new era (2026-06-18)
 
+# VO-usage grounding scorer (2026-07-07): reuse the canonical implementation instead of
+# re-implementing the block/answer matching here. Soft dependency — if the repo script is
+# missing/broken, the board still builds and the vo_s2_usage_* columns stay blank (loudly).
+_VO_USAGE_SCRIPT = Path("/home/sgsilva/vlm-post-training/visual_obs/measure_stage2_vo_usage.py")
+try:
+    import importlib.util as _ilu
+    _vou_spec = _ilu.spec_from_file_location("measure_stage2_vo_usage", _VO_USAGE_SCRIPT)
+    _vou = _ilu.module_from_spec(_vou_spec)
+    _vou_spec.loader.exec_module(_vou)
+except Exception as _vou_err:  # noqa: BLE001 — any import failure just disables the columns
+    print(f"[vo-usage] scorer unavailable ({_vou_err}) — vo_s2_usage_* columns will stay BLANK")
+    _vou = None
+
 # one row per (model_key, thinking); model_key = the served model basename / display name.
 # Column order = logical reading order: IDENTITY -> WHEN -> HEADLINE SCORES (benchmarks +
 # aux + visual-obs) -> AUX DETAIL -> TRAINING PROVENANCE -> SOURCE PROVENANCE (bookkeeping).
@@ -176,6 +189,15 @@ FIELDS = [
     "_spacer_detail",
     *(f"vo_s1_blk_{suffix}" for suffix, _h, _src in _VO_BLOCK),
     *(f"vo_s2_blk_{suffix}" for suffix, _h, _src in _VO_BLOCK),
+    # --- VO USAGE (grounding proxy, 2026-07-07) — did the stage-2 reasoner's trace actually
+    #     reference the VO answers it was fed? Computed per stage2_* file from its own
+    #     per_sample_results via measure_stage2_vo_usage.py (heuristic matcher; absolute rates are
+    #     INFLATED — the shuffled control quantifies the floor, so read HEADROOM = mean − control,
+    #     not the raw mean). Blank for single-stage rows / files with no parseable VO block.
+    #     See ~/.claude/reports/visual_observations/2026-07-07_stage2_vo_usage_metric.md ---
+    "_spacer_vo_usage",
+    "vo_s2_usage_mean", "vo_s2_usage_full_pct", "vo_s2_usage_zero_pct",
+    "vo_s2_usage_ctrl", "vo_s2_usage_headroom",
 ]
 
 # Human-readable header labels for the CSV (so a paste into Excel reads cleanly). Internal field
@@ -215,7 +237,10 @@ HEADER_LABELS = {
     # blank spacer columns between metric groups (identity │ benchmarks │ VO │ aux │ metadata)
     "_spacer_identity": "", "_spacer_bench": "", "_spacer_vo": "", "_spacer_aux": "",
     "_spacer_prov_bench": "", "_spacer_prov_vo": "", "_spacer_prov_train": "",
-    "_spacer_detail": "", "_spacer_two_stage": "",
+    "_spacer_detail": "", "_spacer_two_stage": "", "_spacer_vo_usage": "",
+    "vo_s2_usage_mean": "VO Usage Mean %", "vo_s2_usage_full_pct": "VO Usage 100% Samples %",
+    "vo_s2_usage_zero_pct": "VO Usage 0% Samples %",
+    "vo_s2_usage_ctrl": "VO Usage Shuffled Ctrl %", "vo_s2_usage_headroom": "VO Usage Headroom (pp)",
 }
 # Detail-block headers: the formatted-CSV column NAME (Acc/F1 Score/Precision/...) for each block
 # field, both stages. The stage is carried by the row-1 band (see GROUP_BANDS), so the column label
@@ -248,6 +273,9 @@ GROUP_BANDS = {
 for _pfx, _stage in (("vo_s1", "single-stage"), ("vo_s2", "two-stage")):
     for _suffix, _subband in _VO_BLOCK_SUBBANDS.items():
         GROUP_BANDS[f"{_pfx}_blk_{_suffix}"] = _subband.format(stage=_stage)
+GROUP_BANDS["vo_s2_usage_mean"] = (
+    "two-stage: VO usage (grounding proxy — heuristic matcher, read Headroom not the raw Mean)"
+)
 
 
 def _band_row(fields):
@@ -951,7 +979,7 @@ def _rows():
             # A bare "_1105" in fname" also matches a model's TRAINING-DATA tag baked into its own
             # checkpoint name (e.g. "oracle_obs_cat_reasoning_1105_step336_singlestage_*.json"),
             # which would silently detach that model's VO cells onto a phantom cohort row.
-            m = re.search(r"_(1105|1806)(?=_think|_gtobsbuild|_modelobs|_selfloop|_singlestage|\.json$)", fname)
+            m = re.search(r"_(1105|1806)(?=_think|_gtobsbuild|_gtobs_|_modelobs|_selfloop|_singlestage|\.json$)", fname)
             return m.group(1) if m else ""
         def _vo_row_path(model_path: str, cohort: str) -> str:
             # cohort-suffixed PSEUDO-path = the row key; only when a cohort tag is present so
@@ -1028,7 +1056,14 @@ def _rows():
                 _is_expb_modelobs = bool(_vo_cohort(name)) and "expb" in name and "modelobs" in name
                 _is_expb_selfloop = bool(_vo_cohort(name)) and "expb" in name and "selfloop" in name
                 _is_expb_native = _is_expb_gtobs or _is_expb_modelobs or _is_expb_selfloop
-                if not (_is_cohort_bakeoff or _is_expb_native) and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
+                # 397B GT-OBS CEILING EXCEPTION (2026-07-07): the 397B reasoner run over the
+                # PRECOMPUTED GT observations (--precomputed-visual-obs = the oracle 2906 file) is
+                # not sft2812 and not an EXP-B native-reasoner arm — it's a distinct reference-ceiling
+                # family ("stage-2 with a perfect stage-1"), one file, cohort-tagged + name-anchored
+                # to avoid ever admitting some OTHER unrelated 397B stage2 run by accident.
+                _is_397b_gtobs_ceiling = (bool(_vo_cohort(name)) and "397b" in name and "_gtobs_" in name
+                                           and "expb" not in name)
+                if not (_is_cohort_bakeoff or _is_expb_native or _is_397b_gtobs_ceiling) and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
                     continue   # not the sft2812 reasoner → historical, don't put it on the board
                 # Accept a near-complete sweep result. Threshold scales with the cohort's N (1806 ≈
                 # 2260 vs 1105 = 1181) — a fixed 1170 would wrongly reject a full 1806 run's tail. Use
@@ -1037,7 +1072,8 @@ def _rows():
                 # no-GT-obs reps) → floor 2135 (99% of 2157), not the full-cohort 2237.
                 _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
                 _min = (2135 if _is_expb_native else
-                        (2237 if _vo_cohort(name) == "1806" else 1169) if _is_cohort_bakeoff else 1170)
+                        (2237 if _vo_cohort(name) == "1806" else 1169)
+                        if (_is_cohort_bakeoff or _is_397b_gtobs_ceiling) else 1170)
                 if _eN < _min:
                     continue
             else:
@@ -1096,6 +1132,34 @@ def _rows():
                     r["vo_s1_eval_n"] = f"{_ev1}/{_fl1}" if _fl1 else str(_ev1)
             # full detail block (all formatted-CSV metrics) for this stage — appended after metadata
             _write_vo_block(r, m, "vo_s2" if is_two else "vo_s1")
+            # VO USAGE (two-stage only, 2026-07-07): grounding proxy computed from this file's own
+            # per_sample_results. Shuffled control = each VO block scored against the NEXT sample's
+            # trace (deterministic shift-by-1); headroom = mean − control is the readable signal
+            # (the heuristic matcher fires on unrelated traces often, so the raw mean is inflated).
+            if is_two and _vou is not None:
+                # Only samples with a NON-EMPTY reasoning trace are measurable: a thinkoff
+                # reasoner emits no <think> content, and scoring its samples would render as
+                # "100% ungrounded" when the truth is "nothing to measure" (distinct-sentinel
+                # rule). Files whose traces are all empty leave the columns BLANK.
+                _ps = [s for s in (d.get("per_sample_results") or [])
+                       if (s.get("reasoning_content") or "").strip()]
+                _scored = [x for x in (_vou.score_sample(s) for s in _ps) if x is not None]
+                if _scored:
+                    _mu = sum(x["vo_usage_rate"] for x in _scored) / len(_scored)
+                    r["vo_s2_usage_mean"] = round(_mu * 100, 2)
+                    r["vo_s2_usage_full_pct"] = round(
+                        100 * sum(1 for x in _scored if x["vo_usage_rate"] == 1.0) / len(_scored), 2)
+                    r["vo_s2_usage_zero_pct"] = round(
+                        100 * sum(1 for x in _scored if x["vo_usage_rate"] == 0.0) / len(_scored), 2)
+                    # Pairs each sample against a DIFFERENT exercise_id's trace (falls back to a
+                    # different session_id) — NOT shift-by-1, since this file is session-grouped
+                    # (adjacent samples are usually the same person/exercise, which would make the
+                    # control look artificially similar to the real trace). See the function's
+                    # docstring in measure_stage2_vo_usage.py for the full rationale.
+                    _cm = _vou.shuffled_control_mean(_ps)
+                    if _cm is not None:
+                        r["vo_s2_usage_ctrl"] = round(_cm * 100, 2)
+                        r["vo_s2_usage_headroom"] = round((_mu - _cm) * 100, 2)
             # VO test-set path each eval ran on (1181-rep split) — read per-file, not hardcoded
             _tsd = str((d.get("metadata") or {}).get("test_dataset_dir", "")).strip()
             if _tsd and not r.get("vo_test_set"):

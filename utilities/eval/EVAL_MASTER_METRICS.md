@@ -163,6 +163,23 @@ Distinct from `Qwen3.5-397B (… plain obs)` which is **side=a** (the model run 
 Config-driven via `master_models.json` (`oracle_ceiling: true` + `vo_agree_side` + `vo_agree_source`).
 Benchmark/aux/detection columns are blank — it was never run on those.
 
+### 3.5b Two-stage VO USAGE (grounding proxy) — trailing columns (2026-07-07)
+Five columns at the END of the CSV, populated per `stage2_*` file from its own
+`per_sample_results` via `vlm-post-training/visual_obs/measure_stage2_vo_usage.py`
+(imported by the compiler; if that script is missing the columns stay blank, loudly):
+
+| Column | Meaning |
+|---|---|
+| VO Usage Mean % | mean fraction of the fed VO answers the reasoning trace references (exact phrase or ≥60% content-token overlap) |
+| VO Usage 100% Samples % | samples where EVERY fed observation is referenced |
+| VO Usage 0% Samples % | samples referencing NONE (fully ungrounded reasoning) |
+| VO Usage Shuffled Ctrl % | same matcher run against an UNRELATED sample's trace — paired by a DIFFERENT `exercise_id` (falls back to a different `session_id`), NOT shift-by-1: eval files are session-grouped, so a naive neighbor is usually the same person/exercise and its shared vocabulary would inflate the control |
+| VO Usage Headroom (pp) | Mean − Ctrl — **the number to read**; the heuristic matcher fires on unrelated traces often (ctrl ≈ 35–55), so the raw Mean is inflated |
+
+Only samples with a NON-EMPTY `reasoning_content` are measurable — a thinkoff reasoner's file
+leaves the columns BLANK (never rendered as "0% usage"). Full method + caveats:
+`~/.claude/reports/visual_observations/2026-07-07_stage2_vo_usage_metric.md`.
+
 ### 3.6 Pipeline / completeness provenance
 `VO Source (single-stage)` / `VO Source (two-stage)` = the exact JSON each VO number came from.
 `Stage2 Reasoner` (+ thinking) = the reasoner that produced the two-stage numbers (board policy:

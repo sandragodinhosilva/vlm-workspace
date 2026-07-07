@@ -14,11 +14,12 @@
 #   eval_all.sh --model <PATH> --base-model qwen3.5-4b \
 #     --stages aux,visualobs,benchmarks \
 #     --base-url http://localhost:8000/v1 \
-#     --train-group-id mix_12k_1506 --run-id step1299_testset1506 --tag mix_12k_1506_1506testset \
-#     [--thinking on|off] [--testset 1506] [--max-samples N]
+#     --train-group-id mix_12k_2906 --run-id step1299_testset2906 --tag mix_12k_2906_2906testset \
+#     [--thinking on|off] [--testset 2906] [--max-samples N]
 #
 # Stage notes:
-#   aux         -> eval_multimodal_post_sft.sh --testset-1506 (needs --train-group-id + --run-id)
+#   aux         -> eval_multimodal_post_sft.sh --testset-2906 (default; pass --testset 1506 for the
+#                  superseded benchmark) (needs --train-group-id + --run-id)
 #   benchmarks  -> AUTO-generates a temp reasoning:<mode> config from --model, runs
 #                  benchmarks/scripts/run_eval.py, deletes the temp config. Skips/resumes per its
 #                  own logic. (Pass --skip-videomme etc. through --bench-extra if desired.)
@@ -77,7 +78,7 @@ VO_PROCESSED_DIR="${VO_PROCESSED_DIR:-/mnt/data/sgsilva/datasets/1105/1105_test_
 
 # ---- args ----
 MODEL=""; BASE_MODEL="qwen3.5-4b"; STAGES=""; BASE_URL="http://localhost:8000/v1"
-THINKING=""; TRAIN_GROUP_ID=""; RUN_ID=""; TAG=""; TESTSET="1506"; MAX_SAMPLES=""
+THINKING=""; TRAIN_GROUP_ID=""; RUN_ID=""; TAG=""; TESTSET="2906"; MAX_SAMPLES=""
 BENCH_EXTRA=""; PREFLIGHT=0; JUDGE_BASE_URL=""; JUDGE_MODEL=""; BENCH_MAX_TOKENS=32768; BENCH_MAX_TOKENS_SET=0
 SERVE=0; TP=""; MAX_LEN=""; SERVE_WAIT=1800; KEEP_SERVER=0   # --serve: launch+teardown our own vLLM
 FULL_REBUILD=0   # --full-rebuild: end-of-run board rebuild uses --full-scan (picks up exporter/
@@ -364,6 +365,10 @@ PY
       [[ -d /mnt/data/shared/vlm/data/merged_aux_datasets/multimodal_reduced_testset_1506 ]] \
         && echo "  [ok]   aux: testset_1506 present" || { echo "  [FAIL] testset_1506 missing"; ok=0; }
     fi
+    if [[ "$TESTSET" == 2906 ]]; then
+      [[ -d /mnt/data/shared/vlm/data/merged_aux_datasets/multimodal_reduced_testset_2906 ]] \
+        && echo "  [ok]   aux: testset_2906 present" || { echo "  [FAIL] testset_2906 missing"; ok=0; }
+    fi
     # OUTPUT MANIFEST (aux): the per-run tree + the rich eval_matrix the board reads.
     _aux_run="${RUN_ID:-<run-id>}"
     _aux_dir="$VPT/aux_tasks/evals/$BASE_MODEL/multimodal/${TRAIN_GROUP_ID:-<group>}/final_sft/$_aux_run"
@@ -529,6 +534,7 @@ if have_stage aux; then
       --max-tokens "$vmax" --video-max-tokens "$vmax"
       --tag "$aux_tag" --run-id "$aux_run" )
     [[ "$TESTSET" == 1506 ]] && args+=( --testset-1506 )
+    [[ "$TESTSET" == 2906 ]] && args+=( --testset-2906 )
     [[ -n "$MAX_SAMPLES" ]] && args+=( --max-samples "$MAX_SAMPLES" )
     ( cd "$VPT" && "${args[@]}" ) \
       && STAGE_RESULTS+=("aux: OK -> $VPT/aux_tasks/evals/$BASE_MODEL/multimodal/$TRAIN_GROUP_ID/final_sft/$aux_run/") \
