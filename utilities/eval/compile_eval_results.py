@@ -951,7 +951,7 @@ def _rows():
             # A bare "_1105" in fname" also matches a model's TRAINING-DATA tag baked into its own
             # checkpoint name (e.g. "oracle_obs_cat_reasoning_1105_step336_singlestage_*.json"),
             # which would silently detach that model's VO cells onto a phantom cohort row.
-            m = re.search(r"_(1105|1806)(?=_think|_gtobsbuild|_modelobs|_selfloop|\.json$)", fname)
+            m = re.search(r"_(1105|1806)(?=_think|_gtobsbuild|_modelobs|_selfloop|_singlestage|\.json$)", fname)
             return m.group(1) if m else ""
         def _vo_row_path(model_path: str, cohort: str) -> str:
             # cohort-suffixed PSEUDO-path = the row key; only when a cohort tag is present so
@@ -1266,6 +1266,51 @@ def _rows():
             _r["vo_agree_prec"] = _am("precision")
             _r["vo_agree_rec"] = _am("recall")
             _r["vo_s1_source"] = f"{_src} (side={_side}, oracle ceiling)"
+
+    # ---- MERGE bare-path aux/bench orphans into their cohort/arm-tagged VO sibling (2026-07-07) ----
+    # Aux/benchmark ingestion keys purely on (real served path, thinking) — it has no concept of VO
+    # cohort/arm, because aux (multimodal_reduced_testset_1506) and benchmarks are cohort-agnostic by
+    # nature. That's fine for every ordinary model. But a cohort/arm-tagged model (EXP-B, vobs2906)
+    # whose aux+benchmarks get run in the SAME job as its cohort-specific VO eval creates a SECOND,
+    # bare-path row for the same real checkpoint — VO data lands on the `__cohort_*`/`__arm_*` row,
+    # aux/bench data lands on a orphaned twin with no cohort tag at all (caught live: EXP-B step562's
+    # aux+MMMU/VSI/VMME rendered as their own untagged "27B EXP-B ... step562" row, split from the VO
+    # data on "... step562 [1806]"). Fold the aux/bench-only orphan into its cohort/arm sibling ONLY
+    # when the merge is unambiguous: the orphan carries no VO data of its own, and exactly one
+    # cohort/arm-tagged row for the same (real path, thinking) is missing aux/bench data.
+    _VO_FIELD_PREFIXES = ("vo_s1_", "vo_s2_", "vo_agree_")
+    def _has_vo_data(rr):
+        return any(rr.get(k) not in (None, "") for k in rr if any(k.startswith(p) for p in _VO_FIELD_PREFIXES))
+    def _has_aux_or_bench_data(rr):
+        return bool(rr.get("aux_acc_weighted_3mod") or rr.get("MMMU_val") or rr.get("Video_MME")
+                    or rr.get("VSI_Bench") or rr.get("IF_Bench"))
+    _orphan_keys = [k for k in rows if not k[0].endswith(tuple(f"__cohort_{c}" for c in ("1105", "1806")))
+                    and "__arm_" not in k[0] and not _has_vo_data(rows[k]) and _has_aux_or_bench_data(rows[k])]
+    for _ok in _orphan_keys:
+        _orow = rows[_ok]
+        _real = _orow.get("model") or _ok[0]
+        _think = _ok[1]
+        _siblings = [k for k in rows if k != _ok and k[1] == _think and rows[k].get("model") == _real
+                     and (k[0].endswith(tuple(f"__cohort_{c}" for c in ("1105", "1806"))) or "__arm_" in k[0])
+                     and not _has_aux_or_bench_data(rows[k])]
+        # A checkpoint can have MULTIPLE cohort/arm rows (e.g. EXP-B step562 = GT-obs + MODEL-obs
+        # arm + SELF-LOOP arm, all sharing this real path) — aux/benchmarks are cohort/arm-AGNOSTIC
+        # (they don't vary by which VO obs-source arm was tested), so they belong on the checkpoint's
+        # CANONICAL row: the plain cohort-tagged one (`__cohort_*`, no `__arm_*`), not an alternate
+        # eval-condition arm. Prefer that when present; only fall back to a bare single match.
+        _plain_cohort_siblings = [k for k in _siblings if "__arm_" not in k[0]]
+        if len(_plain_cohort_siblings) == 1:
+            _siblings = _plain_cohort_siblings
+        if len(_siblings) != 1:
+            continue  # still ambiguous (0 or >1 candidate) — leave both rows, don't guess
+        _sib = rows[_siblings[0]]
+        for _k, _v in _orow.items():
+            if _k in ("model", "eval_thinking", "owner", "display", "_order", "_group", "_section",
+                      "_cohort", "_arm"):
+                continue  # identity/curation fields — the sibling's own values win
+            if _v not in (None, "") and not _sib.get(_k):
+                _sib[_k] = _v
+        del rows[_ok]
 
     # ---- FINALIZE: the two timestamps per row ----
     #  model_created = mtime of the served checkpoint (when the model was created/exported).
