@@ -385,9 +385,10 @@
    "display": "27B EXP-B stage-2 ondemand reasoner step562",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs",
-   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage. See the separate 'step562 (MODEL-obs arm)' row for the real-stage-1-obs drop-in result (FAILED, err-F1 45.07).",
+   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage. See the separate 'step562 (MODEL-obs arm)' row for the real-stage-1-obs drop-in result (FAILED, err-F1 45.07). Agreement (2026-07-07): eval_all.sh's auto-agreement stage from the 07-07 full-eval run generated its own dedicated stage-1 obs (NOT the single-stage severity file) and scored it vs 1806 human GT -- micro-F1 21.30%, n=3213, acc=68.04%.",
    "vo_tokens": [
-    "expb_stage2_ondemand_step562"
+    "expb_stage2_ondemand_step562",
+    "expb-stage2-ondemand-sft-step562"
    ],
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step562"
   },
