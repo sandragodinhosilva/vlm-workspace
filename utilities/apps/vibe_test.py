@@ -15,14 +15,16 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
 import gradio as gr
-import requests
 from openai import OpenAI
+
+sys.path.insert(0, str(Path(__file__).parent / "scripts"))
+from live_inference import scan_cluster, apply_scan_selection  # noqa: E402
 
 # ── defaults ──────────────────────────────────────────────────────────────────
 
@@ -35,13 +37,8 @@ DEFAULT_THINK = True  # request thinking by default (model-dependent)
 TMP_DIR = "/mnt/data/sgsilva/tmp"
 os.makedirs(TMP_DIR, exist_ok=True)
 
-WORKER_NODES = [f"worker-{i}" for i in range(32)]  # worker-0 … worker-31
-
 # Session dataset root — all sessions (10k + 1805) live under 10k/all
 SESSION_ROOT = Path("/mnt/data/shared/vlm/data/10k/all")
-VLLM_PORT = 8000
-VLLM_PORTS = [8000, 8001, 8002, 8003]  # scan a small range so non-8000 servers show up
-SCAN_TIMEOUT = 2.0  # seconds per node
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -682,108 +679,8 @@ def refresh_models(server_url: str):
 
 
 # ── cluster scan ──────────────────────────────────────────────────────────────
-
-def _get_vllm_owner(node: str, port: int = VLLM_PORT) -> str:
-    """SSH to node and return the user OWNING the server on this PORT.
-
-    A node can host several vLLM servers on different ports (e.g. worker-30 with
-    jmendon on :8000 and sgsilva on :8001), so resolve the owner of the process
-    actually LISTENING on `port` — not just the first vllm process on the node.
-    """
-    import subprocess
-    # Find the PID listening on :port (ss → PID), then its user (ps -o user=).
-    # Fall back to a node-wide vllm grep only if the port lookup yields nothing.
-    cmd = (
-        f"pid=$(ss -ltnp 2>/dev/null | grep ':{port} ' "
-        f"| sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p' | head -1); "
-        f"u=$([ -n \"$pid\" ] && ps -o user= -p \"$pid\" 2>/dev/null | tr -d ' '); "
-        f"if [ -n \"$u\" ]; then echo \"$u\"; "
-        f"else ps aux | grep vllm | grep -v grep | awk '{{print $1}}' | head -1; fi"
-    )
-    try:
-        result = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=2", "-o", "StrictHostKeyChecking=no",
-             "-o", "BatchMode=yes", node, cmd],
-            capture_output=True, text=True, timeout=5,
-        )
-        owner = result.stdout.strip()
-        return owner if owner else "?"
-    except Exception:
-        return "?"
-
-
-def _probe_node(node: str, port: int = VLLM_PORT) -> tuple[str, int, list[str], str] | None:
-    """Return (node, port, [model_ids], owner) if a vLLM server is live, else None."""
-    url = f"http://{node}:{port}/v1/models"
-    try:
-        r = requests.get(url, timeout=SCAN_TIMEOUT)
-        if r.status_code == 200:
-            data = r.json()
-            models = [m["id"] for m in data.get("data", [])]
-            owner = _get_vllm_owner(node, port)
-            return node, port, models, owner
-    except Exception:
-        pass
-    return None
-
-
-def scan_cluster() -> tuple[str, list, list[str]]:
-    """
-    Probe all worker nodes in parallel.
-    Returns (scan_summary_text, results, choices).
-    results: list of (node, [model_ids], owner)
-    choices: "worker-N | owner | <model name>" — shown in dropdown
-    """
-    results = []
-    with ThreadPoolExecutor(max_workers=32) as pool:
-        futures = {pool.submit(_probe_node, node, port): (node, port)
-                   for node in WORKER_NODES for port in VLLM_PORTS}
-        for fut in as_completed(futures):
-            r = fut.result()
-            if r is not None:
-                results.append(r)
-
-    if not results:
-        return "No vLLM servers found on worker-0 … worker-31", [], []
-
-    results.sort(key=lambda x: (int(x[0].split("-")[1]), x[1]))
-
-    lines = []
-    choices = []
-    for node, port, models, owner in results:
-        # only annotate the port when it's not the default, to keep labels clean
-        port_tag = "" if port == VLLM_PORT else f":{port}"
-        for mid in models:
-            short = mid.split("/")[-1]  # short name for display
-            label = f"{node}{port_tag} | {owner} | {short}"
-            choices.append(label)
-            lines.append(f"✓ {node}:{port}  [{owner}]  {short}")
-
-    summary = f"Found {len(results)} live server(s):\n" + "\n".join(lines)
-    return summary, results, choices
-
-
-def apply_scan_selection(selected: str, scan_results: list) -> tuple[str, str]:
-    """Given a selection 'worker-N[:PORT] | owner | short_name', return (server_url, full_model_id)."""
-    if not selected or not scan_results:
-        return "", ""
-    parts = [p.strip() for p in selected.split("|")]
-    if len(parts) < 3:
-        return "", ""
-    node_part = parts[0]            # "worker-N" or "worker-N:PORT"
-    short = parts[2]
-    if ":" in node_part:
-        sel_node, sel_port = node_part.split(":", 1)
-        sel_port = int(sel_port)
-    else:
-        sel_node, sel_port = node_part, VLLM_PORT
-    for node, port, models, owner in scan_results:
-        if node == sel_node and port == sel_port:
-            for mid in models:
-                if mid.split("/")[-1] == short:
-                    return f"http://{node}:{port}", mid
-            return f"http://{node}:{port}", models[0] if models else ""
-    return "", ""
+# scan_cluster / apply_scan_selection now live in scripts/live_inference.py
+# (imported at top of file) — this app is the canonical source of that module.
 
 
 # ── activity log ──────────────────────────────────────────────────────────────

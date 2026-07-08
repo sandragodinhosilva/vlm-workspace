@@ -1,30 +1,53 @@
 # Gradio Data-Inspection Apps — Full Audit Report
 
-**Date:** 2026-06-17  
+**Date:** 2026-06-17 (original audit); **facts refreshed:** 2026-07-08 — see §0.
 **Scope:** All Gradio apps across Sandra's home repos; current workflow; staleness audit; speedup proposals; implemented changes.
 
 ---
 
-## 1. Quick-Reference Table
+## 0. 2026-07-08 Refresh Note
 
-| App | Path | Port | Venv | Goal | Created | Last commit | Commits | Status |
-|-----|------|:----:|------|------|:-------:|:-----------:|:-------:|--------|
-| Monitoring dashboard | `apps/monitoring-app/app.py` | 7861 | `browser-app-home-venv` | Pipeline health dashboard — datasets, training metrics, eval results in one view | 2026-02-05 | 2026-04-09 | 24 | ✓ |
-| Video SFT browser | `utilities/apps/video_sft/app.py` | 7862 | `vlm-post-training-home-venv` | Browse generated MCQA video samples; inspect exercise types, tier, messages | 2026-02-19 | 2026-06-30 | 27 | ✓ active (relocated from video-sft-vlm 06-30) |
-| Dataset browser | `vlm-post-training/web/browser-app/app.py` | 7863 | `browser-app-home-venv` | Multi-tab browser for all post-training datasets: image, video, text, reasoning tabs | 2026-03-06 | 2026-06-16 | 8 | ⚠ BROWSER_MIXED_ROOT dataset not on disk |
-| VO severity comparator | `vlm-post-training/web/single_stage_compare_app.py` | 7864 | `vlm-post-training-home-venv` | Compare two single/two-stage eval runs side-by-side: per-rep error detection + video | 2026-05-22 | 2026-05-29 | 5 | ✓ |
-| VO stage-1 comparator | `vlm-post-training/web/human_visual_obs_compare_app.py` | 7865 | `vlm-post-training-home-venv` | Side-by-side visual observations across multiple VLMs vs human ground-truth | 2026-05-04 | 2026-05-28 | 6 | ✓ |
-| SFT data browser | `utilities/apps/sft_text_data_browser.py` | 7866 | `vlm-post-training-home-venv` | Browse and QC text-based SFT datasets (5 MCQA families) from Thrive VLM database | 2026-02-27 | 2026-04-09 | 6 | ✓ |
-| LLM-FMS viewer | `vlm-post-training/web/llm_fms_viewer.py` | 7867 | `vlm-post-training-home-venv` | Inspect image-based LLM-FMS SFT rows: image + prompt + target + metadata | 2026-05-22 | 2026-05-22 | 2 | ✓ |
-| Multimodal eval comparer | `vlm-post-training/web/multimodal_compare_app.py` | 7868 | `vlm-post-training-home-venv` | Side-by-side multimodal eval run comparison with COCO keypoint overlay | 2026-04-21 | 2026-04-21 | 2 | ⚠ hardcoded default dirs stale |
-| Reas-mix inspector | `vlm-post-training/aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py` | 7869 | `browser-app-home-venv` | Quick inspector for the reas2 merged reasoning mix: filter by modality/judge verdict | 2026-04-21 | 2026-04-21 | 1 | ✓ |
-| Prejudge viewer | `utilities/apps/video_sft/prejudge_viewer.py` | 7870 | `vlm-post-training-home-venv` | Inspect LLM prejudge smoke verdicts alongside video frames and post-hoc labels | 2026-06-17 | 2026-06-30 | 1 | ✓ (relocated 06-30) |
-| Mesh viewer | `utilities/apps/video_sft/mesh_viewer.py` | 7871 | `vlm-post-training-home-venv` | Browse SAM-3D-Body overlay videos: mesh render + interactive 3D skeleton + angle signals | 2026-06-17 | 2026-06-30 | 1 | ✗ BROKEN at source (imports `_sam3d_output_dir` never merged into app.py); relocated 06-30 |
-| SAM3D sword viewer | `vlm-post-training/…/sam3d_pilot/sword_viewer.py` | 7872 | `vlm-post-training-home-venv` | Browse SWORD SAM-3D pipeline outputs: 2D overlay + interactive 3D skeleton + mesh | 2026-05-13 | 2026-06-30 | 1 | ✓ (venv → vlm-post-training-home-venv 06-30) |
-| GRPO dashboard | `utilities/apps/grpo_dashboard.py` (moved 06-26) | 7873 | `vlm-post-training-home-venv` | Explore and compare GRPO training runs: reward curves, task breakdowns | 2026-06-01 | 2026-06-03 | 4 | ✓ fixed (was broken venv) |
-| Reasoning-trace prompt editor | `vlm-post-training/web/reasoning_trace_prompt_app.py` | 7860 | `vlm-post-training-home-venv` | Iterate on reasoning-trace prompts with inline editing + live VLM calls for testing | 2026-05-22 | 2026-05-28 | 3 | ⚠ one default dataset path missing |
-| Claude usage tracker | `utilities/apps/claude-tracker.py` | 8080 | system python3 | Local dashboard for Claude Code token usage and cost estimates | — | — | — | ✓ |
-| VLM vibe tester | `utilities/apps/vibe_test.py` | 7874 | `vlm-post-training-home-venv` | Free-form inference playground: text/image/video → any served vLLM **or Vertex/gemini** model; cluster scan, dataset dropdown, stage-2 canonical metrics vs GT | 2026-06 | 2026-06-30 | — | ✓ active (venv merged 06-30) |
+The app count grew from 16 (this report's original scope) to **19** — three apps added
+since: `sft-dashboard` (7875), `vobs-schema` (7876), `rft-harvest` (7877), plus
+`multiturn-tools` (7879). Two apps were renamed: `text-sft`→`sft-data`,
+`llm-fms`→`image-viewer`. `video-sft`'s sibling viewers (prejudge, mesh) relocated
+06-30 out of the archived `video-sft-vlm` repo into `~/utilities/apps/video_sft/`.
+Registry now carries a `workstream:` field (General · Visual Observations · Aux Tasks ·
+3D · Training · Utilities) — §1 below reflects it. Sections 2–6 (workflow history,
+per-app original detail, stale-entry fixes, port reallocation, speedup proposals) are
+kept as a historical record and are NOT re-verified line-by-line; §1 and §7–9 are the
+refreshed current-state sections. For task routing ("which app do I want"), see the
+`/apps` skill — it is now the canonical routing table, kept in sync going forward.
+
+---
+
+## 1. Quick-Reference Table (refreshed 2026-07-08, 19 apps)
+
+| App | Workstream | Path | Port | Venv | Goal |
+|-----|-----------|------|:----:|------|------|
+| `reasoning-prompt` | Visual Obs | `vlm-post-training/web/reasoning_trace_prompt_app.py` | 7860 | `vlm-post-training-home-venv` | Tune dataset-GENERATION teacher prompts (4 task formatters) |
+| `monitoring` | Utilities | `apps/monitoring-app/app.py` | 7861 | `browser-app-home-venv` | Pipeline health dashboard — datasets, training, eval |
+| `video-sft` | General | `utilities/apps/video_sft/app.py` | 7862 | `vlm-post-training-home-venv` | **Main video browse app** — MCQA samples, Quick-load dropdown |
+| `browser` | General | `vlm-post-training/web/browser-app/app.py` | 7863 | `browser-app-home-venv` | Multi-tab browser: image/video/text/reasoning |
+| `vo-severity` | Visual Obs | `vlm-post-training/web/single_stage_compare_app.py` | 7864 | `vlm-post-training-home-venv` | Compare single/two-stage eval runs side-by-side |
+| `vo-compare` | Visual Obs | `vlm-post-training/web/human_visual_obs_compare_app.py` | 7865 | `vlm-post-training-home-venv` | Stage-1 observations vs human GT (+ `--raw-cohort`) |
+| `sft-data` | Aux Tasks | `utilities/apps/sft_text_data_browser.py` | 7866 | `vlm-post-training-home-venv` | Text SFT QC (5 MCQA families), TEXT-ONLY |
+| `image-viewer` | Aux Tasks | `vlm-post-training/web/image_row_viewer.py` | 7867 | `vlm-post-training-home-venv` | Image row + judge-review viewer (was llm-fms) |
+| `multimodal-compare` | Aux Tasks | `vlm-post-training/web/multimodal_compare_app.py` | 7868 | `vlm-post-training-home-venv` | Multimodal eval comparer, COCO keypoint overlay |
+| `reas-inspector` | Aux Tasks | `vlm-post-training/aux_tasks/sft/inspect/inspect_reas2_mix_gradio.py` | 7869 | `browser-app-home-venv` | Reas2 merged mix inspector |
+| `prejudge-viewer` | Aux Tasks | `utilities/apps/video_sft/prejudge_viewer.py` | 7870 | `vlm-post-training-home-venv` | LLM prejudge smoke verdicts vs post-hoc labels |
+| `mesh-viewer` | 3D | `utilities/apps/video_sft/mesh_viewer.py` | 7871 | `vlm-post-training-home-venv` | SAM-3D mesh overlay + 3D skeleton ⚠ known-broken at source |
+| `sword-viewer` | 3D | `vlm-post-training/…/sam3d_pilot/sword_viewer.py` | 7872 | `vlm-post-training-home-venv` | SWORD SAM-3D pipeline outputs |
+| `grpo-dashboard` | Training | `utilities/apps/grpo_dashboard.py` | 7873 | `vlm-post-training-home-venv` | GRPO reward curves + Live Status tab |
+| `vibe-test` | General | `utilities/apps/vibe_test.py` | 7874 | `vlm-post-training-home-venv` | Free-form inference playground; vLLM + Vertex/gemini |
+| `sft-dashboard` | Training | `utilities/apps/sft_dashboard.py` | 7875 | `nemo-rl-vlm/.venv` | SFT loss/grad-norm/lr, config-intelligence panel |
+| `vobs-schema` | Visual Obs | `utilities/apps/vobs_schema_inspector.py` | 7876 | `vlm-post-training-home-venv` | VObs schema browser (angle vs categorical) |
+| `rft-harvest` | Visual Obs | `vlm-post-training/data_preparation/reasoning/inspect/rft_harvest_app.py` | 7877 | `vlm-post-training-home-venv` | RFT harvest browser — hallucination spot-check |
+| `multiturn-tools` | Visual Obs | `vlm-post-training/web/gradio_app_multiturn.py` | 7879 | `vlm-post-training-home-venv` | Multi-turn tool-call chat probe |
+| `claude-tracker` | Utilities | `utilities/apps/claude-tracker.py` | 8080 | system python3 | Claude Code token/cost dashboard |
+
+Source of truth for this table is [`apps_registry.yaml`](apps_registry.yaml) — if they
+ever diverge, the registry wins.
 
 ---
 
@@ -508,47 +531,53 @@ One command from the worker to tail the right app's output.
 
 ---
 
-## 7. App Tooling (~/utilities/apps/)
+## 7. App Tooling (~/utilities/apps/) — refreshed 2026-07-08
 
 All app tooling consolidated under `~/utilities/apps/`:
 
 | File | Purpose |
 |------|---------|
-| `launch_app.sh` | Launcher: single command to start any app |
-| `apps_registry.yaml` | Registry of all 16 apps: name → repo, script, port, venv, env vars |
-| `make_app_video_dataset.py` | Convert HF dataset to `*_browse.jsonl` for the video-sft app |
+| `launch_app.sh` | Launcher: single command to start any app; `--list`, `--status` |
+| `apps_registry.yaml` | Registry of all 19 apps: name → workstream, repo, script, port, venv, env vars, args |
+| `scripts/make_app_video_dataset.py` | Convert HF dataset to `*_browse.jsonl` for the video-sft app |
 | `claude-tracker.py` | Claude Code token/cost tracker dashboard |
-| `README.md` | Quick-start guide for the apps/ subdir |
-| `GRADIO_APPS_REPORT.md` | This file |
+| `video_sft/` | `video-sft` app + siblings `prejudge_viewer.py`, `mesh_viewer.py` |
+| `sft_dashboard.py`, `vobs_schema_inspector.py`, `sft_text_data_browser.py`, `grpo_dashboard.py`, `vibe_test.py` | Other self-contained standalone apps |
+| `README.md` | Quick-start guide for the apps/ subdir (current-state source of truth) |
+| `GRADIO_APPS_REPORT.md` | This file — historical audit + refreshed quick-reference |
 
 ---
 
-## 8. Dataset Creation Index
+## 8. Dataset Creation Index (refreshed 2026-07-08)
 
 | App | Input data | How it's created |
 |-----|-----------|-----------------|
-| Video SFT browser | `app_video_datasets/*.jsonl` | `~/utilities/apps/scripts/make_app_video_dataset.py --source <hf> --name <name>` |
-| Monitoring dashboard | Results CSVs + experiments CSV | Written by results pipeline (`build_results_csv.py`) |
-| SFT data browser | HF text MCQA datasets | `aux_tasks/text_tasks/generation/generate_text_sft_datasets.py` |
-| Dataset browser | HF aux datasets (image/video/text) | Various dataset-builder scripts in `vlm-post-training/aux_tasks/` |
-| VO severity / stage-1 comparators | Eval JSONs | `evaluate.py` — see Skill `/eval-vlm` |
-| Reasoning-trace prompt editor | HF annotation datasets + live VLM | Static datasets; server started via `/serve-vllm` |
-| LLM-FMS viewer | HF image+text dataset | Various SFT dataset builders |
-| Multimodal eval comparer | Eval run directories | `evaluate.py` multimodal eval runs |
-| Reas-mix inspector | HF merged reas2 mix | Reas2-mix generation pipeline |
-| SAM3D sword viewer | SAM-3D pipeline outputs in `tmp/` | SAM-3D batch inference pipeline |
-| GRPO dashboard | GRPO training logs | Written automatically by GRPO training loop |
+| video-sft | `app_video_datasets/*.jsonl` | `~/utilities/apps/scripts/make_app_video_dataset.py --source <hf> --name <name>` |
+| monitoring | Results CSVs + experiments CSV | Written by results pipeline (`build_results_csv.py`) |
+| sft-data | HF text MCQA datasets | `aux_tasks/text_tasks/generation/generate_text_sft_datasets.py` |
+| browser | HF aux datasets (image/video/text) | Various dataset-builder scripts in `vlm-post-training/aux_tasks/` |
+| vo-severity / vo-compare | Eval JSONs (or `--raw-cohort` for vo-compare) | `evaluate.py` — see Skill `/eval-vlm` |
+| reasoning-prompt | HF annotation datasets + live VLM | Static datasets; server started via `/serve-vllm` |
+| image-viewer | HF image+text dataset | Various SFT dataset builders |
+| multimodal-compare | Eval run directories | `evaluate.py` multimodal eval runs |
+| reas-inspector | HF merged reas2 mix | Reas2-mix generation pipeline |
+| prejudge-viewer | Prejudge smoke verdicts JSON | Prejudge pipeline |
+| mesh-viewer / sword-viewer | SAM-3D pipeline outputs | `/run-3d` skill batch inference pipeline |
+| grpo-dashboard | GRPO training logs (`/mnt/data/sgsilva/logs/grpo_logs/`) | Written automatically by GRPO training loop |
+| sft-dashboard | Tensorboard event files (`nemo-rl-vlm/logs/<run>/exp_NNN/tensorboard`) | Written automatically by SFT training loop |
+| vobs-schema | `visual_observations_{angle,categorical}_<version>.json` | VObs schema authoring pipeline; `--version` selects |
+| rft-harvest | `.ckpt.jsonl` checkpoint sidecar | `harvest_stage2_rft_traces.py` (pass `--input` at launch) |
+| multiturn-tools | Cached stage-1 GT obs bank (2906/1806) | `visual_obs/_campaign/202607/query_obs_tool_executor.py` |
 
 ---
 
-## 9. Venv Summary
+## 9. Venv Summary (refreshed 2026-07-08)
 
 | Venv | Has gradio | Has plotly | Has cv2 | Used by |
 |------|:---:|:---:|:---:|---------|
-| `video-sft-vlm-home-venv` | ✓ | ✓ | ✓ | video SFT apps + mesh + prejudge + sword viewer |
-| `vlm-post-training-home-venv` | ✓ | ✗ | ✓ | all web/compare apps + GRPO dashboard |
-| `browser-app-home-venv` | ✓ | ? | ? | monitoring-app, dataset browser, reas-mix inspector |
-| `nemo-rl-vlm/.venv` | ✗ | ✗ | ✗ | ❌ DO NOT USE for Gradio apps |
+| `vlm-post-training-home-venv` | ✓ | ✓ | ✓ | Most apps: video-sft, mesh/prejudge/sword viewer, vibe-test, all `web/` compare apps, sft-data, grpo-dashboard, reasoning-prompt, image-viewer, vobs-schema, rft-harvest, multiturn-tools (`video-sft-vlm-home-venv` merged in + deleted 2026-06-30) |
+| `browser-app-home-venv` | ✓ | ? | ? | monitoring, browser, reas-inspector |
+| `nemo-rl-vlm/.venv` | ✗ (has tensorboard) | — | — | sft-dashboard ONLY — needs the tensorboard event-file reader; ❌ DO NOT USE for any other Gradio app (no gradio) |
 | `nemo-rl-vlm-grpo-home-venv` | ✗ | ✗ | ✗ | GRPO training only |
 | `sam3d-home-venv` | ✗ | ✗ | ✗ | SAM-3D batch inference only |
 | `qwen3.5-serving-home-venv` | ✗ | ✗ | ✗ | vLLM serving only |
