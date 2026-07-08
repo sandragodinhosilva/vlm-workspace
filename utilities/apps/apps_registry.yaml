@@ -21,6 +21,7 @@
 #   7874  vibe-test           utilities/apps/vibe_test.py
 #   7875  sft-dashboard       utilities/apps/sft_dashboard.py
 #   7876  vobs-schema         utilities/apps/vobs_schema_inspector.py
+#   7877  rft-harvest         data_preparation/reasoning/inspect/rft_harvest_app.py
 #   8080  claude-tracker      utilities/apps/claude-tracker.py
 
 # Entries are grouped into 6 WORKSTREAMS (banner comments below). Each entry also
@@ -106,6 +107,16 @@ apps:
     script: vobs_schema_inspector.py
     port: 7876
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+
+  rft-harvest:
+    label: "RFT harvest browser (blind Pass@K samples: frames + prompt + trace + GT-vs-model)"
+    workstream: Visual Observations
+    goal: "Browse harvest_stage2_rft_traces.py's .ckpt.jsonl checkpoint sidecar row-by-row: the repetition frames (Gallery, un-mirrored), the full production prompt, the <think> reasoning trace, GT-vs-model error/severity table, both dual scores (Effectiveness+Injury Risk), feedback, and VO-usage (via measure_stage2_vo_usage.py). Built for hallucination spot-checks — scrub the frames against the trace's claims. Filter by rft_disposition (accepted/quarantined_no_hit/error). Pass --input at launch time (no default; point at the harvest run's .ckpt.jsonl, NOT the committed accepted-only dataset dir)."
+    repo: /home/sgsilva/vlm-post-training
+    script: data_preparation/reasoning/inspect/rft_harvest_app.py
+    port: 7877
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+    # Pass --input /path/to/*.ckpt.jsonl [--max-k N] at launch time.
 
   reasoning-prompt:
     label: "Reasoning-trace prompt editor — TUNE dataset-GENERATION prompts (4 task formatters)"
