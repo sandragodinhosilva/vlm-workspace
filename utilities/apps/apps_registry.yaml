@@ -22,6 +22,7 @@
 #   7875  sft-dashboard       utilities/apps/sft_dashboard.py
 #   7876  vobs-schema         utilities/apps/vobs_schema_inspector.py
 #   7877  rft-harvest         data_preparation/reasoning/inspect/rft_harvest_app.py
+#   7879  multiturn-tools     web/gradio_app_multiturn.py
 #   8080  claude-tracker      utilities/apps/claude-tracker.py
 
 # Entries are grouped into 6 WORKSTREAMS (banner comments below). Each entry also
@@ -126,6 +127,21 @@ apps:
     script: reasoning_trace_prompt_app.py
     port: 7860
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+
+  multiturn-tools:
+    label: "Multi-turn tool-call chat (query_vlm / query_obs / keypoints) — live tool-loop probe"
+    workstream: Visual Observations
+    goal: "Interactive multi-turn chat with a tool loop: query_vlm (self-call sub-questions), query_obs (consult a cached stage-1 visual-observations pass one question at a time — vobs-as-a-tool Phase 1, see ~/.claude/plans/2026-07-08_vobs_as_tool_plan.md), and keypoint metrics (get_keypoint_data). Renders each <tool_call>/tool-result as its own chat bubble. Prompt mode severity_v2_with_query_obs_tool needs a rep with entries in the cached 2906/1806 GT obs bank (visual_obs/_campaign/202607/query_obs_tool_executor.py) — picking an uncovered rep raises a clear error rather than silently emitting an empty tool list. Use for a live, one-turn-at-a-time sanity check of the tool-calling mechanism before/alongside the headless batch driver (run_stage2_tool_loop_probe.py)."
+    repo: /home/sgsilva/vlm-post-training/web
+    script: gradio_app_multiturn.py
+    port: 7879
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+    # This script only supports --port via argparse (default 7861, no
+    # GRADIO_SERVER_PORT support) — MUST be passed explicitly or it collides
+    # with the monitoring app's fixed 7861.
+    args:
+      - --port
+      - "7879"
 
   # ══ AUX TASKS ══════════════════════════════════════════════════════════════
   #   Text/image SFT data QC + the reas2 mix + multimodal keypoint eval.

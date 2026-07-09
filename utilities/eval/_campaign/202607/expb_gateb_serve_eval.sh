@@ -36,10 +36,31 @@
 #   specific content differs per cohort, template identical). This is an intentional OFF-TRAINING
 #   probe: EXP-B was SFT'd on a stance/two-stage prompt expecting an obs block, so this measures
 #   whether it retains any severity-judgment ability without its trained scaffolding at all.
+#
+# NON-EXP-B checkpoints (2026-07-09): MODE=gtobs is fully generic — it just serves $CKPT and
+# scores it on the test BUILD's byte-exact stored prompt (exercise desc + GT obs inlined), no
+# EXP-B-specific logic in that path. To point this at e.g. a 397B apples-to-apples comparison,
+# override the serving shape (27B TP2/131072 defaults, unchanged for all existing callers) —
+# 397B canonical per /serve-vllm skill = TP8/262144 (full node; ~99GB/GPU weights at TP8,
+# ~169GB/GPU headroom for KV cache at B300's 275GB/GPU — comfortable, not memory-constrained):
+#   MODEL_TAG=<short id, e.g. 397b> SERVE_GPUS=8 SERVE_MAXLEN=262144 CKPT=<path> \
+#     sbatch --gres=gpu:8 --mem=2400G --cpus-per-task=192 <this>
+# MODEL_TAG also fixes the output filename: the old $STEP extraction (grep -oE 'step[0-9]+')
+# returns EMPTY for a checkpoint dirname with no stepNNN (e.g. Qwen3.5-397B-A17B), which would
+# have silently written to a malformed/collapsed filename — MODEL_TAG is the explicit fix.
 set -uo pipefail
 CKPT="${CKPT:?set CKPT=/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-stepNNN}"
 MODE="${MODE:-gtobs}"
-STEP=$(basename "$CKPT" | grep -oE 'step[0-9]+')
+SERVE_GPUS="${SERVE_GPUS:-2}"       # was hardcoded 2 (27B TP2) — override for other model sizes
+SERVE_MAXLEN="${SERVE_MAXLEN:-131072}"  # was hardcoded 131072 — override for other model sizes
+# STEP_TAG lets two differently-named checkpoints that share the same stepNNN suffix (e.g. the
+# original inverted run vs a _flipfix retrain) write to distinct output filenames instead of
+# silently colliding on the same stepNNN-derived path (caught 2026-07-09 before the flipfix
+# step840 eval would have overwritten the pre-fix inverted result).
+# MODEL_TAG (2026-07-09): explicit override for the filename stem — REQUIRED for any checkpoint
+# whose basename has no stepNNN suffix (the auto-extraction below returns empty for those).
+_STEP_AUTO="$(basename "$CKPT" | grep -oE 'step[0-9]+')"
+STEP="${MODEL_TAG:-${_STEP_AUTO:?no stepNNN in checkpoint name and no MODEL_TAG set — pass MODEL_TAG=<short id>}}${STEP_TAG:+_${STEP_TAG}}"
 PORT=$(( 8300 + (SLURM_JOB_ID % 100) ))
 PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
 VPT=/home/sgsilva/vlm-post-training
@@ -71,15 +92,26 @@ elif [ "$MODE" = "singlestage" ]; then
     TESTDIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test
     EXPECTED_N=2260
 else
-    # board files carry the _1806 cohort tag (the first run's files were renamed on disk)
-    OUT=/mnt/data/sgsilva/results/visual_obs_runs/stage2_expb_stage2_ondemand_${STEP}_1806_gtobsbuild_thinkon.json
+    # board files carry the _1806 cohort tag (the first run's files were renamed on disk).
+    # Filename prefix stays "expb_stage2_ondemand" for the default (no-MODEL_TAG) EXP-B callers —
+    # unchanged, so it keeps matching the master_models.json vo_tokens already registered for
+    # those runs. A non-EXP-B comparison model (MODEL_TAG set) gets an honest "compare_" prefix
+    # instead — it is NOT an EXP-B checkpoint and must not look like one on disk.
+    if [ -n "${MODEL_TAG:-}" ]; then
+        OUT=/mnt/data/sgsilva/results/visual_obs_runs/stage2_compare_${STEP}_1806_gtobsbuild_thinkon.json
+    else
+        OUT=/mnt/data/sgsilva/results/visual_obs_runs/stage2_expb_stage2_ondemand_${STEP}_1806_gtobsbuild_thinkon.json
+    fi
     TESTDIR=$BUILD
 fi
 
 echo "=== EXP-B GATE-B eval: $CKPT (thinkON, port $PORT, node $(hostname -s)) ==="
 
 # 1. Serve thinkON (real <think> targets -> ENABLE_THINKING=1, no --disable-thinking)
-ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh "$CKPT" 2 131072 "$PORT" &
+#    SERVE_GPUS/SERVE_MAXLEN default to 2/131072 (27B) — override for other model sizes; the
+#    #SBATCH --gres=gpu:2 header must be overridden to match at submit time:
+#    sbatch --gres=gpu:8 <this>  (SLURM cli flags win over an in-file #SBATCH directive).
+ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh "$CKPT" "$SERVE_GPUS" "$SERVE_MAXLEN" "$PORT" &
 SERVE_PID=$!
 cleanup() { echo "=== teardown: killing vLLM (pid $SERVE_PID) ==="; kill "$SERVE_PID" 2>/dev/null; sleep 5; pkill -P "$SERVE_PID" 2>/dev/null; }
 trap cleanup EXIT

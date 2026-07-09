@@ -105,7 +105,7 @@ while [[ $# -gt 0 ]]; do
     --preflight) PREFLIGHT=1; shift;;   # validate everything + exit WITHOUT running any eval
     --serve) SERVE=1; shift;;           # launch our OWN vLLM, run, then kill it on exit (sbatch-friendly)
     --serve-venv) SERVE_VENV="$2"; shift 2;;  # QWEN35_VENV for the serve (pmartins -> vlm-post-training-home-venv)
-    --tp) TP="$2"; shift 2;;            # tensor-parallel size (default by base-model)
+    --tp) TP="$2"; shift 2;;            # tensor-parallel size (default: GPUs allocated to this job, see --serve below)
     --max-len) MAX_LEN="$2"; shift 2;;  # served max_model_len (default by base-model)
     --serve-wait) SERVE_WAIT="$2"; shift 2;;  # seconds to wait for server health (default 1800)
     --keep-server) KEEP_SERVER=1; shift;;  # leave OUR vLLM running after eval (reuse it; node frees only at job end)

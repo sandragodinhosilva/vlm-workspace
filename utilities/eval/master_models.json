@@ -413,6 +413,17 @@
     "expb_stage2_ondemand_step840"
    ],
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step840"
+  },
+  {
+   "pattern": "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840",
+   "display": "27B EXP-B stage-2 ondemand reasoner step840 (flipfix, L/R-corrected) [1806]",
+   "train_reasoning": "yes",
+   "group": "expb_stage2_27b_gtobs_flipfix",
+   "note": "L/R-inversion-FIXED retrain (2026-07-08/09, job 110073, 1-node TP4xDP2). Trained on need_to_flip-backfilled + regenerated (2 teachers: 397B+gemini-3-flash) + re-judged (85.2% accept) + clock-timestamp-leak-cleaned traces: expb_stage2_train_ondemand_flagkeep_reasoning_flipfix_sft_ready_clean (8977 rows). Side-agreement checker: 99.8% (403/404) vs the pre-fix 61% inversion rate. Compare vo_s2 err-F1 directly against the OLD (inverted) step840 row above -- same test set/N/thinking, only the L/R defect differs. See ~/.claude/reports/visual_observations/2026-07-07_expb_stage2_lr_inversion_audit.md + ~/.claude/reports/post_training/2026-07-08_expb_stage2_flipfix_sft_1node_strategy_change.md.",
+   "vo_tokens": [
+    "expb_stage2_ondemand_step840_flipfix1node"
+   ],
+   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840"
   }
  ],
  "vo_exclude": [

@@ -101,7 +101,7 @@ echo "  group/run : ${TRAIN_GROUP_ID:-<none>} / ${RUN_ID:-<none>}"
 # --export=ALL forwards the WHOLE env, so a stale exported value silently re-targets this run.
 # Echo the leak-prone vars so a leftover (esp. SERVE_VENV/TP/TESTSET/BENCH_MAX_TOKENS) is visible
 # in the log BEFORE the run starts. SERVE_VENV must be UNSET for bare Qwen (pmartins-only).
-echo "  env-leak watch: SERVE_VENV=${SERVE_VENV:-<unset>}  TESTSET=${TESTSET:-<default 1506>}  BENCH_MAX_TOKENS=${BENCH_MAX_TOKENS:-<default>}  TAG=${TAG:-<none>}  MAX_SAMPLES=${MAX_SAMPLES:-<none>}"
+echo "  env-leak watch: SERVE_VENV=${SERVE_VENV:-<unset>}  TESTSET=${TESTSET:-<default 2906>}  BENCH_MAX_TOKENS=${BENCH_MAX_TOKENS:-<default>}  TAG=${TAG:-<none>}  MAX_SAMPLES=${MAX_SAMPLES:-<none>}"
 # BENCH_EXTRA leak guard: a stale `--skip-vsibench/--skip-mmmu/--skip-videomme` leaked via
 # --export=ALL silently drops benchmarks from a fresh run (the mix12k/mixreas miss 2026-06-20:
 # leaked --skip-vsibench --skip-mmmu → only Video-MME ran, MMMU+VSI blank with NO error). Make it
@@ -125,7 +125,7 @@ CMD=( /home/sgsilva/utilities/eval/eval_all.sh
 [[ -n "${SERVE_VENV:-}" ]]      && CMD+=( --serve-venv "$SERVE_VENV" )  # pmartins -> vlm-post-training-home-venv
 [[ "${KEEP_SERVER:-0}" == 1 ]]  && CMD+=( --keep-server )  # leave vLLM up after eval (reuse; rarely useful in sbatch since node frees at job end)
 [[ "${FULL_REBUILD:-0}" == 1 ]] && CMD+=( --full-rebuild )  # end-of-run board rebuild = --full-scan (after an exporter/compiler code change)
-[[ -n "${BENCH_MAX_TOKENS:-}" ]] && CMD+=( --bench-max-tokens "$BENCH_MAX_TOKENS" )  # cap thinkon runaways (8192) so Video-MME finishes in hours not days
+[[ -n "${BENCH_MAX_TOKENS:-}" ]] && CMD+=( --bench-max-tokens "$BENCH_MAX_TOKENS" )  # cap thinkon runaways (auto-caps to 16384 if unset; see eval_all.sh) so Video-MME finishes in hours not days
 [[ -n "${BENCH_EXTRA:-}" ]]      && CMD+=( --bench-extra "$BENCH_EXTRA" )  # e.g. "--skip-videomme" (skip the slow runaway-tail benchmark)
 [[ -n "${TRAIN_GROUP_ID:-}" ]]  && CMD+=( --train-group-id "$TRAIN_GROUP_ID" )
 [[ -n "${RUN_ID:-}" ]]          && CMD+=( --run-id "$RUN_ID" )
