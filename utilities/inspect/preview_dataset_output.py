@@ -16,6 +16,18 @@ Works on:
 Each row renders FIVE sections: 0. KEY METADATA + completeness audit · 1. GENERATION
 PROMPT · 2. MODEL REASONING · 3. RAW MODEL OUTPUT · 4. PARSED OUTPUT (messages).
 
+TOOL-LOOP rows (multi-round <tool_call> transcripts, e.g. the visual-obs query_obs
+probe: >1 assistant turn or any tool-role turn) instead render Sandra's 6-part spec
+(2026-07-09), each piece exactly once: 0. METADATA · 1. PROMPT · 2. FULL MODEL OUTPUT
+(the one unabridged transcript, reasoning inline) · 3. TOOL-CALL FLOW (compact
+per-round digest: n tool calls, questions asked, results — never a reasoning reprint) ·
+4. PARSED FINAL ANSWER (structured, never a verbatim reprint) · 5. METRICS (eval vs GT
+Acc/Precision/Recall/F1, same pairing+binarization as eval/evaluate.py, when the row
+carries GT severity fields) · 6. SFT-SHAPE MESSAGES (tool RESULTS
+excluded, tool CALLS kept). Non-tool-loop rows are untouched by this layout; the
+detection can be overridden with --row-layout classic|tool (e.g. force 'classic' for
+multi-turn DIALOG datasets that have >1 assistant turn but are not tool loops).
+
 Provenance columns it looks for (any subset): generation_prompt, raw_model_output,
 messages, choices, correct_answer + the reasoning/judge metadata fields. If
 generation_prompt / raw_model_output are absent it says so explicitly (never a
@@ -40,6 +52,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import Dict
 
 from datasets import load_from_disk
 
@@ -167,15 +180,28 @@ def _extract_reasoning(row, msgs) -> str:
     """Pull the reasoning SFT would actually train on. Priority: the <think> block in
     the assistant `messages` (what the packer reads) -> raw_model_output <think> ->
     a dedicated reasoning column. `generation_reasoning` is never trusted (see above).
-    Returns '' if there is genuinely none (and the caller flags that)."""
-    # 1) the assistant message <think> — exactly what nemo-rl SFT packs
+    Returns '' if there is genuinely none (and the caller flags that).
+
+    Single-round rows (the common case: one assistant turn) return just that turn's
+    <think> text, unchanged from prior behavior. Multi-round tool-call rows (more
+    than one assistant turn — e.g. query_obs mid-reasoning loops) additionally surface
+    every later round's reasoning too, each labeled, instead of silently dropping them
+    — see _extract_reasoning_rounds for the same data pre-split by round."""
     if msgs:
-        for mm in msgs:
-            if mm.get("role") == "assistant":
-                mt = _text_of(mm.get("content", ""))
-                mt_m = _THINK_RE.search(mt)
-                if mt_m and mt_m.group(1).strip():
-                    return mt_m.group(1).strip()
+        assistant_msgs = [mm for mm in msgs if mm.get("role") == "assistant"]
+        think_blocks = []
+        for mm in assistant_msgs:
+            mt = _text_of(mm.get("content", ""))
+            mt_m = _THINK_RE.search(mt)
+            if mt_m and mt_m.group(1).strip():
+                think_blocks.append(mt_m.group(1).strip())
+        if len(think_blocks) == 1:
+            # 1) the assistant message <think> — exactly what nemo-rl SFT packs
+            return think_blocks[0]
+        if len(think_blocks) > 1:
+            return "\n\n".join(
+                f"--- round {i} reasoning ---\n{tb}" for i, tb in enumerate(think_blocks)
+            )
     # 2) raw model output <think>
     raw = row.get("raw_model_output", "") or ""
     m = _THINK_RE.search(raw)
@@ -195,6 +221,19 @@ def _extract_reasoning(row, msgs) -> str:
     return ""
 
 
+_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+
+
+def _split_assistant_turn(text: str):
+    """Split one assistant message's raw content into (reasoning, visible_text) —
+    visible_text is what's left after stripping the <think> block (the tool-call
+    JSON or final answer the gradio app shows as separate bubbles)."""
+    think_m = _THINK_RE.search(text)
+    reasoning = think_m.group(1).strip() if think_m else ""
+    visible = _THINK_RE.sub("", text).strip()
+    return reasoning, visible
+
+
 # Default KEY metadata fields surfaced in section 0 (present-AND-filled audit).
 # Covers the text-reasoning + judge pipelines; override with --meta-fields.
 _DEFAULT_META_FIELDS = (
@@ -208,6 +247,8 @@ _DEFAULT_META_FIELDS = (
     # vlm-judge sample/audit output (surfaced in §0 when present):
     "verdict_kind", "category", "answerability", "confidence", "evidence",
     "gt", "margin", "judge_model", "tier",
+    # tool-loop probe provenance (surfaced in §0 when present):
+    "n_tool_calls", "status",
 )
 
 
@@ -241,6 +282,154 @@ def _raw_of(row):
             or row.get("reasoning_raw_response"))
 
 
+def _parse_severity_response(response: str) -> Dict:
+    """Parse a severity-mode [ERRORS]/[SCORES]/[FEEDBACK] answer — ported from
+    eval/evaluate.py's parse_model_response(mode='severity') so the preview scores
+    the SAME way the real eval does, without importing that module's sklearn/scipy/
+    datasets/query_server dependency chain for a 3-row text-only parse."""
+    result: Dict = {}
+    severity_scores: Dict[str, int] = {}
+    severity_match = re.search(r'\[ERRORS\](.*?)(?=\n\n\[|\n\n[A-Z]|$)', response, re.DOTALL | re.IGNORECASE)
+    if severity_match:
+        for line in severity_match.group(1).strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('- ') or line.startswith('* '):
+                line = line[2:].strip()
+            if ':' not in line:
+                continue
+            error_name, score_str = line.split(':', 1)
+            error_name = error_name.strip()
+            score_str = score_str.strip()
+            if not error_name:
+                continue
+            try:
+                score = int(score_str)
+            except ValueError:
+                try:
+                    score = int(score_str.split('/')[0].strip())
+                except (ValueError, IndexError):
+                    num_match = re.search(r'\d+', score_str)
+                    score = int(num_match.group()) if num_match else None
+            if score is not None:
+                severity_scores[error_name] = score
+    result['severity_scores'] = severity_scores
+
+    scores_match = re.search(r'\[SCORES\](.*?)(?=\n\n\[|\n\n[A-Z]|$)', response, re.DOTALL | re.IGNORECASE)
+    if scores_match:
+        scores_text = scores_match.group(1).strip()
+        eff_match = re.search(r'Effectiveness:\s*(\d+(?:\.\d+)?)', scores_text, re.IGNORECASE)
+        if eff_match:
+            result['effectiveness'] = float(eff_match.group(1))
+        risk_match = re.search(r'Injury Risk:\s*(\d+(?:\.\d+)?)', scores_text, re.IGNORECASE)
+        if risk_match:
+            result['injury_risk'] = float(risk_match.group(1))
+
+    feedback_match = re.search(r'\[FEEDBACK\]\s*["\']?(.+?)["\']?(?:\n\n\[|\Z)', response, re.DOTALL | re.IGNORECASE)
+    if feedback_match:
+        result['feedback'] = feedback_match.group(1).strip().strip('"\'')
+
+    return result
+
+
+def _parse_gt_severity_string(gt: str) -> Dict[str, int]:
+    """Parse the dataset row's GT `severity_scores` field — same newline
+    'Error Name: score' format eval/evaluate.py's evaluate_sample() parses
+    (gt_severity_scores branch, isinstance(..., str))."""
+    gt_dict: Dict[str, int] = {}
+    if not isinstance(gt, str):
+        return gt_dict
+    for line in gt.split('\n'):
+        if ':' in line:
+            error_name, score_str = line.split(':', 1)
+            try:
+                gt_dict[error_name.strip()] = int(score_str.strip())
+            except ValueError:
+                pass
+    return gt_dict
+
+
+def _score_vs_gt(w, row, gt_severity_raw, parsed: Dict):
+    """Score an already-parsed final answer against the row's GT severity fields
+    (severity_scores / effectiveness / injury_risk) — the shared body of the
+    eval-vs-GT block, line-identical to the pre-refactor inline version. Callers
+    handle the section header and the no-GT / no-answer sentinels."""
+    gt_severity = _parse_gt_severity_string(gt_severity_raw)
+    pred_severity = parsed.get('severity_scores', {})
+    gt_eff, pred_eff = row.get('effectiveness'), parsed.get('effectiveness')
+    gt_risk, pred_risk = row.get('injury_risk'), parsed.get('injury_risk')
+    w(f"  Effectiveness:  pred={pred_eff!r}  gt={gt_eff!r}"
+      + ("  MATCH" if pred_eff is not None and gt_eff is not None and int(pred_eff) == int(gt_eff) else ""))
+    w(f"  Injury Risk:    pred={pred_risk!r}  gt={gt_risk!r}"
+      + ("  MATCH" if pred_risk is not None and gt_risk is not None and int(pred_risk) == int(gt_risk) else ""))
+    if not pred_severity:
+        w("  ⚠ no [ERRORS] block parsed from the final answer — check the raw-output section for a format mismatch")
+    else:
+        w(f"  Per-error severity (pred vs gt), {len(pred_severity)} parsed / {len(gt_severity)} in GT:")
+        all_errors = list(gt_severity.keys()) or list(pred_severity.keys())
+        n_match = 0
+        for name in all_errors:
+            p, g = pred_severity.get(name), gt_severity.get(name)
+            match = (p is not None and g is not None and p == g)
+            n_match += int(match)
+            flag = "OK" if match else ("MISS" if p is None else "DIFF")
+            w(f"    {name:55s} pred={p!r:>5} gt={g!r:>5}  [{flag}]")
+        if all_errors:
+            w(f"  exact-match: {n_match}/{len(all_errors)} errors")
+
+    # Acc / Precision / Recall / F1 — same pairing + binarization as evaluate.py's
+    # aggregate scorer (name-match, order fallback, missing pred -> 0; error present
+    # means severity > 1; sklearn binary average, zero_division=0), computed in pure
+    # python on THIS ROW's errors. The real eval pools these across the whole test
+    # set, so a per-row number is noisier — same formula, smaller denominator.
+    if gt_severity:
+        if any(nm in pred_severity for nm in gt_severity):
+            pairs = [(g, pred_severity.get(nm, 0)) for nm, g in gt_severity.items()]
+            pairing = "name"
+        elif len(gt_severity) == len(pred_severity) and pred_severity:
+            pairs = list(zip(gt_severity.values(), pred_severity.values()))
+            pairing = "order"
+        else:
+            pairs = [(g, 0) for g in gt_severity.values()]
+            pairing = "none (all GT errors counted as missed)"
+        n_err = len(pairs)
+        sev_exact = sum(p == g for g, p in pairs) / n_err
+        sev_within1 = sum(abs(p - g) <= 1 for g, p in pairs) / n_err
+        sev_mae = sum(abs(p - g) for g, p in pairs) / n_err
+        tp = sum(1 for g, p in pairs if g > 1 and p > 1)
+        fp = sum(1 for g, p in pairs if g <= 1 and p > 1)
+        fn = sum(1 for g, p in pairs if g > 1 and p <= 1)
+        tn = n_err - tp - fp - fn
+        det_acc = (tp + tn) / n_err
+        det_prec = tp / (tp + fp) if (tp + fp) else 0.0
+        det_rec = tp / (tp + fn) if (tp + fn) else 0.0
+        det_f1 = (2 * det_prec * det_rec / (det_prec + det_rec)
+                  if (det_prec + det_rec) else 0.0)
+        w(f"  Error detection (binary, severity>1 = error; pairing={pairing}):")
+        w(f"    Acc={det_acc:.3f}  Precision={det_prec:.3f}  Recall={det_rec:.3f}  "
+          f"F1={det_f1:.3f}   (TP={tp} FP={fp} FN={fn} TN={tn}, n={n_err})")
+        w(f"  Severity scoring: exact-acc={sev_exact:.3f}  within-1={sev_within1:.3f}  "
+          f"MAE={sev_mae:.3f}")
+
+
+def _final_answer_text(row, msgs) -> str:
+    """The model's FINAL answer text — the last assistant turn's content with any
+    <think> block stripped. For a multi-round tool-call transcript this is the
+    turn that actually contains [MOVEMENT ANALYSIS]/[ERRORS]/[SCORES]/[FEEDBACK],
+    not round 0 (which may be pure reasoning or a tool call). Falls back to
+    raw_model_output's tail, then '' if genuinely nothing parses."""
+    if msgs:
+        assistant_msgs = [mm for mm in msgs if mm.get("role") == "assistant"]
+        if assistant_msgs:
+            _, visible = _split_assistant_turn(_text_of(assistant_msgs[-1].get("content", "")))
+            if visible:
+                return visible
+    raw = _raw_of(row) or ""
+    _, visible = _split_assistant_turn(raw)
+    return visible
+
+
 def _row_indices_by_group(d, group_cols, n):
     """Row indices for a --group-by preview: the first `n` rows of EACH distinct
     value-tuple of group_cols (n=1 → one representative per cell). Shows every
@@ -260,7 +449,7 @@ def _row_indices_by_group(d, group_cols, n):
     return sorted(i for idxs in per_cell.values() for i in idxs)
 
 
-def _render(label, d, n, w, meta_fields, group_cols=None):
+def _render(label, d, n, w, meta_fields, group_cols=None, row_layout="auto"):
     w(f"\n{'='*100}\n=== LEAF: {label}   (rows={len(d)}, cols={len(d.column_names)})\n{'='*100}")
     cols = set(d.column_names)
     # prompt/raw may be under generator OR judge column names — only warn if NEITHER
@@ -290,7 +479,7 @@ def _render(label, d, n, w, meta_fields, group_cols=None):
         variant = r.get("variant") or r.get("question_template") or "?"
         cell = (f"  cell=({','.join(str(r.get(c,'')) for c in group_cols if c in d.column_names)})"
                 if group_cols else "")
-        w(f"\n{'-'*100}\nROW {i}  exercise={ex!r}  task={task!r}  variant={variant!r}{cell}\n{'-'*100}")
+        w(f"\n\n\n{'-'*100}\nROW {i}  exercise={ex!r}  task={task!r}  variant={variant!r}{cell}\n{'-'*100}")
 
         w("\n### 0. KEY METADATA (present-AND-filled audit) ###")
         empty = []
@@ -342,26 +531,145 @@ def _render(label, d, n, w, meta_fields, group_cols=None):
         _sec2 = ("JUDGE ANALYSIS (prose before the verdict JSON)"
                  if (judge_p and not gen_p and not is_reasoning_judge)
                  else "MODEL REASONING (<think> / reasoning_content)")
-        w(f"\n### 2. {_sec2} ###")
         reasoning = _extract_reasoning(r, r.get("messages"))
-        if reasoning:
-            w(reasoning)
-        else:
-            w("<none captured — model emitted no reasoning, OR the server's reasoning_parser "
-              "stripped <think> and the generator did not store reasoning_content>")
+        _NO_REASONING = ("<none captured — model emitted no reasoning, OR the server's "
+                         "reasoning_parser stripped <think> and the generator did not "
+                         "store reasoning_content>")
 
-        w("\n### 3. RAW MODEL OUTPUT ###")
-        w(_raw_of(r) or "<no raw_model_output/raw_response column>")
-
-        w("\n### 4. PARSED OUTPUT (messages) — the actual SFT row; the [user] turn "
-          "here is what the student model is trained/served on, and MUST be "
-          "byte-identical to the NR source row's [user] turn (the _2706 contract) ###")
         msgs = r.get("messages")
-        if msgs:
+        n_assistant = sum(1 for m in msgs if m.get("role") == "assistant") if msgs else 0
+        has_tool = any(m.get("role") == "tool" for m in msgs) if msgs else False
+        # --row-layout overrides the auto-detection: 'classic' forces the original
+        # 4-section rendering (e.g. for multi-turn DIALOG datasets that are not
+        # tool loops but do have >1 assistant turn), 'tool' forces the tool-loop
+        # layout, 'auto' (default) detects by row shape.
+        if row_layout == "classic":
+            is_tool_loop_row = False
+        elif row_layout == "tool":
+            is_tool_loop_row = True
+        else:
+            is_tool_loop_row = n_assistant > 1 or has_tool
+
+        if is_tool_loop_row:
+            # Multi-round tool-call transcript (e.g. query_obs mid-reasoning loop).
+            # Sandra's 6-part spec (2026-07-09): metadata + prompt + FULL OUTPUT +
+            # reasoning + parsed answer + metrics (+ optional SFT-shape). Each piece
+            # appears ONCE: §2 is the only unabridged transcript; §3 is a <think>-only
+            # filtered VIEW of it (a filter, not a duplicate); §4 renders the final
+            # answer PARSED (never a verbatim reprint of §2's tail — that reprint was
+            # the duplication bug this layout replaces).
+            w("\n### 2. FULL MODEL OUTPUT — unabridged multi-round transcript: every "
+              "<think>, every <tool_call>, every injected tool result, and the final "
+              "answer (the ONE place the whole transcript appears) ###")
+            w(_raw_of(r) or "<no raw_model_output/raw_response column>")
+
+            # Compact per-round digest, NOT a reasoning reprint — Sandra (2026-07-09):
+            # a <think>-only section was ~90% identical to section 2 (these transcripts
+            # ARE mostly reasoning), so the readable flow summary replaces it. The full
+            # reasoning text stays inline in section 2, chronologically.
+            n_tool_results = sum(1 for m in msgs if m.get("role") == "tool")
+            n_calls_field = r.get("n_tool_calls")
+            _calls = (f"{n_calls_field} tool call(s)" if n_calls_field is not None
+                      else f"{n_tool_results} tool call(s)")
+            w(f"\n### 3. TOOL-CALL FLOW — {_calls}, {n_assistant} assistant round(s) "
+              "(digest of section 2; the full reasoning text is inline there, not "
+              "reprinted here) ###")
+            round_idx = 0
             for m in msgs:
+                role = m.get("role")
+                if role == "assistant":
+                    r_txt, visible = _split_assistant_turn(_text_of(m.get("content", "")))
+                    tc = _TOOL_CALL_RE.search(visible)
+                    if tc:
+                        w(f"  round {round_idx}: reasoning ({len(r_txt)} chars) + "
+                          f"tool call {tc.group(1).strip()}")
+                    elif visible:
+                        w(f"  round {round_idx}: reasoning ({len(r_txt)} chars) + "
+                          f"FINAL ANSWER ({len(visible)} chars — parsed in section 4)")
+                    else:
+                        w(f"  round {round_idx}: reasoning ({len(r_txt)} chars), "
+                          "no visible output (mid-loop cutoff?)")
+                    round_idx += 1
+                elif role == "tool":
+                    res = _text_of(m.get("content", ""))
+                    if len(res) > 200:
+                        res = res[:197] + "…"
+                    w(f"      tool result: {res}")
+
+            final_text = _final_answer_text(r, msgs)
+            parsed = _parse_severity_response(final_text) if final_text else {}
+            has_parsed = bool(parsed.get("severity_scores")) or any(
+                k in parsed for k in ("effectiveness", "injury_risk", "feedback"))
+            w("\n### 4. PARSED FINAL ANSWER — last round's answer, structured "
+              "(raw form = the tail of section 2, not reprinted) ###")
+            if has_parsed:
+                sev = parsed.get("severity_scores", {})
+                if sev:
+                    w(f"  errors ({len(sev)} parsed from [ERRORS]):")
+                    for err_name, score in sev.items():
+                        w(f"    {err_name}: {score}")
+                else:
+                    w("  errors: <no [ERRORS] block parsed>")
+                w(f"  effectiveness: {parsed.get('effectiveness', '<not parsed>')}")
+                w(f"  injury_risk:   {parsed.get('injury_risk', '<not parsed>')}")
+                w(f"  feedback:      {parsed.get('feedback', '<not parsed>')}")
+            elif final_text:
+                w("  <answer did not parse as [ERRORS]/[SCORES]/[FEEDBACK] — shown verbatim>")
+                w(final_text)
+            else:
+                w("  <no final answer — model may still be mid-tool-loop or hit max "
+                  "rounds; see section 2>")
+
+            w("\n### 5. METRICS — eval vs GT (mirrors eval/evaluate.py's severity scorer) ###")
+            gt_severity_raw = r.get("severity_scores")
+            if not gt_severity_raw:
+                w("  <row has no GT severity_scores field — metrics skipped (probe output "
+                  "predating the GT-field driver fix, or a non-severity dataset)>")
+            elif not final_text:
+                w("  <no final answer to score>")
+            else:
+                _score_vs_gt(w, r, gt_severity_raw, parsed)
+
+            n_tool_msgs = sum(1 for m in msgs if m.get("role") == "tool")
+            w(f"\n### 6. SFT-SHAPE MESSAGES (optional view) — the row as it would be "
+              f"packed for SFT: tool RESULTS excluded ({n_tool_msgs} tool turn(s) "
+              "omitted — SFT teaches the model to EMIT tool calls, not to replay "
+              "injected results), tool CALLS inside assistant turns kept ###")
+            for m in msgs:
+                if m.get("role") == "tool":
+                    continue
                 w(f"[{m.get('role','?')}] {_text_of(m.get('content',''))}")
         else:
-            w("<no messages column>")
+            w(f"\n### 2. {_sec2} ###")
+            w(reasoning or _NO_REASONING)
+
+            w("\n### 3. RAW MODEL OUTPUT ###")
+            w(_raw_of(r) or "<no raw_model_output/raw_response column>")
+
+            # Backwards-compatible path: unchanged from prior behavior — full
+            # message dump including the [user] turn, which for non-tool-call
+            # pipelines IS the byte-identity contract check (e.g. the _2706
+            # reasoning-twins pipeline, where generation_prompt legitimately
+            # DIFFERS from messages[user] by design — a diff here is not a bug).
+            w("\n### 4. PARSED OUTPUT (messages) — the actual SFT row; the [user] turn "
+              "here is what the student model is trained/served on, and MUST be "
+              "byte-identical to the NR source row's [user] turn (the _2706 contract) ###")
+            if msgs:
+                for m in msgs:
+                    w(f"[{m.get('role','?')}] {_text_of(m.get('content',''))}")
+            else:
+                w("<no messages column>")
+            final_text = _raw_of(r) or ""
+
+            gt_severity_raw = r.get("severity_scores")
+            if gt_severity_raw:
+                w("\n[eval vs GT — mirrors eval/evaluate.py's severity scorer]")
+                if final_text:
+                    _score_vs_gt(w, r, gt_severity_raw,
+                                 _parse_severity_response(final_text))
+                else:
+                    w("  <no final answer to score>")
+
         if "choices" in cols:
             w(f"\nchoices: {r.get('choices')}")
         if "correct_answer" in cols:
@@ -458,6 +766,12 @@ def main() -> int:
                          "--n rows of EACH distinct cell instead of the first-n "
                          "rows overall. Covers every (style×model) diversity combo; "
                          "avoids a session-ordered leaf showing only one cell.")
+    ap.add_argument("--row-layout", default="auto", choices=("auto", "classic", "tool"),
+                    help="per-row section layout: 'auto' (default) uses the tool-loop "
+                         "6-part layout only for tool-loop-shaped rows (>1 assistant "
+                         "turn or a tool-role turn); 'classic' forces the original "
+                         "4-section layout (use for multi-turn dialog datasets that "
+                         "are NOT tool loops); 'tool' forces the tool-loop layout.")
     args = ap.parse_args()
     group_cols = ([c.strip() for c in args.group_by.split(",")]
                   if args.group_by else None)
@@ -491,7 +805,8 @@ def main() -> int:
 
     w(f"PREVIEW  root={root}  n={args.n}  leaves={len(leaves)}")
     for label, d in leaves:
-        _render(label, d, args.n, w, meta_fields, group_cols=group_cols)
+        _render(label, d, args.n, w, meta_fields, group_cols=group_cols,
+                row_layout=args.row_layout)
 
     # Diversity coverage summary (no-op unless the style/model provenance cols
     # are present) — aggregated across all leaves.
