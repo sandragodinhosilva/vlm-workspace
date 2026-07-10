@@ -259,9 +259,9 @@ class TestLiveRegistrySmoke(unittest.TestCase):
         # underscored DUPLICATE of a routed dashed sibling — merged_1805/ep3_union5/
         # reasoning_oracleobs_cat_ep* — or a deliberately-off-board historical file:
         # plain-397B/base-27B-reasoner stage2s the sft2812-only rule retires, canary
-        # probes, humanonly). NOTE 'oracle-obs-cat-reasoning-step330' is here only until
-        # its vo_token lands (found 2026-07-10: valid sft2812 stage2, err-F1 52.67,
-        # 1175/1181 — a REAL missing board cell); remove it when the token is added.
+        # probes, humanonly). The step330 case found by this test's first run (a REAL
+        # missing board cell) was FIXED same day by adding the dashed vo_token — it now
+        # routes, which is why it is NOT in this list.
         known_legacy = {
             n for n in unrouted
             if any(t in n for t in ("testonly", "tool_probe", "twostage_grpo",
@@ -271,8 +271,7 @@ class TestLiveRegistrySmoke(unittest.TestCase):
                                     "stage2_397b", "stage2_base27b", "stage2_pm2812",
                                     "stage2_sft_step2812", "merged_1805", "sft27b_humanonly",
                                     "_canary", "ep3_union5", "plain_397b",
-                                    "reasoning_oracleobs_cat_ep",
-                                    "oracle-obs-cat-reasoning-step330"))
+                                    "reasoning_oracleobs_cat_ep"))
         }
         new_unrouted = [n for n in unrouted if n not in known_legacy]
         self.assertEqual(new_unrouted, [],
