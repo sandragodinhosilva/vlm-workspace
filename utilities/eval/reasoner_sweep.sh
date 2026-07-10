@@ -235,6 +235,48 @@ PY
   done
   if (( n >= min_complete )); then
     echo "    [OK] $obs_stem accepted ($n/$expect_n, >=$min_complete)"; n_ok=$((n_ok+1)); outputs+=("$out")
+    # ---- RUN CARD (stabilization step 4, 2026-07-10): stamp identity on the stage2 result
+    # so the board routes it card-first (no vo_tokens needed, no filename parsing). The VO
+    # model under test isn't known to this script directly — recover it from the obs file's
+    # own card (new eval_all runs) or its .owner sidecar (realpath, post-2026-06-22 runs).
+    # TAG_SUFFIX mode = experimental/non-canonical files → NO card (deliberately off-board
+    # unless explicitly tokened); legacy obs without card/.owner → filename routing as before.
+    if [[ -z "$TAG_SUFFIX" ]]; then
+      _ck=""
+      [[ -f "${obs_file}.card.json" ]] && _ck=$("$PY" -c "import json,sys;print(json.load(open(sys.argv[1])).get('checkpoint_path','') or '')" "${obs_file}.card.json" 2>/dev/null)
+      [[ -z "$_ck" && -f "${obs_file}.owner" ]] && _ck="$(cat "${obs_file}.owner" 2>/dev/null)"
+      # Card cohort = the STEM's tag ('' for a legacy untagged stem) — NOT the GT-routing
+      # cohort above: an untagged legacy stem scores vs 1105 GT but has ALWAYS joined the
+      # BARE row; a card claiming cohort=1105 would re-key it and split the model's row.
+      _card_cohort=""
+      [[ "$obs_stem" =~ _1806(_|$) ]] && _card_cohort="1806"
+      [[ "$obs_stem" =~ _1105(_|$) ]] && _card_cohort="1105"
+      if [[ -n "$_ck" ]]; then
+        for _t in "$out" "${out%.json}_v2.json"; do
+          cat > "${_t}.card.json" <<CARDEOF || echo "    [card WARN] could not write ${_t}.card.json"
+{
+  "card_version": 1,
+  "checkpoint_path": "${_ck}",
+  "served_id": "${_ck}",
+  "axis": "stage2",
+  "arm": null,
+  "obs_source": null,
+  "reasoner": "${REASONER}",
+  "cohort": "${_card_cohort}",
+  "test_set": "${TEST_DIR}",
+  "expected_n": ${expect_n},
+  "thinking": "${think#think}",
+  "run_id": "reasoner_sweep_${obs_stem}",
+  "job_id": "${SLURM_JOB_ID:-}",
+  "ts": "$(date -Is)"
+}
+CARDEOF
+        done
+        echo "    [card] stage2 cards written (checkpoint=$(basename "$_ck"))"
+      else
+        echo "    [card] no obs card/.owner for $obs_stem — stage2 stays on filename/vo_tokens routing (legacy)"
+      fi
+    fi
   else
     echo "    [INCOMPLETE] $obs_stem stalled at $n/$expect_n (<$min_complete) after $a attempts — NOT counting as done (re-run later against a warm server to top off)."
     n_fail=$((n_fail+1))
