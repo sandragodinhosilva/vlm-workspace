@@ -445,6 +445,213 @@ def _match_allow(row: dict, allow):
     return None
 
 
+# ---------------------------------------------------------------------------
+# VO ROUTING — the single source of truth for "which board row does a VO result
+# file land on" (stabilization step 2, 2026-07-10; plan:
+# ~/.claude/reports/infra_tooling/2026-07-10_eval_pipeline_stabilization_proposal.md).
+# Both the compile pass in _rows() AND the `--route` dry-run call resolve_vo(), so a
+# pre-launch routing simulation can never diverge from what the compiler actually does.
+# This is a FAITHFUL extraction of the logic that previously lived inline in the
+# two-stage/single-stage and agreement blocks — any behavior change here must keep
+# tests/test_routing.py green AND a recompiled board byte-identical, unless deliberate.
+# ---------------------------------------------------------------------------
+
+# Cohort tag (1105/1806) is recognized ONLY immediately before a known suffix — NOT a
+# bare substring test. A bare "_1105" also matches a model's TRAINING-DATA tag baked
+# into its checkpoint name (e.g. "oracle_obs_cat_reasoning_1105_step336_singlestage_*"),
+# which would silently detach that model's VO cells onto a phantom cohort row.
+_VO_COHORT_RE = re.compile(
+    r"_(1105|1806)(?=_think|_gtobsbuild|_gtobs_|_modelobs|_selfloop|_singlestage|\.json$)")
+
+_VO_CONFIG_CACHE = None
+
+
+def _vo_config_cached():
+    """(vo_map, vo_exclude) from master_models.json, loaded once per process."""
+    global _VO_CONFIG_CACHE
+    if _VO_CONFIG_CACHE is None:
+        _VO_CONFIG_CACHE = _vo_map_from_config()
+    return _VO_CONFIG_CACHE
+
+
+def vo_cohort(fname: str) -> str:
+    m = _VO_COHORT_RE.search(fname)
+    return m.group(1) if m else ""
+
+
+def vo_model_path(name: str, vo_map=None, vo_exclude=None) -> str:
+    """Resolve a VO JSON filename -> served checkpoint path via the curated map. '' if no
+    match OR an excluded probe (distinct sentinel — the caller then skips, never joins to
+    a wrong key)."""
+    if vo_map is None or vo_exclude is None:
+        vo_map, vo_exclude = _vo_config_cached()
+    if any(x in name for x in vo_exclude):
+        return ""
+    for tok, path in vo_map:
+        if tok in name:
+            return path
+    return ""
+
+
+def resolve_vo(name: str, metadata: dict | None = None,
+               vo_map=None, vo_exclude=None) -> dict:
+    """Route one VO result filename (basename, any case) to its board row.
+
+    metadata: the file's metadata dict when available. Admission checks that need it
+    (sft2812 reasoner filter, evaluated_samples floors) run only when it is provided;
+    with metadata=None (a PLANNED filename in --route) routing is still fully computed
+    and `admit` stays True with skip_reason ''.
+
+    Returns a dict:
+      kind          'two_stage' | 'single_stage' | 'agreement' | None (not a routed VO file)
+      excluded_by   the vo_exclude token that rejected it ('' if none)
+      model_path    served checkpoint path ('' = no curated token -> INVISIBLE on the board)
+      cohort        '1105' | '1806' | ''
+      arm           '' | 'modelobs' | 'selfloop' | 'agree'  ('agree' marks the axis only —
+                    it gets NO row-key suffix; Sandra correction 2026-07-09: __arm_* exists
+                    ONLY to separate different stage-2 SETUPS, never axes of one setup)
+      thinking      'on' | 'off' | 'unknown'  (a two-stage file with no think token is
+                    'off' for JOIN purposes — the stage-2 reasoner is ALWAYS thinkoff,
+                    decision 2026-06-04)
+      tier          within-pipeline file-preference rank (_v2 beats v1; scored families
+                    also prefer the _cat variant)
+      row_path      model_path + optional __cohort_/__arm_ pseudo-path suffixes
+      row_key       (_norm_path(row_path), thinking) — THE board row identity
+      floor         min evaluated_samples for admission (None when kind=None/excluded)
+      admit         False when a metadata-dependent gate (or exclusion/no-token) rejects it
+      skip_reason   distinct sentinel: 'excluded:<tok>' | 'no_curated_token' |
+                    'reasoner_not_sft2812' | 'below_floor:<n><<floor>' |
+                    's1_below_floor:<n><<floor>' | ''
+      is_expb_gtobs / is_expb_modelobs / is_expb_selfloop / is_397b_ceiling /
+      is_cohort_bakeoff   the admission-exception flags (also drive obs_source)
+      obs_source_hint     'GT' | 'self' | '' (two-stage naming-convention cases only)
+      family_hint         EVAL_MAP family name implied by routing alone
+    """
+    if vo_map is None or vo_exclude is None:
+        vo_map, vo_exclude = _vo_config_cached()
+    name = name.lower()
+    rt = {"kind": None, "excluded_by": "", "model_path": "", "cohort": "", "arm": "",
+          "thinking": "unknown", "tier": 0, "row_path": "", "row_key": None,
+          "floor": None, "admit": True, "skip_reason": "",
+          "is_expb_gtobs": False, "is_expb_modelobs": False, "is_expb_selfloop": False,
+          "is_397b_ceiling": False, "is_cohort_bakeoff": False,
+          "obs_source_hint": "", "family_hint": ""}
+    if name.startswith("agreement_"):
+        kind = "agreement"
+    elif name.startswith("stage2_"):
+        kind = "two_stage"
+    elif "singlestage" in name:
+        kind = "single_stage"
+    else:
+        return rt  # obs_/judge_/other files are not routed to scored board rows
+    rt["kind"] = kind
+    excl = next((x for x in vo_exclude if x in name), "")
+    if excl:
+        rt.update(excluded_by=excl, admit=False, skip_reason=f"excluded:{excl}")
+        return rt
+    model_path = vo_model_path(name, vo_map, vo_exclude)
+    # Fallback to metadata.model for ANY single-stage file the curated map missed: a
+    # single-stage VO json records the REAL served path there (unlike two-stage, which
+    # records the REASONER — the filename is the only truth for those; and agreement
+    # jsons carry no metadata.model at all).
+    if not model_path and kind == "single_stage" and metadata is not None:
+        model_path = str(metadata.get("model", "")) or ""
+    rt["model_path"] = model_path
+    if not model_path:
+        rt.update(admit=False, skip_reason="no_curated_token")
+    if "thinkon" in name:
+        thinking = "on"
+    elif "thinkoff" in name:
+        thinking = "off"
+    else:
+        thinking = "off" if kind == "two_stage" else "unknown"
+    rt["thinking"] = thinking
+    if kind == "agreement":
+        rt["tier"] = 1 if name.endswith("_v2.json") else 0
+    else:
+        # _v2 rescored beats v1 (x10); the CATEGORICAL variant beats angle/other (+1) —
+        # cat is the V2-canonical visual-obs variant, so a baseline with both takes _cat_
+        # deterministically, not by alphabetical luck (user 2026-06-22).
+        rt["tier"] = (10 if name.endswith("_v2.json") else 0) + (1 if "_cat" in name else 0)
+    cohort = vo_cohort(name)
+    rt["cohort"] = cohort
+    # Arm/exception flags (all cohort-gated; see the EXP-B + 397B-ceiling + bake-off
+    # comments formerly inline in _rows(), and EVAL_MAP.md for the family taxonomy).
+    _expb = bool(cohort) and "expb" in name
+    rt["is_expb_gtobs"] = _expb and "gtobsbuild" in name
+    rt["is_expb_modelobs"] = _expb and "modelobs" in name
+    rt["is_expb_selfloop"] = _expb and "selfloop" in name
+    rt["is_397b_ceiling"] = (bool(cohort) and "397b" in name
+                             and ("_gtobs_" in name or "gtobsbuild" in name)
+                             and "expb" not in name)
+    rt["is_cohort_bakeoff"] = bool(cohort) and "vobs2906" in name and kind == "two_stage"
+    arm = ""
+    if kind in ("two_stage", "agreement"):
+        if rt["is_expb_modelobs"]:
+            arm = "modelobs"
+        elif rt["is_expb_selfloop"]:
+            arm = "selfloop"
+        elif kind == "agreement" and _expb and "_agree_" in name:
+            arm = "agree"  # axis marker ONLY — no row-key suffix (2026-07-09 correction)
+    rt["arm"] = arm
+    row_path = f"{model_path}__cohort_{cohort}" if cohort else model_path
+    if arm in ("modelobs", "selfloop"):
+        row_path = row_path + f"__arm_{arm}"
+    rt["row_path"] = row_path
+    rt["row_key"] = (_norm_path(row_path), thinking)
+    # Floors: min evaluated_samples for board admission. Any gtobsbuild file runs on the
+    # test-BUILD's obs-covered subset (N=2157 = 2260 - 103 no-GT-obs reps) -> 2135 (99%).
+    # A non-gtobsbuild cohort-tagged bake-off / 397B-ceiling file runs the FULL cohort ->
+    # 2237 (99% of 2260, 1806) / 1169 (1105). Everything else keeps the legacy 1170.
+    # (NOTE preserved from the inline code: EXP-B modelobs/selfloop fall through to 1170
+    # even though the comment history says they run the 2157 subset — behavior kept
+    # byte-identical; revisit deliberately, with tests, if that's ever tightened.)
+    if kind == "two_stage":
+        rt["floor"] = (2135 if "gtobsbuild" in name else
+                       (2237 if cohort == "1806" else 1169)
+                       if (rt["is_cohort_bakeoff"] or rt["is_397b_ceiling"]) else 1170)
+    else:
+        rt["floor"] = 2237 if cohort == "1806" else (1169 if cohort == "1105" else 1170)
+    # Metadata-dependent admission gates (compile pass only; --route on a planned name
+    # skips these by passing metadata=None).
+    if metadata is not None and rt["admit"]:
+        if kind == "two_stage":
+            # sft2812-only board rule + the three naming-convention exceptions
+            # (cohort bake-off / EXP-B native arms / 397B GT-obs ceiling).
+            _rsnr = str(metadata.get("model", "")).lower()
+            _is_expb_native = (rt["is_expb_gtobs"] or rt["is_expb_modelobs"]
+                               or rt["is_expb_selfloop"])
+            if (not (rt["is_cohort_bakeoff"] or _is_expb_native or rt["is_397b_ceiling"])
+                    and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr)):
+                rt.update(admit=False, skip_reason="reasoner_not_sft2812")
+            else:
+                _eN = metadata.get("evaluated_samples") or 0
+                if _eN < rt["floor"]:
+                    rt.update(admit=False, skip_reason=f"below_floor:{_eN}<{rt['floor']}")
+        elif kind == "single_stage":
+            _eN = metadata.get("evaluated_samples") or 0
+            if _eN < rt["floor"]:
+                rt.update(admit=False, skip_reason=f"s1_below_floor:{_eN}<{rt['floor']}")
+    # Naming-convention obs-source + family (routing-implied; the compile pass may refine
+    # obs_source from metadata for the plain FIXED-REASONER case).
+    if kind == "two_stage":
+        if rt["is_expb_gtobs"] or rt["is_397b_ceiling"]:
+            rt["obs_source_hint"] = "GT"
+            rt["family_hint"] = "2-stage-GT-VObs"
+        elif rt["is_expb_selfloop"]:
+            rt["obs_source_hint"] = "self"
+            rt["family_hint"] = "2-stage-OWN-MODEL-VObs"
+        elif rt["is_expb_modelobs"]:
+            rt["family_hint"] = "2-stage-DIF-MODEL-VObs"
+        else:
+            rt["family_hint"] = "2-stage-FIXED-REASONER-VObs"
+    elif kind == "single_stage":
+        rt["family_hint"] = "Single-stage"
+    else:
+        rt["family_hint"] = "VObs-agreement"
+    return rt
+
+
 # V2 ERA TESTSET POLICY: the aux axis MUST be the new testset_1506 for every board model (the
 # only exception is the standalone reduced3 comparison CSV, which is built separately to SHOW the
 # testset effect). The testset isn't a structured field anywhere — it's only inferable from the
@@ -1023,28 +1230,16 @@ def _rows():
             if _vp and _disp and _norm_path(_vp) not in _VO_PATH_TO_DISPLAY:
                 _VO_PATH_TO_DISPLAY[_norm_path(_vp)] = _disp
     def _vo_model_path(name: str) -> str:
-        """Resolve a VO JSON filename -> served checkpoint path via the curated map. '' if no
-        match OR an excluded probe (distinct sentinel — the row is then skipped, not joined to a
-        wrong key). Add a carried model's anchor token here when its VO run lands."""
-        if any(x in name for x in VO_EXCLUDE):
-            return ""
-        for tok, path in VO_FILE_TO_MODEL:
-            if tok in name:
-                return path
-        return ""
+        """Local alias binding this run's map/exclude — used by the obs-source resolution
+        below; row ROUTING itself goes through module-level resolve_vo()."""
+        return vo_model_path(name, VO_FILE_TO_MODEL, VO_EXCLUDE)
     # SINGLE-STAGE vs TWO-STAGE are NOT comparable (a two-stage stage-2 reasoner consumes the model's
     # stage-1 obs → severity; single-stage emits severity directly). The board keeps BOTH in SEPARATE
     # column sets so they never silently mix (Audit 2026-06-22 F3). Each pipeline has its own _v2-vs-v1
     # tier track. Two-stage columns are a PLACEHOLDER for the user's reasoner run — they fill from
     # stage2_* files where present (e.g. the historical 397B oracle ceiling) and stay BLANK otherwise.
-    def _vo_v2_tier(name: str) -> int:
-        """Within ONE pipeline, rank competing files for the SAME (model,thinking):
-        _v2 rescored beats v1 (×10), and the CATEGORICAL variant beats angle/other (+1). `cat` is the
-        V2-canonical visual-obs variant — the s2 column, agreement GT, and champions are all categorical
-        — so when a baseline has both a `_cat_` and a non-cat single-stage file the board takes `_cat_`
-        deterministically, not by alphabetical luck (user 2026-06-22: both cat+angle existed historically;
-        cat is the line we carry)."""
-        return (10 if name.endswith("_v2.json") else 0) + (1 if "_cat" in name else 0)
+    # (file-preference tiers now computed by resolve_vo(): _v2 ×10 + _cat +1 for the
+    #  scored families, _v2 = 1 for agreement — see its docstring)
     if VO_RUNS.is_dir():
         ss_best: dict[tuple[str, str], int] = {}  # single-stage (model,thinking) -> winning _v2 tier
         ts_best: dict[tuple[str, str], int] = {}  # two-stage   (model,thinking) -> winning _v2 tier
@@ -1054,25 +1249,16 @@ def _rows():
         # `_1105_`/`_1806_` tag (from eval_all.sh VO_COHORT_TAG). To surface BOTH as separate board
         # rows, fold the cohort into the row key + display for cohort-tagged VO files ONLY. A file
         # with NO cohort tag (every historical single-cohort run) is unchanged → still one row.
-        def _vo_cohort(fname: str) -> str:
-            # Anchor to the known eval-cohort filename positions (immediately before a think-token
-            # or the gtobsbuild/modelobs arm tag, or right before .json) — NOT a bare substring test.
-            # A bare "_1105" in fname" also matches a model's TRAINING-DATA tag baked into its own
-            # checkpoint name (e.g. "oracle_obs_cat_reasoning_1105_step336_singlestage_*.json"),
-            # which would silently detach that model's VO cells onto a phantom cohort row.
-            m = re.search(r"_(1105|1806)(?=_think|_gtobsbuild|_gtobs_|_modelobs|_selfloop|_singlestage|\.json$)", fname)
-            return m.group(1) if m else ""
-        def _vo_row_path(model_path: str, cohort: str) -> str:
-            # cohort-suffixed PSEUDO-path = the row key; only when a cohort tag is present so
-            # single-cohort models keep their bare path (one row, exactly as before).
-            return f"{model_path}__cohort_{cohort}" if cohort else model_path
+        # (cohort recognition + cohort/arm pseudo-path row keys now live in resolve_vo() /
+        #  vo_cohort() at module level — same regex, same anchoring rationale)
         for vj in sorted(VO_RUNS.glob("*.json")):
             name = vj.name.lower()
-            is_two = name.startswith("stage2_")
-            is_single = ("singlestage" in name) and not is_two
+            rt = resolve_vo(name, vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE)
+            is_two = rt["kind"] == "two_stage"
+            is_single = rt["kind"] == "single_stage"
             if not (is_two or is_single):
                 continue  # only the two scorable VO families (stage1/agreement are separate)
-            if any(x in name for x in VO_EXCLUDE):
+            if rt["excluded_by"]:
                 continue  # probe/variant guard applies regardless of how we resolve the path
             try:
                 d = json.loads(vj.read_text())
@@ -1081,117 +1267,39 @@ def _rows():
             m = d.get("metrics", {}) or {}
             if not m:
                 continue
-            # Resolve the VO model path: prefer the curated historical map (two-stage files record
-            # the REASONER in metadata.model, so the filename is the only truth). For a NEW-PIPELINE
-            # run not in the map, fall back to metadata.model — eval_all.sh visualobs is single-stage
-            # and DOES record the real served path there. Skip if neither resolves (no garbage key).
-            model_path = _vo_model_path(name)
-            # Fallback to metadata.model for ANY single-stage file the curated map missed. A
-            # single-stage VO json records the REAL served path in metadata.model (unlike two-stage,
-            # which records the reasoner), so it's a reliable key. Now that s1 and s2 live in SEPARATE
-            # column sets, the old "historical" guard (which suppressed this to avoid resurrecting V1
-            # single-stage noise into the shared column) is no longer needed — and it was BLANKING real
-            # s1 cells for union5/reasoning/etc. whose dashed singlestage filename didn't match the
-            # underscored map token (Audit 2026-06-22 follow-up). VO_EXCLUDE still rejects probes above.
-            if not model_path and is_single:
-                model_path = str((d.get("metadata") or {}).get("model", "")) or ""
+            # Re-resolve WITH metadata — ALL routing rules live in resolve_vo() (see its
+            # docstring): the curated token map (two-stage files record the REASONER in
+            # metadata.model, so the filename is the only truth), the single-stage
+            # metadata.model fallback, the sft2812 reasoner filter + its three
+            # naming-convention exceptions, and the evaluated_samples floors.
+            rt = resolve_vo(name, metadata=d.get("metadata") or {},
+                            vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE)
+            model_path = rt["model_path"]
             if not model_path:
-                continue
-            # Two-stage stage2_* files name the reasoner in metadata.model and carry NO _thinkon/off in
-            # many cases → key would land on 'unknown' and get dropped by the baseline-dedup, losing the
-            # oracle ceiling (Audit 2026-06-22 F2). The stage-2 reasoner is ALWAYS thinkoff (decision
-            # 2026-06-04), so a two-stage file with no think-token is thinkoff for JOIN purposes.
-            if "thinkon" in name:
-                thinking = "on"
-            elif "thinkoff" in name:
-                thinking = "off"
-            else:
-                thinking = "off" if is_two else "unknown"
-            # REASONER FILTER (two-stage only, user 2026-06-22): the board's vo_s2 shows the sft2812
-            # reasoner ONLY. The base-27B reasoner is HISTORICAL — its stage2 files stay on disk but are
-            # NOT read into the board, and there is NO fallback: a model with no sft2812 stage2 result
-            # leaves vo_s2 BLANK (never shows the old reasoner's number). So skip any two-stage file
-            # whose reasoner (metadata.model) is not the sft2812 fe_comparison ckpt.
-            if is_two:
-                _rsnr = str((d.get("metadata") or {}).get("model", "")).lower()
-                # COHORT BAKE-OFF EXCEPTION (2026-07-02): a cohort-tagged vobs2906 stage2 run uses the
-                # BASE-27B reasoner (the 4-variant bake-off), not sft2812. Admit it — but ONLY when the
-                # file is cohort-tagged (so this never resurrects a historical base-27B stage2 for some
-                # other single-cohort model). Otherwise keep the sft2812-only board rule.
-                _is_cohort_bakeoff = bool(_vo_cohort(name)) and "vobs2906" in name
-                # EXP-B NATIVE-REASONER EXCEPTION (2026-07-06): the EXP-B stage-2 ondemand model IS
-                # its own reasoner. metadata.model = the EXP-B ckpt itself, so the sft2812-only rule
-                # would drop it. Three admitted arms, all cohort-tagged `expb`:
-                #   - gtobsbuild: single-pass on the test BUILD (2906 GT obs inlined, byte-exact
-                #     trained prompt) — GATE-B GT-obs arm, PASSED (err-F1 75.90 @ step562).
-                #   - modelobs: two-stage on repetitions_test with REAL 4B stage-1 obs — GATE-B
-                #     drop-in arm, FAILED (err-F1 45.07 @ step562, vs the 55.1 bar).
-                #   - selfloop: two-stage on repetitions_test, checkpoint answers its OWN stage-1
-                #     Q/A prompt (untrained task) then consumes those in its own stage-2 call —
-                #     WORST of the three arms (err-F1 23.89 @ step562), confirming the model can't
-                #     bootstrap decent obs on a task it never trained on.
-                #   Each gets its OWN row (via a pseudo-path suffix below) so none can conflate
-                #   with (overwrite/be overwritten by) another arm's row for the same checkpoint —
-                #   they are different eval conditions, not competing files for one cell.
-                _is_expb_gtobs = bool(_vo_cohort(name)) and "expb" in name and "gtobsbuild" in name
-                _is_expb_modelobs = bool(_vo_cohort(name)) and "expb" in name and "modelobs" in name
-                _is_expb_selfloop = bool(_vo_cohort(name)) and "expb" in name and "selfloop" in name
-                _is_expb_native = _is_expb_gtobs or _is_expb_modelobs or _is_expb_selfloop
-                # 397B GT-OBS CEILING EXCEPTION (2026-07-07, extended 2026-07-09): the 397B reasoner
-                # run over the PRECOMPUTED GT observations (--precomputed-visual-obs = the oracle 2906
-                # file, OR the test-BUILD convention with GT obs inlined into messages[1]) is not
-                # sft2812 and not an EXP-B native-reasoner arm — it's a distinct reference-ceiling
-                # family ("stage-2 with a perfect stage-1"), cohort-tagged + name-anchored to avoid
-                # ever admitting some OTHER unrelated 397B stage2 run by accident. `_gtobsbuild` added
-                # 2026-07-09 (stage2_compare_397b_1806_gtobsbuild_thinkon.json, a new 397B comparison
-                # run against the EXP-B flipfix test build) — mirrors the EXP-B `_is_expb_gtobs` check
-                # above, which already accepted this naming convention for EXP-B checkpoints.
-                _is_397b_gtobs_ceiling = (bool(_vo_cohort(name)) and "397b" in name
-                                           and ("_gtobs_" in name or "gtobsbuild" in name)
-                                           and "expb" not in name)
-                if not (_is_cohort_bakeoff or _is_expb_native or _is_397b_gtobs_ceiling) and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
-                    continue   # not the sft2812 reasoner → historical, don't put it on the board
-                # Accept a near-complete sweep result. Threshold scales with the cohort's N (1806 ≈
-                # 2260 vs 1105 = 1181) — a fixed 1170 would wrongly reject a full 1806 run's tail. Use
-                # 99% of the file's own expected N when cohort-tagged, else the legacy 1170 floor.
-                # EXP-B gtobsbuild/modelobs both run on the obs-covered subset (N=2157, = 2260 − 103
-                # no-GT-obs reps) → floor 2135 (99% of 2157), not the full-cohort 2237.
-                _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
-                # Floor depends on which SUBSET this file evaluates, not which naming category
-                # matched it: any `gtobsbuild`-tagged file (EXP-B's OR another reasoner's, e.g. the
-                # 397B comparison run added 2026-07-09) runs on the test-BUILD's obs-covered subset
-                # (N=2157, = 2260 − 103 no-GT-obs reps) → floor 2135 (99% of 2157). A non-gtobsbuild
-                # cohort-tagged file (bake-off / plain 397B-gtobs ceiling) runs on the FULL cohort →
-                # 2237 (99% of 2260, 1806) / 1169 (1105).
-                _min = (2135 if "gtobsbuild" in name else
-                        (2237 if _vo_cohort(name) == "1806" else 1169)
-                        if (_is_cohort_bakeoff or _is_397b_gtobs_ceiling) else 1170)
-                if _eN < _min:
-                    continue
-            else:
-                # SINGLE-STAGE COMPLETENESS GATE (2026-07-06 audit fix, P1.1): single-stage files had
-                # NO gate at all — a run where e.g. only 464/2260 (21%) samples evaluated (parse/
-                # non-response failures) landed on the board with no flag, indistinguishable from a
-                # 97%-evaluated sibling in the same bake-off comparison. Same 99%-of-cohort-N floor as
-                # two-stage; 1170/1181 legacy floor when untagged (matches the historical single-cohort
-                # single-stage runs, which are already near-complete in practice).
-                _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
-                _cohort_s1 = _vo_cohort(name)
-                _min_s1 = 2237 if _cohort_s1 == "1806" else (1169 if _cohort_s1 == "1105" else 1170)
-                if _eN < _min_s1:
-                    print(f"[vo-s1 SKIP] {vj.name}: evaluated_samples={_eN} < floor {_min_s1} "
+                continue  # no curated token & no fallback → skip (never a wrong join)
+            thinking = rt["thinking"]  # two-stage w/o think token = 'off' for JOIN (resolve_vo)
+            # ADMISSION GATES — computed by resolve_vo() above: the sft2812-only reasoner
+            # rule + its three naming-convention exceptions (cohort bake-off / EXP-B native
+            # arms / 397B GT-obs ceiling), and the evaluated_samples floors. Full rationale
+            # + the incident history live in resolve_vo()'s body; skip_reason is a distinct
+            # sentinel, never a silent drop.
+            if not rt["admit"]:
+                if rt["skip_reason"].startswith("s1_below_floor:"):
+                    _n, _fl = rt["skip_reason"].split(":", 1)[1].split("<", 1)
+                    print(f"[vo-s1 SKIP] {vj.name}: evaluated_samples={_n} < floor {_fl} "
                           f"(partial run, not admitted to the board)")
-                    continue
-            _cohort = _vo_cohort(name)
-            _row_path = _vo_row_path(model_path, _cohort)
-            if is_two and _is_expb_modelobs:
-                # Distinct row key from the GT-obs arm of the SAME checkpoint (see comment above).
-                _row_path = _row_path + "__arm_modelobs"
-            elif is_two and _is_expb_selfloop:
-                _row_path = _row_path + "__arm_selfloop"
-            key = (_norm_path(_row_path), thinking)
+                continue
+            # Local aliases for the flags the populate code below still reads (obs-source
+            # resolution + per-arm row markers).
+            _is_expb_gtobs = rt["is_expb_gtobs"]
+            _is_expb_modelobs = rt["is_expb_modelobs"]
+            _is_expb_selfloop = rt["is_expb_selfloop"]
+            _is_397b_gtobs_ceiling = rt["is_397b_ceiling"]
+            _cohort = rt["cohort"]
+            _row_path = rt["row_path"]   # cohort + __arm_* pseudo-path suffixes from resolve_vo
+            key = rt["row_key"]
             best = ts_best if is_two else ss_best
-            tier = _vo_v2_tier(name)
+            tier = rt["tier"]
             if best.get(key, -1) >= tier:
                 continue  # a better-or-equal file (within this pipeline) already populated this row
             best[key] = tier
@@ -1319,40 +1427,25 @@ def _rows():
         agree_best: dict[tuple[str, str], int] = {}
         for aj in sorted(VO_RUNS.glob("agreement_*.json")):
             name = aj.name.lower()
-            if any(x in name for x in VO_EXCLUDE):
+            rt = resolve_vo(name, vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE)
+            if rt["excluded_by"]:
                 continue
-            model_path = _vo_model_path(name)
+            model_path = rt["model_path"]
             if not model_path:
                 continue  # no curated token → skip (distinct sentinel, never a wrong join)
-            thinking = "on" if "thinkon" in name else ("off" if "thinkoff" in name else "unknown")
-            tier = 1 if name.endswith("_v2.json") else 0
-            _cohort = _vo_cohort(name)
-            _row_path = _vo_row_path(model_path, _cohort)  # cohort-aware, same as scored families
-            # EXP-B arm-aware routing (2026-07-06 fix, renamed 2026-07-09): the `__arm_*` suffix
-            # exists ONLY to separate genuinely DIFFERENT stage-2 EVALUATION SETUPS for the same
-            # checkpoint — i.e. "whose VObs, reasoned over by whom": DIF-MODEL-VObs (a different
-            # already-served model's VObs feeds the reasoner under test) and OWN-MODEL-VObs (the
-            # checkpoint generates its own VObs AND reasons over them itself — one model, both
-            # roles) are NOT comparable to the GT-VObs row and must stay on separate rows — without
-            # an arm suffix here, an agreement run for either arm silently landed on the GT-obs row's
-            # key (caught live: a modelobs agreement F1 of 52.42 merged onto the GT-obs row before
-            # the 2026-07-06 fix, indistinguishable from that arm's own 75.90 err-F1).
-            _is_expb_modelobs_agree = bool(_cohort) and "expb" in name and "modelobs" in name  # -> DIF-MODEL-VObs
-            _is_expb_selfloop_agree = bool(_cohort) and "expb" in name and "selfloop" in name  # -> OWN-MODEL-VObs
-            # GT-obs arm's own self-generated-VObs agreement run (2026-07-09 file rename, `_agree_`
-            # tag): NOT an arm-suffix case — this is the SAME evaluation as the GT-obs/single-stage
-            # rows for this checkpoint+cohort, just a different AXIS (VObs-agreement) measured on it.
-            # Gets NO `__arm_*` suffix (Sandra correction, same day): the `__arm_*` split exists to
-            # separate DIF-MODEL/OWN-MODEL from GT-obs (different stage-2 SETUPS), not to separate
-            # different axes measured on the SAME setup — those belong on ONE row (disjoint
-            # metric-column-blocks, so nothing overwrites); Family already names which axes that row
-            # carries (e.g. `2-stage-GT-VObs;VObs-agreement;Single-stage`).
-            _is_expb_agree_arm = bool(_cohort) and "expb" in name and "_agree_" in name
-            if _is_expb_modelobs_agree:
-                _row_path = _row_path + "__arm_modelobs"
-            elif _is_expb_selfloop_agree:
-                _row_path = _row_path + "__arm_selfloop"
-            key = (_norm_path(_row_path), thinking)
+            thinking = rt["thinking"]
+            tier = rt["tier"]
+            _cohort = rt["cohort"]
+            _row_path = rt["row_path"]  # cohort-aware + __arm_* suffixes, same as scored families
+            # Arm-aware routing lives in resolve_vo(): DIF-MODEL/OWN-MODEL agreement runs get
+            # their own __arm_* row key (caught live 2026-07-06: a modelobs agreement F1 of
+            # 52.42 silently merged onto the GT-obs row, indistinguishable from that arm's own
+            # 75.90 err-F1), while the `_agree_`-tagged GT-obs-arm agreement is an AXIS of the
+            # SAME setup → arm marker only, NO row-key suffix (Sandra correction 2026-07-09).
+            _is_expb_modelobs_agree = rt["arm"] == "modelobs"  # -> DIF-MODEL-VObs
+            _is_expb_selfloop_agree = rt["arm"] == "selfloop"  # -> OWN-MODEL-VObs
+            _is_expb_agree_arm = rt["arm"] == "agree"
+            key = rt["row_key"]
             if agree_best.get(key, -1) >= tier:
                 continue
             try:
@@ -1578,10 +1671,77 @@ def _rows():
     return rows
 
 
+def _route_report(paths) -> int:
+    """ROUTING DRY-RUN (`--route`): print, for each VO result filename (existing file OR a
+    planned name that doesn't exist yet), exactly where the compile pass will put it — row
+    key, cohort/arm, family, floor, admission, and which master_models.json entry claims
+    its display. Launches and writes NOTHING. Exit 1 if ANY input would be invisible on the
+    board (no curated token / no allowlist entry / not a routed VO file) so this can gate a
+    preflight. Uses the SAME resolve_vo() as the compile pass — simulation cannot diverge."""
+    vo_map, vo_exclude = _vo_config_cached()
+    allow = _load_allowlist() or []
+    bad = 0
+    for p in paths:
+        fp = Path(p)
+        md = None
+        note = "planned name (no file on disk) — metadata gates (reasoner/floor) not checked"
+        if fp.exists():
+            try:
+                md = (json.loads(fp.read_text()).get("metadata") or {})
+                note = ""
+            except Exception as e:
+                note = f"file exists but unreadable ({e}) — metadata gates not checked"
+        rt = resolve_vo(fp.name, metadata=md, vo_map=vo_map, vo_exclude=vo_exclude)
+        print(f"\n=== {fp.name}")
+        if note:
+            print(f"  note     : {note}")
+        if rt["kind"] is None:
+            print("  kind     : ⚠ NOT a routed VO file (no stage2_/agreement_ prefix or "
+                  "singlestage marker) — the compiler will never read it")
+            bad += 1
+            continue
+        print(f"  kind     : {rt['kind']}   family: {rt['family_hint']}")
+        print(f"  cohort   : {rt['cohort'] or '(none — joins the bare-path row)'}"
+              f"   arm: {rt['arm'] or '(none)'}   thinking: {rt['thinking']}")
+        if rt["excluded_by"]:
+            print(f"  admit    : ✗ excluded by vo_exclude token {rt['excluded_by']!r}")
+            continue  # deliberate exclusion — not counted as a routing failure
+        if not rt["model_path"]:
+            print("  model    : ⚠ NONE — no vo_tokens match ⇒ INVISIBLE ON THE BOARD."
+                  " Add a master_models.json entry whose vo_tokens is a literal substring"
+                  " of this filename (mind dash vs underscore).")
+            bad += 1
+            continue
+        print(f"  model    : {rt['model_path']}")
+        print(f"  row key  : {rt['row_key']}")
+        print(f"  floor    : evaluated_samples ≥ {rt['floor']}"
+              + (f"   admit: {'✓' if rt['admit'] else '✗ ' + rt['skip_reason']}" if md is not None else ""))
+        entry = _match_allow({"model": rt["model_path"] if rt["cohort"]
+                              else _norm_path(rt["model_path"]),
+                              "display": fp.name.rsplit(".json", 1)[0]}, allow)
+        if entry is None:
+            print("  display  : ⚠ NO master_models.json `pattern` matches ⇒ row DROPPED by the"
+                  " allowlist (invisible). Add/extend the entry BEFORE launching.")
+            bad += 1
+        else:
+            print(f"  display  : {entry.get('display') or '(raw)'}   "
+                  f"(pattern {entry.get('pattern')!r})")
+    print(f"\n[route] {len(paths)} file(s) checked, {bad} would be invisible/unrouted."
+          + ("" if not bad else "  FIX BEFORE LAUNCH."))
+    return 1 if bad else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--no-copy", action="store_true", help="skip copying per-run summaries into eval_master/runs/")
+    ap.add_argument("--route", nargs="+", metavar="FILE",
+                    help="routing dry-run: report the board row each VO result filename "
+                         "(existing or PLANNED) will land on, then exit — writes nothing. "
+                         "The routing-integrity preflight (stabilization plan 2026-07-10).")
     args = ap.parse_args()
+
+    if args.route:
+        return _route_report(args.route)
 
     MASTER_DIR.mkdir(parents=True, exist_ok=True)
     rows = _rows()
