@@ -107,7 +107,7 @@ cd /home/sgsilva/vlm-post-training/aux_tasks/sft && \
 python data_preparation/evaluate.py \
   --test-dataset-dir /mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test \
   --model <CKPT> --server-url http://<HOST>:<PORT>/v1 --max-tokens 16384 \
-  --output-file /mnt/data/sgsilva/results/visual_obs_runs/<RUN>_singlestage_<thinkon|thinkoff>.json
+  --output-file /mnt/data/sgsilva/results/visual_obs/runs/<RUN>_singlestage_<thinkon|thinkoff>.json
 
 
 EXPORT CHECKPOINTS (nemo-rl DCP -> HF)  —  <CKPT_DIR> <OUT=/mnt/data/sgsilva/models> <export-name>

@@ -16,7 +16,7 @@
 #   bash eval_grpo_steps.sh thinkoff
 #   bash eval_grpo_steps.sh thinkon
 #
-# Outputs -> /mnt/data/sgsilva/results/visual_obs_runs/   (per CLAUDE.md)
+# Outputs -> /mnt/data/sgsilva/results/visual_obs/runs/   (per CLAUDE.md)
 # Eval venv = vlm-post-training-home-venv. Serve venv handled by start_vllm_server.sh.
 # ──────────────────────────────────────────────────────────────────────────────
 set -uo pipefail   # NOT -e: a single bad step must not abort the whole sweep
@@ -38,10 +38,10 @@ PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
 VLM=/home/sgsilva/vlm-post-training
 SERVE=/home/sgsilva/utilities/serve/start_vllm_server.sh
 MODELS=/mnt/data/sgsilva/models
-RESULTS=/mnt/data/sgsilva/results/visual_obs_runs
+RESULTS=/mnt/data/sgsilva/results/visual_obs/runs
 SYMLINKS=/mnt/data/sgsilva/datasets/1105_test_processed_symlinks
 OBSFILE=/home/sgsilva/vlm-post-training/visual_observations_categorical.json
-GT=/mnt/data/sgsilva/results/visual_obs_runs/oracle_397b_1105_categorical.json
+GT=/mnt/data/sgsilva/results/visual_obs/runs/oracle_397b_1105_categorical.json
 EXPECT_REPS=1181   # stage-1 record count MUST equal this (per CLAUDE.md verify rule)
 
 HOST="$(hostname)"   # never hardcode the node

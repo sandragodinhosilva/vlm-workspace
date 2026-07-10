@@ -14,8 +14,10 @@ results/
   master/      eval_master.csv + eval_master_{4b,9b,27b}.csv (cross-stage join; baselines pinned top)
 ```
 **Back-compat symlinks** (old hardcoded paths still resolve, so un-migrated scripts don't break):
-`/home/sgsilva/benchmarks/results`→`results/benchmarks`; `results/visual_obs_runs`→`visual_obs/runs`;
+`/home/sgsilva/benchmarks/results`→`results/benchmarks`;
 `results/evaluations`→`visual_obs/evaluations`; `results/agreements`→`visual_obs/agreements`;
+⚠ `results/visual_obs_runs` symlink REMOVED 2026-07-10 (Sandra: one dir only) — the canonical
+path is `results/visual_obs/runs/`; all live code was migrated, anything stale now fails loudly;
 repo `aux_tasks/evals`→`results/aux/evals`. The aux master CSV is no longer in the repo — it's at
 `results/aux/`. The VO master CSVs moved out of the repo (`visual-obs-sft/`) into `results/visual_obs/`
 (only the Google-sheet exports remain in the repo as reference inputs).
@@ -233,7 +235,7 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
 - **venv:** `/home/sgsilva/vlm-post-training-home-venv`
 - **For visual-obs/oracle checkpoints ONLY** — NOT multimodal models like step1299. `eval_all`
   WARNS if the model name doesn't look like a visual-obs/oracle ckpt.
-- **Per-run output:** `/mnt/data/sgsilva/results/visual_obs_runs/<stem>_singlestage_think<on|off>.json`
+- **Per-run output:** `/mnt/data/sgsilva/results/visual_obs/runs/<stem>_singlestage_think<on|off>.json`
   (metrics: `error_detection_f1`, `sample_error_detection_f1`, `overall_severity_accuracy`).
 - **Full multi-stage recipe** (stage-1 obs → agreement → two-stage → single-stage) +
   registration: memory `reference_visual_obs_eval_commands` + skill `/eval-vlm`.

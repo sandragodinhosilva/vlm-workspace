@@ -23,7 +23,7 @@ exec > >(tee -a "$_STAGE2_LOG") 2>&1
 PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
 VLM=/home/sgsilva/vlm-post-training
 SERVE=/home/sgsilva/utilities/serve/start_vllm_server.sh
-R=/mnt/data/sgsilva/results/visual_obs_runs
+R=/mnt/data/sgsilva/results/visual_obs/runs
 REASONER=/mnt/data/shared/models/Qwen3.5-27B
 TEST=/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test
 HOST="$(hostname)"

@@ -213,8 +213,8 @@ cd /home/sgsilva/vlm-post-training
     --server-url http://worker-11:8000/v1 \
     --provider vllm \
     --two-stage \
-    --precomputed-visual-obs /mnt/data/sgsilva/results/visual_obs_runs/oracle_397b_1105_categorical.json \
-    --output-file /mnt/data/sgsilva/results/visual_obs_runs/stage2_oracle_397b_categorical.json \
+    --precomputed-visual-obs /mnt/data/sgsilva/results/visual_obs/runs/oracle_397b_1105_categorical.json \
+    --output-file /mnt/data/sgsilva/results/visual_obs/runs/stage2_oracle_397b_categorical.json \
     --resume
 ```
 

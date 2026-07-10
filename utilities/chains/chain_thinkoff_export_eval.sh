@@ -116,4 +116,4 @@ echo "=== running eval sweep (thinkoff) on $SWEEP_NODE ==="
 srun --nodelist="$SWEEP_NODE" --gres=gpu:8 --time=03:00:00 --job-name=grpo-eval-thinkoff \
   bash "$EVAL_SCRIPT" thinkoff
 echo "=== chain_thinkoff DONE at $(date '+%F %T') ==="
-echo "  summary: /mnt/data/sgsilva/results/visual_obs_runs/grpo_sweep_thinkoff_summary.tsv"
+echo "  summary: /mnt/data/sgsilva/results/visual_obs/runs/grpo_sweep_thinkoff_summary.tsv"
