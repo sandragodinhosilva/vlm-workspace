@@ -60,7 +60,7 @@
   },
   {
    "pattern": "a17b_1806_gtobs_thinkon",
-   "display": "Oracle 397B visual-obs cat (ceiling, GT-fed s1) [1806]",
+   "display": "Qwen3.5-397B (baseline, thinkon) 2-stage-GT-VObs (legacy oracle run)",
    "train_reasoning": "NA",
    "board_order": 4,
    "group": "oracle_397b",
@@ -68,12 +68,28 @@
   },
   {
    "pattern": "compare_397b_1806_gtobsbuild",
-   "display": "397B stage-2 reasoner over GT-VObs (comparison run) [1806]",
+   "display": "Qwen3.5-397B (baseline, thinkon) 2-stage-GT-VObs",
    "train_reasoning": "NA",
    "group": "oracle_397b_compare",
    "board_order": 34,
-   "note": "2026-07-09/10: 397B GT-VObs reasoning run on the SAME test BUILD as the EXP-B flipfix comparison (2906 k5majority GT obs inlined, byte-exact trained prompt, expb_stage2_from_raw_ondemand_test_flagkeep). Topped off via --resume to N=2157/2157, 0 failed; _v2 rescored. Final: err-F1=74.14, severity_acc=77.40. Distinct row from the 'Oracle 397B visual-obs cat (ceiling, GT-fed s1) [1806]' row (different run/test build). ROUTED VIA RUN-CARD since 2026-07-10 (stabilization step 8): the result files carry <file>.card.json with checkpoint_path=/mnt/data/shared/models/Qwen3.5-397B-A17B + arm=compare_gtobs, so the row keys on the REAL path (…__cohort_1806__arm_compare_gtobs) — the synthetic COMPARE_397B_GTOBS_1806 vo_path is RETIRED. This entry sits EARLY in the file so the broad 'shared/models/qwen3.5-397b' pattern can't hijack the display match (first-match-wins); board_order=34 keeps the row in Sandra's requested final-3 board position (397B / flipfix step840 / bigger-mix-2906).",
+   "note": "2026-07-09/10: 397B GT-VObs reasoning run on the SAME test BUILD as the EXP-B flipfix comparison (2906 k5majority GT obs inlined, byte-exact trained prompt, expb_stage2_from_raw_ondemand_test_flagkeep). Topped off via --resume to N=2157/2157, 0 failed; _v2 rescored. Final: err-F1=74.14, severity_acc=77.40. Distinct row from the 'Oracle 397B visual-obs cat (ceiling, GT-fed s1) [1806]' row (different run/test build). ROUTED VIA RUN-CARD since 2026-07-10 (stabilization step 8): the result files carry <file>.card.json with checkpoint_path=/mnt/data/shared/models/Qwen3.5-397B-A17B + arm=compare_gtobs, so the row keys on the REAL path (\u2026__cohort_1806__arm_compare_gtobs) \u2014 the synthetic COMPARE_397B_GTOBS_1806 vo_path is RETIRED. This entry sits EARLY in the file so the broad 'shared/models/qwen3.5-397b' pattern can't hijack the display match (first-match-wins); board_order=34 keeps the row in Sandra's requested final-3 board position (397B / flipfix step840 / bigger-mix-2906).",
    "keep_thinking": "on"
+  },
+  {
+   "pattern": "397b-a17b_1806_selfloop",
+   "display": "Qwen3.5-397B (baseline, thinkon) 2-stage-OWN-MODEL-VObs",
+   "train_reasoning": "NA",
+   "group": "baseline",
+   "board_order": 4,
+   "note": "397B self-loop arm (2026-07-10 re-baseline): 397B generates its own VObs then reasons over them. Row keys __arm_selfloop via the generic _selfloop_ resolver rule. Sits BEFORE the plain 397b-a17b_1806 baseline pattern (more specific)."
+  },
+  {
+   "pattern": "397b-a17b_1806",
+   "display": "Qwen3.5-397B (baseline)",
+   "train_reasoning": "NA",
+   "group": "baseline",
+   "board_order": 3,
+   "note": "397B raw-base baseline rows (thinkon+thinkoff), added 2026-07-10 re-baseline. Sits AFTER the compare/ceiling arm entries (their tokens are more specific) and BEFORE the broad shared/models/qwen3.5-397b pattern. Render layer appends ', think{on,off}' inside the parens per row. The 2-stage-OWN-MODEL-VObs arm entry gets added when its stems are frozen at launch."
   },
   {
    "pattern": "shared/models/qwen3.5-397b",
@@ -344,7 +360,7 @@
   },
   {
    "pattern": "step562_1806_modelobs_4bcatk5maj987",
-   "display": "27B EXP-B stage-2 ondemand reasoner step562 (MODEL-obs arm) ⚠️ L/R-INVERTED",
+   "display": "27B EXP-B stage-2 ondemand reasoner step562 (MODEL-obs arm) \u26a0\ufe0f L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_modelobs",
    "section": "VObs ondemand reasoner",
@@ -356,7 +372,7 @@
   },
   {
    "pattern": "step281_1806_selfloop",
-   "display": "27B EXP-B stage-2 ondemand reasoner step281 (SELF-LOOP arm) ⚠️ L/R-INVERTED",
+   "display": "27B EXP-B stage-2 ondemand reasoner step281 (SELF-LOOP arm) \u26a0\ufe0f L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_selfloop",
    "note": "EXP-B native stage-2 reasoner, step281 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
@@ -367,7 +383,7 @@
   },
   {
    "pattern": "step562_1806_selfloop",
-   "display": "27B EXP-B stage-2 ondemand reasoner step562 (SELF-LOOP arm) ⚠️ L/R-INVERTED",
+   "display": "27B EXP-B stage-2 ondemand reasoner step562 (SELF-LOOP arm) \u26a0\ufe0f L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_selfloop",
    "note": "EXP-B native stage-2 reasoner, step562 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
@@ -378,7 +394,7 @@
   },
   {
    "pattern": "step840_1806_selfloop",
-   "display": "27B EXP-B stage-2 ondemand reasoner step840 (SELF-LOOP arm) ⚠️ L/R-INVERTED",
+   "display": "27B EXP-B stage-2 ondemand reasoner step840 (SELF-LOOP arm) \u26a0\ufe0f L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_selfloop",
    "note": "EXP-B native stage-2 reasoner, step840 -- SELF-LOOP arm (3rd eval condition, 2026-07-06): checkpoint answers its OWN stage-1 categorical Q/A prompt (untrained task, live model call) then consumes those self-generated observations in its own stage-2 stance call. WORST of the 3 arms (err-F1 16.79/23.89/23.76 for step281/562/840 vs GT-obs 73.54/75.90/75.50 and model-obs 45.07 @step562) -- the model cannot bootstrap usable stage-1 obs on a task it never trained on. See 2026-07-06_expb_gateb_gtobs_eval.md SS9-10.",
@@ -389,7 +405,7 @@
   },
   {
    "pattern": "expb-stage2-ondemand-sft-step281",
-   "display": "27B EXP-B stage-2 ondemand reasoner step281 ⚠️ L/R-INVERTED",
+   "display": "27B EXP-B stage-2 ondemand reasoner step281 \u26a0\ufe0f L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs",
    "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage.",
@@ -400,10 +416,10 @@
   },
   {
    "pattern": "expb-stage2-ondemand-sft-step562",
-   "display": "27B EXP-B stage-2 ondemand reasoner step562 ⚠️ L/R-INVERTED",
+   "display": "27B EXP-B stage-2 ondemand reasoner step562 \u26a0\ufe0f L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs",
-   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage. See the separate 'step562 (MODEL-obs arm)' row for the real-stage-1-obs drop-in result (FAILED, err-F1 45.07). Agreement (2026-07-07): eval_all.sh's auto-agreement stage from the 07-07 full-eval run generated its own dedicated stage-1 obs (NOT the single-stage severity file) and scored it vs 1806 human GT -- micro-F1 21.30%, n=3213, acc=68.04%. ⚠️ L/R-INVERSION (found 2026-07-07): this stage-1 obs was self-generated by the mirror-trained checkpoint -- the 21.30% agreement number is ALSO compromised (same defect class as the SELF-LOOP arm), disregard — redo after the _flipfix retrain.",
+   "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage. See the separate 'step562 (MODEL-obs arm)' row for the real-stage-1-obs drop-in result (FAILED, err-F1 45.07). Agreement (2026-07-07): eval_all.sh's auto-agreement stage from the 07-07 full-eval run generated its own dedicated stage-1 obs (NOT the single-stage severity file) and scored it vs 1806 human GT -- micro-F1 21.30%, n=3213, acc=68.04%. \u26a0\ufe0f L/R-INVERSION (found 2026-07-07): this stage-1 obs was self-generated by the mirror-trained checkpoint -- the 21.30% agreement number is ALSO compromised (same defect class as the SELF-LOOP arm), disregard \u2014 redo after the _flipfix retrain.",
    "vo_tokens": [
     "expb_stage2_ondemand_step562",
     "expb-stage2-ondemand-sft-step562"
@@ -412,7 +428,7 @@
   },
   {
    "pattern": "expb-stage2-ondemand-sft-step840",
-   "display": "27B EXP-B stage-2 ondemand reasoner step840 ⚠️ L/R-INVERTED",
+   "display": "27B EXP-B stage-2 ondemand reasoner step840 \u26a0\ufe0f L/R-INVERTED",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs",
    "note": "EXP-B native stage-2 reasoner (thinkON, ondemand stance). vo_s2 here = GT-obs arm: single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157. NOT sft2812-reasoner two-stage.",
@@ -423,10 +439,10 @@
   },
   {
    "pattern": "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840",
-   "display": "27B EXP-B stage-2 ondemand reasoner step840 (flipfix) [1806]",
+   "display": "Thrive-VLM 27B ondemand step840 (flipfix)",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs_flipfix",
-   "note": "L/R-inversion-FIXED retrain (2026-07-08/09, job 110073, 1-node TP4xDP2). ONE row carrying THREE axes of the same checkpoint+cohort evaluation (2026-07-09: consolidated from 3 separate master_models.json entries into 1, after the compiler stopped `__arm_`-suffixing the plain agreement/single-stage files for this checkpoint — see Family column, `2-stage-GT-VObs;Single-stage;VObs-agreement`): (1) 2-stage GT-VObs arm — single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157, via stage2_..._gtobsbuild_thinkon_v2.json; (2) VObs-agreement — the checkpoint answers its own ~10 VObs Q/A pairs per rep (untrained task, live call) scored vs 1806 human GT, via agreement_..._agree_1806_thinkon.json (files renamed 2026-07-09, single-stage sibling renamed same day to add the missing _1806 cohort tag so it joins onto this row); (3) Single-stage severity arm (model emits severity directly, no stage-1 obs) + aux-task legs, via ..._1806_singlestage_thinkon_v2.json. Trained on need_to_flip-backfilled + regenerated (2 teachers: 397B+gemini-3-flash) + re-judged (85.2% accept) + clock-timestamp-leak-cleaned traces: expb_stage2_train_ondemand_flagkeep_reasoning_flipfix_sft_ready_clean (8977 rows). Side-agreement checker: 99.8% (403/404) vs the pre-fix 61% inversion rate. Compare vo_s2 err-F1 directly against the OLD (inverted) step840 row -- same test set/N/thinking, only the L/R defect differs. See ~/.claude/reports/visual_observations/2026-07-07_expb_stage2_lr_inversion_audit.md + ~/.claude/reports/post_training/2026-07-08_expb_stage2_flipfix_sft_1node_strategy_change.md.",
+   "note": "L/R-inversion-FIXED retrain (2026-07-08/09, job 110073, 1-node TP4xDP2). ONE row carrying THREE axes of the same checkpoint+cohort evaluation (2026-07-09: consolidated from 3 separate master_models.json entries into 1, after the compiler stopped `__arm_`-suffixing the plain agreement/single-stage files for this checkpoint \u2014 see Family column, `2-stage-GT-VObs;Single-stage;VObs-agreement`): (1) 2-stage GT-VObs arm \u2014 single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157, via stage2_..._gtobsbuild_thinkon_v2.json; (2) VObs-agreement \u2014 the checkpoint answers its own ~10 VObs Q/A pairs per rep (untrained task, live call) scored vs 1806 human GT, via agreement_..._agree_1806_thinkon.json (files renamed 2026-07-09, single-stage sibling renamed same day to add the missing _1806 cohort tag so it joins onto this row); (3) Single-stage severity arm (model emits severity directly, no stage-1 obs) + aux-task legs, via ..._1806_singlestage_thinkon_v2.json. Trained on need_to_flip-backfilled + regenerated (2 teachers: 397B+gemini-3-flash) + re-judged (85.2% accept) + clock-timestamp-leak-cleaned traces: expb_stage2_train_ondemand_flagkeep_reasoning_flipfix_sft_ready_clean (8977 rows). Side-agreement checker: 99.8% (403/404) vs the pre-fix 61% inversion rate. Compare vo_s2 err-F1 directly against the OLD (inverted) step840 row -- same test set/N/thinking, only the L/R defect differs. See ~/.claude/reports/visual_observations/2026-07-07_expb_stage2_lr_inversion_audit.md + ~/.claude/reports/post_training/2026-07-08_expb_stage2_flipfix_sft_1node_strategy_change.md.",
    "vo_tokens": [
     "expb_stage2_ondemand_step840_flipfix1node",
     "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_agree_1806_thinkon"
@@ -435,11 +451,11 @@
   },
   {
    "pattern": "stage1-vobs-bigger-mix-2906-sft-step5337",
-   "display": "27B stage1 vobs bigger mix 2906 step5337 [1806]",
+   "display": "VObs-VLM 27B bigger-mix-2906 step5337",
    "train_reasoning": "no",
    "group": "stage1_vobs_bigger_mix_2906",
    "section": "VOBs experiments",
-   "note": "Stage-1 SFT on the 8-source bigger mix (174,287 rows: VObs categorical+angle k5majority(+1q) 104,091 / mix_12k_2906 train 13,900 / 1105_binary_test_split_1806testfiltered_flipready 20,738-post-drop / llm_fms_reasoning_judged_passonly 15,558 / repfe_comparison_nothink_20k 20,000). Config sft_vlm_qwen35_27b_stage1_vobs_bigger_mix_2906_megatron.yaml, TP4xDP8 4-node, thinkOFF (no enable_thinking field), lr5e-6 cosine, 3 planned epochs / 16,011 total steps. Job 109701 CANCELLED by user choice at ~28% (step 4521/16011) after step_5337 (epoch-1 save, save_period=5337) had already landed — curves were textbook (train loss 0.28-0.40, val falling 0.347@1780->0.2996@3560, no overfit), stop was a deliberate '1 checkpoint is enough' call, not a training problem. CAVEAT (2026-07-09, /check-settings row 3, verified from 20 sampled actual training rows not the config comment): NOT 100% clean thinkoff — 15/20 no <think> tag, 2/20 empty <think></think> wrapper (mix_12k_2906 video subset, harmless), 3/20 REAL substantive <think> reasoning 300-527 chars (llm_fms source, ~9% of the mix) — confirmed genuine model-target reasoning (not judge/repair artifact) by direct message inspection. Serve/eval decision unchanged (thinkOFF still matches the ~90%+ majority) but noted here since it may show as reasoning leakage in raw thinkoff outputs. ONE row will carry multiple VObs axes as they land (Single-stage / 2-stage-GT-VObs / 2-stage-FIXED-REASONER-VObs via sft2812 / 2-stage-OWN-MODEL-VObs selfloop / VObs-agreement), categorical schema only, 1806 test cohort N~2157, per the eval plan frozen 2026-07-09. See project_vobs_oracle_cot_unknown_1806.md.",
+   "note": "Stage-1 SFT on the 8-source bigger mix (174,287 rows: VObs categorical+angle k5majority(+1q) 104,091 / mix_12k_2906 train 13,900 / 1105_binary_test_split_1806testfiltered_flipready 20,738-post-drop / llm_fms_reasoning_judged_passonly 15,558 / repfe_comparison_nothink_20k 20,000). Config sft_vlm_qwen35_27b_stage1_vobs_bigger_mix_2906_megatron.yaml, TP4xDP8 4-node, thinkOFF (no enable_thinking field), lr5e-6 cosine, 3 planned epochs / 16,011 total steps. Job 109701 CANCELLED by user choice at ~28% (step 4521/16011) after step_5337 (epoch-1 save, save_period=5337) had already landed \u2014 curves were textbook (train loss 0.28-0.40, val falling 0.347@1780->0.2996@3560, no overfit), stop was a deliberate '1 checkpoint is enough' call, not a training problem. CAVEAT (2026-07-09, /check-settings row 3, verified from 20 sampled actual training rows not the config comment): NOT 100% clean thinkoff \u2014 15/20 no <think> tag, 2/20 empty <think></think> wrapper (mix_12k_2906 video subset, harmless), 3/20 REAL substantive <think> reasoning 300-527 chars (llm_fms source, ~9% of the mix) \u2014 confirmed genuine model-target reasoning (not judge/repair artifact) by direct message inspection. Serve/eval decision unchanged (thinkOFF still matches the ~90%+ majority) but noted here since it may show as reasoning leakage in raw thinkoff outputs. ONE row will carry multiple VObs axes as they land (Single-stage / 2-stage-GT-VObs / 2-stage-FIXED-REASONER-VObs via sft2812 / 2-stage-OWN-MODEL-VObs selfloop / VObs-agreement), categorical schema only, 1806 test cohort N~2157, per the eval plan frozen 2026-07-09. See project_vobs_oracle_cot_unknown_1806.md.",
    "vo_tokens": [
     "stage1-vobs-bigger-mix-2906-sft-step5337"
    ],

@@ -422,5 +422,36 @@ class TestLiveRegistrySmoke(unittest.TestCase):
                          f"Add vo_tokens to master_models.json or fix the filename.")
 
 
+class TestAuxTestsetClassifier(unittest.TestCase):
+    """Aux test-bank classification (data-driven from testsets.json since 2026-07-10)."""
+
+    def test_registered_banks_include_current_pair(self):
+        banks = cer._aux_banks()
+        self.assertIn("2906", banks)
+        self.assertIn("1506", banks)
+
+    def test_2906_explicit_markers(self):
+        for rid in ("rebaseline27b_aux2906_thinkoff", "x_testset_2906_y", "x_testset-2906",
+                    "run_ts2906_thinkon"):
+            self.assertEqual(cer._aux_testset(rid), "2906", rid)
+
+    def test_bare_2906_in_model_name_does_NOT_classify_as_2906(self):
+        # 'stage1_vobs_bigger_mix_2906' carries 2906 as a MODEL token; without a testset-specific
+        # marker it must fall through (here to date-fallback 1506?, the pre-2906 behavior).
+        self.assertEqual(
+            cer._aux_testset("step5337_full_thinkoff", "stage1_vobs_bigger_mix_2906",
+                             timestamp="2026-07-09 22:18:27"), "1506?")
+
+    def test_1506_and_old_and_unknown_unchanged(self):
+        self.assertEqual(cer._aux_testset("mix12k_1506_thinkoff"), "1506")
+        self.assertEqual(cer._aux_testset("baseline_reduced3_run"), "old")
+        self.assertEqual(cer._aux_testset("mystery_run", timestamp=""), "unknown")
+
+    def test_bank_labels_are_explicit(self):
+        self.assertEqual(cer._aux_bank_label("2906"), "multimodal_reduced_testset_2906")
+        self.assertEqual(cer._aux_bank_label("1506?"),
+                         "multimodal_reduced_testset_1506 (date-inferred)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

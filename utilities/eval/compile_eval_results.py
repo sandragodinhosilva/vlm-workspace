@@ -186,7 +186,7 @@ FIELDS = [
     "vo_s1_source", "vo_s1_eval_n", "vo_s2_source", "vo_s2_reasoner", "vo_s2_reasoner_thinking",
     "vo_s2_obs_source", "vo_s2_eval_n", "vo_test_set", "vo_agree_eval_n",
     "_spacer_prov_vo",      # blank spacer: VO provenance │ ⎵ │ AUX provenance
-    "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source",
+    "aux_run_ts", "aux_run_id", "aux_run_dir", "aux_source", "aux_test_set",
     # --- FULL VO METRIC DETAIL (appended AFTER all metadata; mirrors the formatted_1105 CSV's
     #     per-band metric block, for single-stage then two-stage). Repeats the headline cols on
     #     purpose so each block is a self-contained mirror. s2 mostly blank until the reasoner sweep.
@@ -234,7 +234,7 @@ HEADER_LABELS = {
     "aux_image_task4_acc": "Aux Image Task4",
     "train_group_id": "Train Group", "train_sample_count": "Train Samples",
     "aux_run_ts": "Aux Run TS", "aux_run_id": "Aux Run ID", "aux_run_dir": "Aux Run Dir",
-    "aux_source": "Aux Source", "bench_source": "Benchmark Source",
+    "aux_source": "Aux Source", "aux_test_set": "Aux Test Set", "bench_source": "Benchmark Source",
     "vo_s1_source": "VO Source (single-stage)", "vo_s1_eval_n": "VO Eval N (single-stage, eval/failed)",
     "vo_s2_source": "VO Source (two-stage)",
     "vo_s2_reasoner": "Stage2 Reasoner", "vo_s2_reasoner_thinking": "Stage2 Reasoner Thinking",
@@ -611,6 +611,12 @@ def resolve_vo(name: str, metadata: dict | None = None,
             arm = "modelobs"
         elif rt["is_expb_selfloop"]:
             arm = "selfloop"
+        elif "_selfloop_" in name and bool(cohort):
+            # GENERIC self-loop arm (2026-07-10, re-baseline): any cohort-tagged stem carrying
+            # the _selfloop_ token is the 2-stage-OWN-MODEL-VObs arm — was EXP-B-only before,
+            # which silently keyed a 397B selfloop file onto the FIXED-REASONER row (route-check
+            # caught it pre-launch).
+            arm = "selfloop"
         elif kind == "agreement" and _expb and "_agree_" in name:
             arm = "agree"  # axis marker ONLY — no row-key suffix (2026-07-09 correction)
     rt["arm"] = arm
@@ -658,7 +664,7 @@ def resolve_vo(name: str, metadata: dict | None = None,
         if rt["is_expb_gtobs"] or rt["is_397b_ceiling"]:
             rt["obs_source_hint"] = "GT"
             rt["family_hint"] = "2-stage-GT-VObs"
-        elif rt["is_expb_selfloop"]:
+        elif rt["arm"] == "selfloop":
             rt["obs_source_hint"] = "self"
             rt["family_hint"] = "2-stage-OWN-MODEL-VObs"
         elif rt["is_expb_modelobs"]:
@@ -672,7 +678,34 @@ def resolve_vo(name: str, metadata: dict | None = None,
     return rt
 
 
-# V2 ERA TESTSET POLICY: the aux axis MUST be the new testset_1506 for every board model (the
+TESTSETS_FILE = Path("/home/sgsilva/utilities/eval/testsets.json")
+
+def _aux_banks():
+    """Registered aux test banks from testsets.json 'aux_testsets' (keys minus meta fields).
+    Loud fallback to the known banks if the file is unreadable — never silently empty."""
+    try:
+        d = json.loads(TESTSETS_FILE.read_text()).get("aux_testsets", {})
+        banks = [k for k in d if k not in ("_doc", "current")]
+        if banks:
+            return banks
+    except Exception as e:
+        print(f"[aux-testset] WARNING: cannot read {TESTSETS_FILE} ({e}) — using built-in bank list")
+    return ["2906", "1506"]
+
+def _aux_bank_label(ts_class):
+    """Explicit 'Aux Test Set' cell for a classification ('1506?' = date-inferred 1506)."""
+    base = ts_class.rstrip("?")
+    try:
+        p = json.loads(TESTSETS_FILE.read_text()).get("aux_testsets", {}).get(base, {}).get("path", "")
+        name = Path(p).name if p else f"testset_{base}"
+    except Exception:
+        name = f"testset_{base}"
+    return name + (" (date-inferred)" if ts_class.endswith("?") else "")
+
+
+# V2 ERA TESTSET POLICY (historical; DATA-DRIVEN since 2026-07-10): board aux runs must be on a
+# bank registered in testsets.json 'aux_testsets' — 2906 current, 1506 legacy. Originally: the
+# aux axis MUST be the new testset_1506 for every board model (the
 # only exception is the standalone reduced3 comparison CSV, which is built separately to SHOW the
 # testset effect). The testset isn't a structured field anywhere — it's only inferable from the
 # run_id / tag / eval_family naming. So classify, and accept ONLY '1506'. Anything we can't
@@ -686,11 +719,22 @@ _OLD_TESTSET_MARKERS = ("reduced3", "reduced2", "test_reduced", "1405", "2605", 
                         "20260331", "20260401", "20260406", "20260407", "20260408",
                         "indomain", "skeleton")
 def _aux_testset(run_id: str, eval_family: str = "", tag: str = "", timestamp: str = "") -> str:
-    """Classify an aux run's testset. Returns '1506' | 'old' | 'unknown'.
-    Rules (in order): explicit '1506' token -> 1506; explicit OLD marker / legacy 'baseline'
+    """Classify an aux run's testset. Returns '2906' | '1506' | '1506?' | 'old' | 'unknown'.
+    Rules (in order): explicit 2906 TESTSET marker -> 2906 (marker must be testset-specific —
+    a bare '2906' also appears in MODEL names like stage1-vobs-bigger-mix-2906, so it must NOT
+    classify); explicit '1506' token -> 1506; explicit OLD marker / legacy 'baseline'
     family -> old; otherwise a run stamped on/after the V2 boundary -> 1506 (new-pipeline default);
-    else unknown (EXCLUDED — never silently treated as 1506)."""
+    else unknown (EXCLUDED — never silently treated as a known testset)."""
     s = f"{run_id} {eval_family} {tag}".lower()
+    # Registered banks come from testsets.json 'aux_testsets' (future-proof: a NEW bank is one
+    # JSON entry, no compiler edit). Marker forms are testset-SPECIFIC on purpose — a bare tag
+    # ('2906') also appears in model names, so it must never classify by itself. 1506 keeps its
+    # historical bare-token + date-fallback semantics below.
+    for _bank in _aux_banks():
+        if _bank == "1506":
+            continue
+        if any(t in s for t in (f"testset_{_bank}", f"testset-{_bank}", f"aux{_bank}", f"ts{_bank}")):
+            return _bank
     if "1506" in s:
         return "1506"
     if any(t in s for t in _OLD_TESTSET_MARKERS):
@@ -1033,10 +1077,11 @@ def _rows():
                 model_path = (rec.get("model") or "").strip()
                 if not model_path:
                     continue  # distinct sentinel: skip empty-model rows, don't invent a key
-                # V2 aux MUST be testset_1506 — exclude old/unknown-testset aux runs so the board's
-                # aux axis is internally comparable (the reduced3 comparison lives in its own CSV).
+                # Board aux runs must be on a KNOWN comparable testset: 2906 (current, re-baseline
+                # 2026-07-10) or 1506 (legacy rows). old/unknown are excluded; the explicit
+                # 'Aux Test Set' column shows which one each row used.
                 _ts_class = _aux_testset(rec.get("run_id", ""), rec.get("eval_family", ""), rec.get("tag", ""), rec.get("timestamp", ""))
-                if _ts_class not in ("1506", "1506?"):
+                if _ts_class.rstrip("?") not in _aux_banks():
                     continue
                 if _ts_class == "1506?":
                     datefallback_runs.append(f"{rec.get('run_id','')} @ {rec.get('timestamp','')[:10]} [{matrix.name}]")
@@ -1084,6 +1129,7 @@ def _rows():
                 r["aux_run_id"] = rec.get("run_id", "")
                 r["aux_run_dir"] = rec.get("multimodal_run_dir", "")
                 r["aux_source"] = matrix.name
+                r["aux_test_set"] = _aux_bank_label(_ts_class)
 
     # ---- AUX (FALLBACK): per-run aggregate JSON for runs not yet in eval_matrix (matrix export
     # is manual, so a fresh run can lag). Only fills modalities the matrix row didn't already set.
@@ -1094,9 +1140,9 @@ def _rows():
             except Exception:
                 continue
             run_id = str(d.get("run_id", ""))
-            # V2 aux MUST be testset_1506 (same gate as the matrix source).
+            # Same testset gate as the matrix source: 2906 or 1506 admitted, labeled explicitly.
             _ts_class = _aux_testset(run_id, str(d.get("eval_family", "")), str(d.get("tag", "")), str(d.get("created_at", "")))
-            if _ts_class not in ("1506", "1506?"):
+            if _ts_class.rstrip("?") not in _aux_banks():
                 continue
             if _ts_class == "1506?":
                 datefallback_runs.append(f"{run_id} @ {str(d.get('created_at',''))[:10]} [fallback-json]")
@@ -1145,6 +1191,7 @@ def _rows():
             r["aux_run_id"] = run_id
             r["aux_run_dir"] = str(d.get("run_dir", agg.parent.parent))
             r["aux_source"] = "multimodal_json(fallback)"
+            r["aux_test_set"] = _aux_bank_label(_ts_class)
 
     # ---- BENCHMARKS: read BOTH summary.csv (broad) then overlay summary_judge.csv
     # (judged preferred where present). NOT all-or-nothing: a judge CSV from an older
@@ -1754,7 +1801,7 @@ def _resolve_vo_from_card(name: str, card: dict, metadata: dict | None, rt: dict
         if rt["is_expb_gtobs"]:
             rt["obs_source_hint"] = "GT"
             rt["family_hint"] = "2-stage-GT-VObs"
-        elif rt["is_expb_selfloop"]:
+        elif rt["arm"] == "selfloop":
             rt["obs_source_hint"] = "self"
             rt["family_hint"] = "2-stage-OWN-MODEL-VObs"
         elif rt["is_expb_modelobs"]:
@@ -1940,8 +1987,10 @@ def main() -> int:
             # and 1806-cohort rows shared one identical display string with materially different
             # numbers, distinguishable only via the far-right VO Test Set column. Apply it HERE,
             # after any curated-display override, so it can never be silently dropped again.
-            if r.get("_cohort") and f"[{r['_cohort']}]" not in r["display"]:
-                r["display"] = f"{r['display']} [{r['_cohort']}]"
+            # 2026-07-10 (Sandra): no unconditional [cohort] tag. Stash it; a post-pass appends
+            # it ONLY where two rows would otherwise share an identical display+thinking (the
+            # P1.3 collision the unconditional tag was guarding against).
+            r["_cohort_tag_pending"] = bool(r.get("_cohort")) and f"[{r['_cohort']}]" not in r["display"]
             # Only auto-append the arm label if the curated display doesn't already spell it out
             # (some allowlist entries, like the EXP-B modelobs/selfloop rows, curate their own
             # "(...arm)" text — this is the fallback for any FUTURE arm row without a curated label).
@@ -1966,6 +2015,25 @@ def main() -> int:
         items = kept
     else:
         print(f"[allowlist] {MODEL_ALLOWLIST.name} absent -> keeping ALL {len(items)} rows (legacy)")
+
+    # Cohort-tag post-pass (pairs with _cohort_tag_pending above): append [cohort] ONLY where
+    # two rows would otherwise render an identical display+thinking — keeps the P1.3 dup guard
+    # without tagging every cohort row.
+    from collections import Counter as _Counter
+    _disp_cnt = _Counter((r.get("display", ""), r.get("eval_thinking", "")) for _k, r in items)
+    for _k, _r in items:
+        if _r.pop("_cohort_tag_pending", False) and \
+                _disp_cnt[(_r.get("display", ""), _r.get("eval_thinking", ""))] > 1:
+            _r["display"] = f"{_r['display']} [{_r['_cohort']}]"
+
+    # Baseline displays spell the thinking mode per ROW (Sandra 2026-07-10: "(baseline)" ->
+    # "(baseline, thinkon/thinkoff)"). One registry entry covers both thinking rows, so the
+    # transform happens here at render. Only the EXACT token '(baseline)' is rewritten —
+    # entries that already hardcode '(baseline, thinkon) 2-stage-…' are left alone.
+    for _k, _r in items:
+        if "(baseline)" in _r.get("display", "") and _r.get("eval_thinking") in ("on", "off"):
+            _r["display"] = _r["display"].replace(
+                "(baseline)", f"(baseline, think{_r['eval_thinking']})")
 
     # combined master (all curated families), baselines pinned to top
     n = _write_csv(MASTER_CSV, items, FIELDS)
