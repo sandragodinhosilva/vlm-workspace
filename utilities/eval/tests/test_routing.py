@@ -290,6 +290,20 @@ class TestCardRouting(unittest.TestCase):
         self.assertEqual(g["family_hint"], "2-stage-GT-VObs")
         self.assertEqual(g["obs_source_hint"], "GT")
 
+    def test_card_custom_arm_gets_own_row(self):
+        # The COMPARE_397B synthetic-key retirement (2026-07-10): a producer-declared
+        # custom arm separates two same-model-same-cohort GT runs on the REAL path.
+        c = cer.resolve_vo("stage2_compare_397b_1806_gtobsbuild_thinkon_v2.json",
+                           vo_map=VO_MAP, vo_exclude=VO_EXCLUDE,
+                           card={"card_version": 1, "checkpoint_path": Q397B,
+                                 "axis": "stage2", "arm": "compare_gtobs",
+                                 "obs_source": "GT", "cohort": "1806",
+                                 "thinking": "on", "expected_n": 2157})
+        self.assertTrue(c["row_path"].endswith("__cohort_1806__arm_compare_gtobs"))
+        self.assertTrue(c["row_path"].startswith(Q397B))  # REAL path, no synthetic key
+        self.assertEqual(c["family_hint"], "2-stage-GT-VObs")  # obs_source GT wins
+        self.assertEqual(c["floor"], 2135)
+
     def test_malformed_card_is_loud_not_silent(self):
         # feedback_no_silent_fail: a bad card must NOT fall back to filename guessing.
         c = cer.resolve_vo("stage2_expb_stage2_ondemand_step562_1806_selfloop_thinkon.json",
@@ -376,7 +390,10 @@ class TestLiveRegistrySmoke(unittest.TestCase):
             self.skipTest("VO_RUNS not mounted")
         unrouted = []
         for f in sorted(cer.VO_RUNS.glob("*.json")):
-            r = cer.resolve_vo(f.name)
+            if f.name.endswith(".card.json"):
+                continue
+            # route exactly as the compiler does: card-first, filename fallback
+            r = cer.resolve_vo(f.name, card=cer._load_card(f))
             if r["kind"] and not r["excluded_by"] and not r["model_path"] \
                     and r["kind"] != "single_stage":  # single-stage may fallback via metadata
                 unrouted.append(f.name)

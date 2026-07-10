@@ -70,6 +70,15 @@
    ]
   },
   {
+   "pattern": "compare_397b_1806_gtobsbuild",
+   "display": "397B stage-2 reasoner over GT-VObs (comparison run) [1806]",
+   "train_reasoning": "NA",
+   "group": "oracle_397b_compare",
+   "board_order": 34,
+   "note": "2026-07-09/10: 397B GT-VObs reasoning run on the SAME test BUILD as the EXP-B flipfix comparison (2906 k5majority GT obs inlined, byte-exact trained prompt, expb_stage2_from_raw_ondemand_test_flagkeep). Topped off via --resume to N=2157/2157, 0 failed; _v2 rescored. Final: err-F1=74.14, severity_acc=77.40. Distinct row from the 'Oracle 397B visual-obs cat (ceiling, GT-fed s1) [1806]' row (different run/test build). ROUTED VIA RUN-CARD since 2026-07-10 (stabilization step 8): the result files carry <file>.card.json with checkpoint_path=/mnt/data/shared/models/Qwen3.5-397B-A17B + arm=compare_gtobs, so the row keys on the REAL path (…__cohort_1806__arm_compare_gtobs) — the synthetic COMPARE_397B_GTOBS_1806 vo_path is RETIRED. This entry sits EARLY in the file so the broad 'shared/models/qwen3.5-397b' pattern can't hijack the display match (first-match-wins); board_order=34 keeps the row in Sandra's requested final-3 board position (397B / flipfix step840 / bigger-mix-2906).",
+   "keep_thinking": "on"
+  },
+  {
    "pattern": "shared/models/qwen3.5-397b",
    "display": "Qwen3.5-397B (distillation target; plain obs not oracle)",
    "train_reasoning": "NA",
@@ -414,17 +423,6 @@
     "expb_stage2_ondemand_step840"
    ],
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step840"
-  },
-  {
-   "pattern": "compare_397b_gtobs_1806",
-   "display": "397B stage-2 reasoner over GT-VObs (comparison run) [1806]",
-   "train_reasoning": "NA",
-   "group": "oracle_397b_compare",
-   "note": "2026-07-09/10: new 397B GT-VObs reasoning run on the SAME test BUILD as the EXP-B flipfix comparison (2906 k5majority GT obs inlined, byte-exact trained prompt, expb_stage2_from_raw_ondemand_test_flagkeep). Initially N=2100/2157 (4 failed, ~53 unattempted) — TOPPED OFF via --resume against the still-served worker-13 397B (2026-07-09) to N=2157/2157, 0 failed; re-scored via evaluate_vo.py (_v2.json). Final: err-F1=74.14, severity_acc=77.40. Distinct row from the 'Oracle 397B visual-obs cat (ceiling, GT-fed s1) [1806]' entry (different source file: stage2_compare_397b_1806_gtobsbuild_thinkon.json vs stage2_Qwen3.5-397B-A17B_1806_gtobs_thinkon_v2.json) — kept as its own reference row rather than merged, since the two are separate runs/files even though they measure the same axis. Family fix 2026-07-10: `vo_s2_obs_source` now correctly resolves to \"GT\" for this row (was falling through to \"unrecorded\"/FIXED-REASONER-VObs misclassification — see `_is_397b_gtobs_ceiling` in compile_eval_results.py). vo_path RENAMED TWICE 2026-07-10: first attempt only changed `pattern` (not `vo_path`), which still collided — the ROW's `model` field is built from `vo_path`, and the plain-397B pattern (`shared/models/qwen3.5-397b`) is a substring of ANY path starting `/mnt/data/shared/models/Qwen3.5-397B-A17B...`, so moving this entry past the plain-397B entry in file order let that broader pattern hijack the row regardless of THIS entry's own pattern string. Fixed by changing `vo_path` itself to a string that does NOT start with the shared-models 397B prefix, so no existing pattern can match it — now safe to position anywhere (board-display request: 397B / flipfix step840 / bigger-mix-2906 as the final 3 board rows, in that order).",
-   "vo_tokens": [
-    "compare_397b_1806_gtobsbuild_thinkon"
-   ],
-   "vo_path": "COMPARE_397B_GTOBS_1806"
   },
   {
    "pattern": "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840",

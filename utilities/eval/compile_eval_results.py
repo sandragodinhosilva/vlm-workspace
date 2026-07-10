@@ -381,7 +381,16 @@ def _load_allowlist():
                 "train_reasoning": (e.get("train_reasoning") or "").strip(),
                 "train_sample_count": str(e.get("train_sample_count") or "").strip(),  # curated (eval_matrix unwired)
                 "group": (e.get("group") or "").strip(),
-                "order": idx,  # board rows appear in allowlist order; blank row between groups
+                # board rows appear in allowlist order UNLESS the entry sets an explicit
+                # "board_order" — this DECOUPLES match precedence (file position; a specific
+                # pattern must sit BEFORE a broad one or it gets shadowed) from display
+                # position (where Sandra wants the row on the board). Added 2026-07-10 to
+                # retire the synthetic-vo_path workaround: the compare_397b entry needed to
+                # be both EARLY (so 'shared/models/qwen3.5-397b' can't hijack its row) and
+                # LAST-3 on the board (Sandra's requested ordering) — impossible when one
+                # number serves both purposes.
+                "order": (e["board_order"] if isinstance(e.get("board_order"), (int, float))
+                          else idx),
                 # optional: keep ONLY this thinking-mode row for this model ("on"/"off"). Used to drop a
                 # degenerate contrast row (e.g. a reasoning model served thinkoff collapses) — keep the on row.
                 "keep_thinking": (e.get("keep_thinking") or "").strip().lower(),
@@ -1328,6 +1337,8 @@ def _rows():
                 r["_arm"] = "modelobs"
             elif is_two and _is_expb_selfloop and not r.get("_arm"):
                 r["_arm"] = "selfloop"
+            elif is_two and rt["arm"] and rt["arm"] != "agree" and not r.get("_arm"):
+                r["_arm"] = rt["arm"]  # card-declared distinct setup (e.g. compare_gtobs)
             def vm(k):
                 v = m.get(k)
                 return round(v * 100, 2) if isinstance(v, (int, float)) else ""
@@ -1714,13 +1725,20 @@ def _resolve_vo_from_card(name: str, card: dict, metadata: dict | None, rt: dict
     rt["is_expb_gtobs"] = arm == "gtobsbuild" or obs_source.upper() == "GT"
     rt["is_expb_modelobs"] = arm == "modelobs"
     rt["is_expb_selfloop"] = arm == "selfloop" or obs_source.lower() == "self"
-    rt["arm"] = arm if arm in ("modelobs", "selfloop", "agree") else ""
+    # Card-declared arm: 'gtobsbuild' and 'agree' share the plain cohort row (axes of the
+    # same setup — the 2026-07-09 rule); ANY other non-empty arm is a producer-declared
+    # DISTINCT SETUP and gets its own __arm_<token> row. This is what retires synthetic
+    # row keys like COMPARE_397B_GTOBS_1806: two same-model-same-cohort GT runs on
+    # different test builds separate via card arm (e.g. 'compare_gtobs') on the REAL path,
+    # instead of inventing a fake path string. Separate-by-default is the safe direction —
+    # a wrong split is visible and mergeable; a wrong merge is silent.
+    rt["arm"] = "" if arm in ("", "gtobsbuild") else arm
     if kind == "agreement":
         rt["tier"] = 1 if name.endswith("_v2.json") else 0
     else:
         rt["tier"] = (10 if name.endswith("_v2.json") else 0) + (1 if "_cat" in name else 0)
     row_path = f"{ckpt}__cohort_{rt['cohort']}" if rt["cohort"] else ckpt
-    if rt["arm"] in ("modelobs", "selfloop"):
+    if rt["arm"] and rt["arm"] != "agree":
         row_path += f"__arm_{rt['arm']}"
     rt["row_path"] = row_path
     rt["row_key"] = (_norm_path(row_path), thinking)
@@ -1761,6 +1779,64 @@ def _load_card(json_path: Path) -> dict | None:
     except Exception as e:
         print(f"[card WARN] {cp.name}: unreadable ({e}) — falling back to filename routing")
         return None
+
+
+VIEWS_FILE = Path("/home/sgsilva/utilities/eval/board_views.json")
+
+
+def _render_views(items) -> None:
+    """Board VIEWS (stabilization step 8, Sandra 2026-07-10): hand-picked row subsets
+    rendered as eval_master_<view>.csv BESIDE the full board — eval_master.csv itself
+    stays untouched (the complete/historical record). Selection is by EXACT row key
+    (path + cohort + arm + thinking) from board_views.json; changing the displayed
+    models = edit that file + recompile (seconds), never a join/compiler change. A spec
+    matching no row prints a loud per-spec warning — no silent misses."""
+    if not VIEWS_FILE.exists():
+        return
+    try:
+        cfg = json.loads(VIEWS_FILE.read_text())
+    except Exception as e:
+        print(f"[views WARN] {VIEWS_FILE.name} unreadable ({e}) — no views rendered")
+        return
+    reserved = set(ERA_FAMILIES) | {"other"}
+    for vname, view in (cfg.get("views") or {}).items():
+        if vname.startswith("_"):
+            continue  # _doc/_schema keys
+        if vname in reserved:
+            print(f"[views WARN] view {vname!r} collides with a per-base split name — skipped")
+            continue
+        picked, missing = [], []
+        for spec in view.get("rows") or []:
+            sp = str(spec.get("path") or "").strip()
+            sc = str(spec.get("cohort") or "").strip()
+            sa = str(spec.get("arm") or "").strip()
+            st = str(spec.get("thinking") or "").strip()
+            hits = []
+            for key, row in items:
+                k0, kth = key
+                base = k0.split("__cohort_")[0].split("__arm_")[0]
+                if kth != st:
+                    continue
+                if base != sp and base != _norm_path(sp):
+                    continue
+                if sc and f"__cohort_{sc}" not in k0:
+                    continue
+                if not sc and "__cohort_" in k0:
+                    continue
+                if sa and f"__arm_{sa}" not in k0:
+                    continue
+                if not sa and "__arm_" in k0:
+                    continue
+                hits.append((key, row))
+            if not hits:
+                missing.append(spec)
+            picked.extend(hits)  # view order = as listed in the JSON
+        out = MASTER_DIR / f"eval_master_{vname}.csv"
+        n = _write_csv(out, picked, FIELDS)
+        print(f"[view:{vname}] wrote {n} rows -> {out}")
+        for spec in missing:
+            print(f"    ⚠ [view:{vname}] spec matched NO curated row: {spec} — check "
+                  "path/cohort/arm/thinking against eval_master.csv (exact-key match)")
 
 
 def _route_report(paths) -> int:
@@ -1909,6 +1985,9 @@ def main() -> int:
     if other:
         n_other = sum(len(by_base[f]) for f in other)
         print(f"[master] note: {n_other} curated rows in non-era families {other} are in the combined CSV but have no split file")
+
+    # board views (step 8): hand-picked subsets from board_views.json -> eval_master_<view>.csv
+    _render_views(items)
 
     # copy per-run aux aggregate JSON + SUMMARY (small, human-readable) into eval_master/runs/
     if not args.no_copy and AUX_EVALS.is_dir():

@@ -1,0 +1,31 @@
+{
+  "_doc": [
+    "Board VIEWS (stabilization step 8, 2026-07-10) — hand-picked row subsets rendered as",
+    "eval_master_<view>.csv beside the FULL board (eval_master.csv is never filtered by this",
+    "file; it remains the complete/historical record). Rendered automatically at the end of",
+    "every compile_eval_results.py run — to change which models are displayed, edit a view's",
+    "rows and recompile (seconds).",
+    "Row spec = the EXACT row key: {path, cohort, arm, thinking}.",
+    "  path     : the served checkpoint path as shown in eval_master.csv 'Model Path'",
+    "             (synthetic keys like COMPARE_397B_GTOBS_1806 work too).",
+    "  cohort   : '' | '1105' | '1806'   ('' = the bare/non-cohort row)",
+    "  arm      : '' | 'modelobs' | 'selfloop'  ('' = the plain/GT row; GT-obs shares it)",
+    "  thinking : 'on' | 'off'",
+    "A spec that matches no curated row prints a loud warning at compile time.",
+    "View names must not collide with the per-base splits (4b/27b/other)."
+  ],
+  "views": {
+    "selected": {
+      "note": "Sandra's current working comparison — STARTER SET seeded 2026-07-10, edit freely.",
+      "rows": [
+        {"path": "/mnt/data/shared/models/Qwen3.5-4B", "cohort": "", "arm": "", "thinking": "off", "comment": "4B baseline thinkoff"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-4B", "cohort": "", "arm": "", "thinking": "on", "comment": "4B baseline thinkon"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "", "arm": "", "thinking": "off", "comment": "27B baseline thinkoff"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "", "arm": "", "thinking": "on", "comment": "27B baseline thinkon"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-397B-A17B", "cohort": "1806", "arm": "compare_gtobs", "thinking": "on", "comment": "397B reasoner over GT-VObs, comparison run (card-routed; synthetic key retired 2026-07-10)"},
+        {"path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840", "cohort": "1806", "arm": "", "thinking": "on", "comment": "EXP-B flipfix step840 (GT-obs/agreement/single-stage axes)"},
+        {"path": "/mnt/data/sgsilva/models/qwen35-27b-stage1-vobs-bigger-mix-2906-sft-step5337", "cohort": "", "arm": "", "thinking": "off", "comment": "27B stage1 vobs bigger-mix step5337 — bare-key row: its files carry NO cohort tag; display '[1806]' is a STALE curated label (job 111364 actually ran 1105, repair in flight). Re-key to cohort 1806 after the proper re-run."}
+      ]
+    }
+  }
+}
