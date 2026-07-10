@@ -1,0 +1,35 @@
+{
+  "_doc": [
+    "Cohort bundles (stabilization step 5, 2026-07-10) — THE machine-readable version of the",
+    "/eval-vlm cohort table. Consumers: eval_all.sh --cohort/COHORT= (expands to all VO_* env",
+    "vars; explicit VO_* overrides win), run cards (expected_n), and — future — the compiler's",
+    "floors. Add a new cohort HERE (all fields) before any eval references it; eval_all",
+    "hard-fails on an unknown cohort instead of guessing GT (the reasoner_sweep P2.2 rule).",
+    "n = FULL test-split rep count (per-run subsets like the gtobsbuild build's 2157 are",
+    "recorded per-run in the card, not here)."
+  ],
+  "cohorts": {
+    "1105": {
+      "test_set": "/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test",
+      "processed_dir": "/mnt/data/sgsilva/datasets/1105/1105_test_processed_symlinks",
+      "sessions_from": "",
+      "gt_cat": "/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed_visual_obs/oracle/oracle_397b_1105_categorical_test.json",
+      "gt_angle": "/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed_visual_obs/oracle/oracle_397b_1105_angle_test.json",
+      "schema": "categorical",
+      "obs_file": "",
+      "n": 1181,
+      "note": "SUPERSEDED bank — use only for deliberate comparison against historical 1105 rows."
+    },
+    "1806": {
+      "test_set": "/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test",
+      "processed_dir": "/mnt/data/shared/vlm/data/human_annotations/1806_after_format_review_processed",
+      "sessions_from": "/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test",
+      "gt_cat": "/mnt/data/sgsilva/results/visual_obs/runs/2906_splits/oracle_2906_merged_k5majority_categorical_1806_test.json",
+      "gt_angle": "/mnt/data/sgsilva/results/visual_obs/runs/2906_splits/oracle_2906_merged_k5majority_angle_1806_test.json",
+      "schema": "categorical",
+      "obs_file": "/home/sgsilva/vlm-post-training/visual_obs/visual_observations_categorical_2906.json",
+      "n": 2260,
+      "note": "CURRENT cohort (2906 schema). Path re-confirmed by Sandra 2026-07-10 after the morning's pmartins reorganization scare."
+    }
+  }
+}

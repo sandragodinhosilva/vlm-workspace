@@ -107,11 +107,10 @@ echo "  env-leak watch: SERVE_VENV=${SERVE_VENV:-<unset>}  TESTSET=${TESTSET:-<d
 # 2026-07-10: submitted without overrides → silent 1105 default under an '[1806]' label). Echo
 # them ALWAYS; scream when the visualobs stage is requested with NO explicit cohort wiring.
 echo "  env-leak watch (VO): VO_COHORT_TAG=${VO_COHORT_TAG:-<unset>}  VO_TEST=${VO_TEST:-<unset → 1105 DEFAULT>}  VO_GT_CAT=${VO_GT_CAT:-<unset>}  VO_SCHEMA=${VO_SCHEMA:-<unset>}  VO_PROCESSED_DIR=${VO_PROCESSED_DIR:-<unset>}  VO_SESSIONS_FROM=${VO_SESSIONS_FROM:-<unset>}  VO_OBS_FILE=${VO_OBS_FILE:-<unset>}"
-if [[ ",${STAGES}," == *",visualobs,"* && -z "${VO_TEST:-}" ]]; then
-  echo "  ⚠⚠ visualobs stage requested with VO_TEST UNSET → eval_all.sh will SILENTLY default to the" >&2
-  echo "     SUPERSEDED 1105 bank (N=1181). If you meant the current cohort (e.g. 1806), STOP and" >&2
-  echo "     resubmit with the full VO_* set (see the canonical submit in /eval-vlm)." >&2
-  echo "     [This becomes a HARD FAIL when testsets.json + required --cohort land — plan step 5.]" >&2
+if [[ ",${STAGES}," == *",visualobs,"* && -z "${VO_TEST:-}" && -z "${COHORT:-}" ]]; then
+  echo "  ⚠⚠ visualobs requested with NO COHORT= and NO VO_TEST → eval_all.sh will HARD-FAIL in <10s" >&2
+  echo "     (the silent 1105 default is retired, step 5). Resubmit with COHORT=1105|1806 — it fills" >&2
+  echo "     every VO_* from ~/utilities/eval/testsets.json (explicit VO_* overrides still win)." >&2
 fi
 # BENCH_EXTRA leak guard: a stale `--skip-vsibench/--skip-mmmu/--skip-videomme` leaked via
 # --export=ALL silently drops benchmarks from a fresh run (the mix12k/mixreas miss 2026-06-20:

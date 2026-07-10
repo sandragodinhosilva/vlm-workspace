@@ -46,11 +46,14 @@ BENCH_PY=/home/sgsilva/benchmarks/SIBench-VSR/.venv/bin/python
 #   VO_OBS_FILE       explicit --visual-obs-file (2906 schema JSON; empty => resolve from variant)
 #   VO_SESSIONS_FROM  --sessions-from filter    (1806 test-scoping; empty for 1105 which uses its symlink dir)
 # All default to the historical 1105-categorical values so existing board runs are unchanged.
-VO_TEST="${VO_TEST:-/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test}"
+# SILENT 1105 DEFAULT RETIRED (step 5, 2026-07-10 — job 111364 ran the superseded bank under an
+# '[1806]' label because these defaulted silently). Now: pass --cohort 1105|1806 / COHORT= (fills
+# every VO_* from testsets.json) or set VO_TEST explicitly; a visualobs run with neither HARD-FAILS.
+VO_TEST="${VO_TEST:-}"
 VO_OUT=/mnt/data/sgsilva/results/visual_obs/runs   # reorg 2026-06-17 (old visual_obs_runs/ back-compat-symlinked)
 # GT visual-obs (human) for the agreement stage — per-rep entries carry `human_error_severities`
 # (the HUMAN ground truth) + folder_name/repetition_id. Agreement = model-vs-GT (NOT vs oracle).
-VO_GT_CAT="${VO_GT_CAT:-/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed_visual_obs/oracle/oracle_397b_1105_categorical_test.json}"
+VO_GT_CAT="${VO_GT_CAT:-}"   # silent 1105 default retired (step 5) — from --cohort/testsets.json
 VO_SCHEMA="${VO_SCHEMA:-categorical}"       # --visual-obs-variant (categorical|angle)
 VO_OBS_FILE="${VO_OBS_FILE:-}"              # explicit --visual-obs-file (2906 schema); empty => resolve from variant
 VO_SESSIONS_FROM="${VO_SESSIONS_FROM:-}"    # --sessions-from (1806 test-scoping); empty => none (1105)
@@ -71,7 +74,7 @@ VO_OBS_GEN=/home/sgsilva/vlm-post-training/visual_obs/generate_visual_observatio
 # data_preparation/results/evaluate_v2.py), co-located with the evaluate.py it modifies.
 # Agreement (stage-1, index-based) does NOT need it.
 VO_EVAL_V2=/home/sgsilva/vlm-post-training/eval/evaluate_vo.py
-VO_PROCESSED_DIR="${VO_PROCESSED_DIR:-/mnt/data/sgsilva/datasets/1105/1105_test_processed_symlinks}"   # moved under 1105/ (was datasets/ root)
+VO_PROCESSED_DIR="${VO_PROCESSED_DIR:-}"   # silent 1105 default retired (step 5) — from --cohort/testsets.json
 # (the categorical question file resolves automatically from --visual-obs-variant categorical →
 #  repo-root visual_obs/visual_observations_categorical.json; no explicit --visual-obs-file needed.
 #  For 2906 schema pass VO_OBS_FILE=…/visual_obs/visual_observations_{categorical,angle}_2906.json.)
@@ -110,9 +113,44 @@ while [[ $# -gt 0 ]]; do
     --serve-wait) SERVE_WAIT="$2"; shift 2;;  # seconds to wait for server health (default 1800)
     --keep-server) KEEP_SERVER=1; shift;;  # leave OUR vLLM running after eval (reuse it; node frees only at job end)
     --full-rebuild) FULL_REBUILD=1; shift;;  # end-of-run board rebuild = --full-scan (use after an exporter/compiler code change)
+    --cohort) COHORT="$2"; shift 2;;    # expand the cohort bundle from testsets.json (step 5)
     *) echo "Unknown arg: $1" >&2; exit 2;;
   esac
 done
+
+# ---- COHORT BUNDLES (stabilization step 5, 2026-07-10): --cohort 1105|1806 (or COHORT= env)
+# expands to ALL VO_* values from ~/utilities/eval/testsets.json — one flag instead of the
+# seven-env-var incantation. Explicit VO_* env vars WIN over the bundle (only unset ones fill).
+# Unknown cohort => hard fail (never guess a GT source — reasoner_sweep P2.2 rule).
+if [[ -n "${COHORT:-}" ]]; then
+  eval "$("$VPT_PY" - "$COHORT" <<'PYCOHORT'
+import json, sys, shlex
+c = sys.argv[1]
+b = json.load(open("/home/sgsilva/utilities/eval/testsets.json"))["cohorts"].get(c)
+if not b:
+    print(f'echo "[FAIL] --cohort {c}: not in testsets.json (wire the new cohort there first)" >&2; exit 2')
+else:
+    m = {"VO_TEST": "test_set", "VO_PROCESSED_DIR": "processed_dir",
+         "VO_SESSIONS_FROM": "sessions_from", "VO_GT_CAT": "gt_cat",
+         "VO_SCHEMA": "schema", "VO_OBS_FILE": "obs_file", "VO_EXPECTED_N": "n"}
+    for env, key in m.items():
+        v = b.get(key)
+        if v not in (None, ""):
+            print(f'[[ -z "${{{env}:-}}" ]] && export {env}={shlex.quote(str(v))}')
+    print(f'[[ -z "${{VO_COHORT_TAG:-}}" ]] && export VO_COHORT_TAG={shlex.quote(c)}')
+    print(f'echo "[cohort] {c}: VO_* filled from testsets.json (explicit env vars kept)"')
+PYCOHORT
+)"
+fi
+# HARD GATE (step 5): a visualobs run with NO cohort and NO explicit VO_TEST fails HERE, in <10s,
+# instead of silently evaluating the superseded 1105 bank (job 111364, 2026-07-10).
+if [[ ",${STAGES}," == *",visualobs,"* && -z "${VO_TEST:-}" ]]; then
+  echo "[FAIL] visualobs stage requires a cohort. Pass --cohort 1105|1806 (or COHORT= for the" >&2
+  echo "       sbatch path) — it fills VO_TEST/VO_PROCESSED_DIR/VO_SESSIONS_FROM/VO_GT_CAT/" >&2
+  echo "       VO_SCHEMA/VO_OBS_FILE from ~/utilities/eval/testsets.json — or set VO_TEST etc." >&2
+  echo "       explicitly. The old silent 1105 default is RETIRED." >&2
+  exit 2
+fi
 
 [[ -z "$MODEL" || -z "$STAGES" ]] && { echo "ERROR: --model and --stages are required." >&2; exit 2; }
 [[ "$BASE_URL" != */v1 ]] && BASE_URL="${BASE_URL%/}/v1"
@@ -599,7 +637,7 @@ if have_stage visualobs; then
   "reasoner": null,
   "cohort": "${VO_COHORT_TAG:-}",
   "test_set": "${VO_TEST:-}",
-  "expected_n": null,
+  "expected_n": ${VO_EXPECTED_N:-null},
   "thinking": "${THINKING}",
   "run_id": "${RUN_ID:-}",
   "job_id": "${SLURM_JOB_ID:-}",
