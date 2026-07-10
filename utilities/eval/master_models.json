@@ -59,15 +59,12 @@
    "note": "fresh 1506 aux run-id (when nodes free)"
   },
   {
-   "pattern": "qwen3.5-397b-a17b__oracle_gtobs_1806",
+   "pattern": "a17b_1806_gtobs_thinkon",
    "display": "Oracle 397B visual-obs cat (ceiling, GT-fed s1) [1806]",
    "train_reasoning": "NA",
+   "board_order": 4,
    "group": "oracle_397b",
-   "note": "CEILING/reference row (2026-07-07), 1806 cohort: 397B REASONING over the PRECOMPUTED GT observations (oracle_2906_merged_k5majority_categorical_1806_test.json fed as stage-1 via --precomputed-visual-obs) \u2014 i.e. 'what if stage-2 always got perfect stage-1 obs'. NOT agreement (obs IS the GT here, agreement would be trivial/undefined) \u2014 this populates vo_s1/vo_s2 severity metrics instead, distinct from the 1105 agreement-only ceiling row below. 2260/2260 samples, 0 failures. Raw (v1): severity_acc=0.7715, severity_mae=0.3614, err_f1=0.7441. v2 (evaluate_vo rescore, name-join fix): severity_acc=0.7779, severity_mae=0.3543, err_f1=0.7461. LISTED BEFORE the plain-397B/agreement-ceiling entries below because its pattern is a substring of the plain-397B vo_path \u2014 first-match order matters here, don't reorder without re-testing.",
-   "vo_path": "/mnt/data/shared/models/Qwen3.5-397B-A17B__oracle_gtobs_1806",
-   "vo_tokens": [
-    "qwen3.5-397b-a17b_1806_gtobs_thinkon"
-   ]
+   "note": "CEILING/reference row (2026-07-07), 1806 cohort: 397B REASONING over the PRECOMPUTED GT observations (oracle_2906_merged_k5majority_categorical_1806_test.json fed as stage-1 via --precomputed-visual-obs) \u2014 i.e. 'what if stage-2 always got perfect stage-1 obs'. NOT agreement (obs IS the GT here, agreement would be trivial/undefined) \u2014 this populates vo_s1/vo_s2 severity metrics instead, distinct from the 1105 agreement-only ceiling row below. 2260/2260 samples, 0 failures. Raw (v1): severity_acc=0.7715, severity_mae=0.3614, err_f1=0.7441. v2 (evaluate_vo rescore, name-join fix): severity_acc=0.7779, severity_mae=0.3543, err_f1=0.7461. LISTED BEFORE the plain-397B/agreement-ceiling entries below because its pattern is a substring of the plain-397B vo_path \u2014 first-match order matters here, don't reorder without re-testing."
   },
   {
    "pattern": "compare_397b_1806_gtobsbuild",
