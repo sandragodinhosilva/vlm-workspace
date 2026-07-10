@@ -38,8 +38,9 @@
 #   ONLY           (optional) space-separated list of obs stems to limit the sweep (substring match).
 #   DRYRUN=1       (optional) print the commands without running.
 #   VO_TEST_1105 / VO_TEST_1806 / VO_N_1105 / VO_N_1806
-#                  (optional) per-cohort GT test dir + expected N overrides. The cohort is derived
-#                  per-obs from the _1105_/_1806_ tag in the obs filename (untagged -> 1105).
+#                  (optional) per-cohort GT test dir + expected N overrides. Defaults load from
+#                  ~/utilities/eval/testsets.json (same bundles as eval_all.sh --cohort). The cohort
+#                  is derived per-obs from the _1105_/_1806_ tag in the obs filename (untagged -> 1105).
 #   MIN_COMPLETE   (optional) ABSOLUTE accept threshold override; default = 99% of the cohort's N.
 #   MAX_TOKENS     (optional) stage-2 generation budget. Default 16384. The reasoner's THINKING mode
 #                  is set at SERVE time (ENABLE_THINKING), NOT here — the sweep just queries whatever
@@ -53,15 +54,24 @@ PY=/home/sgsilva/vlm-post-training-home-venv/bin/python
 VO_RUNS=/mnt/data/sgsilva/results/visual_obs/runs
 EVAL_PY="$VPT/eval/evaluate.py"
 EVAL_VO_PY="$VPT/eval/evaluate_vo.py"
-# ---- cohort-aware GT routing (2026-07-02) ----
+# ---- cohort-aware GT routing (2026-07-02; testsets.json-backed 2026-07-10) ----
 # The obs filename carries a cohort tag (_1105_/_1806_, from eval_all.sh VO_COHORT_TAG). The GT test
 # dir + expected N MUST follow that tag — a fixed TEST_DIR scored 1806 obs against 1105 human GT
-# (cohort mismatch, invalid stage2). Defaults below are per-cohort and env-overridable (mirrors
-# eval_all.sh's VO_TEST pattern); an untagged obs stem falls back to 1105 (legacy single-cohort).
-VO_TEST_1105="${VO_TEST_1105:-/mnt/data/shared/vlm/data/human_annotation_datasets/1105_not_reviewed/repetitions_test}"
-VO_TEST_1806="${VO_TEST_1806:-/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test}"
-VO_N_1105="${VO_N_1105:-1181}"
-VO_N_1806="${VO_N_1806:-2260}"
+# (cohort mismatch, invalid stage2). Per-cohort defaults now come from testsets.json (the single
+# source of truth eval_all.sh's --cohort also reads); explicit VO_TEST_<cohort>/VO_N_<cohort> env
+# vars still override. An untagged obs stem falls back to 1105 (legacy single-cohort).
+TESTSETS_JSON=/home/sgsilva/utilities/eval/testsets.json
+while IFS= read -r _line; do eval "$_line"; done < <("$PY" - "$TESTSETS_JSON" <<'PYEOF'
+import json, sys
+for c, b in json.load(open(sys.argv[1]))["cohorts"].items():
+    print(f'[[ -z "${{VO_TEST_{c}:-}}" ]] && VO_TEST_{c}={b["test_set"]}')
+    print(f'[[ -z "${{VO_N_{c}:-}}" ]] && VO_N_{c}={b["n"]}')
+PYEOF
+)
+if [[ -z "${VO_TEST_1105:-}" || -z "${VO_TEST_1806:-}" ]]; then
+  echo "[FAIL] could not load cohort bundles from $TESTSETS_JSON — refusing to run with unknown GT"
+  exit 2
+fi
 COMPILER=/home/sgsilva/utilities/eval/compile_eval_results.py
 MAX_TOKENS="${MAX_TOKENS:-16384}"
 # Client concurrency into evaluate.py. The default (10 for a --server-url run) overwhelms a HEAVY
