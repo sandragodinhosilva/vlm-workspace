@@ -494,8 +494,17 @@ def vo_model_path(name: str, vo_map=None, vo_exclude=None) -> str:
 
 
 def resolve_vo(name: str, metadata: dict | None = None,
-               vo_map=None, vo_exclude=None) -> dict:
+               vo_map=None, vo_exclude=None, card: dict | None = None) -> dict:
     """Route one VO result filename (basename, any case) to its board row.
+
+    card: the run-card sidecar (`<file>.card.json`, stabilization step 4) when present —
+    identity fields (checkpoint_path, axis, cohort, arm, thinking, expected_n) come from
+    the card, written by the PRODUCER at generation time, and filename parsing is used
+    only for the tier (_v2/_cat). A carded file needs NO vo_tokens entry to reach the
+    board. Card-era floors = floor(0.99 * expected_n) — reproduces the hand-set values
+    (2157→2135, 2260→2237, 1181→1169). The sft2812 reasoner filter is SKIPPED for carded
+    files: the card's `reasoner` field records who reasoned, and a deliberately-written
+    card is trusted the way a curated vo_token is.
 
     metadata: the file's metadata dict when available. Admission checks that need it
     (sft2812 reasoner filter, evaluated_samples floors) run only when it is provided;
@@ -535,7 +544,9 @@ def resolve_vo(name: str, metadata: dict | None = None,
           "floor": None, "admit": True, "skip_reason": "",
           "is_expb_gtobs": False, "is_expb_modelobs": False, "is_expb_selfloop": False,
           "is_397b_ceiling": False, "is_cohort_bakeoff": False,
-          "obs_source_hint": "", "family_hint": ""}
+          "obs_source_hint": "", "family_hint": "", "carded": False}
+    if card:
+        return _resolve_vo_from_card(name, card, metadata, rt)
     if name.startswith("agreement_"):
         kind = "agreement"
     elif name.startswith("stage2_"):
@@ -1253,7 +1264,10 @@ def _rows():
         #  vo_cohort() at module level — same regex, same anchoring rationale)
         for vj in sorted(VO_RUNS.glob("*.json")):
             name = vj.name.lower()
-            rt = resolve_vo(name, vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE)
+            if name.endswith(".card.json"):
+                continue  # run-card sidecars are routing INPUTS, not result files
+            _card = _load_card(vj)  # step-4 card-first routing; None = legacy filename path
+            rt = resolve_vo(name, vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE, card=_card)
             is_two = rt["kind"] == "two_stage"
             is_single = rt["kind"] == "single_stage"
             if not (is_two or is_single):
@@ -1273,7 +1287,7 @@ def _rows():
             # metadata.model fallback, the sft2812 reasoner filter + its three
             # naming-convention exceptions, and the evaluated_samples floors.
             rt = resolve_vo(name, metadata=d.get("metadata") or {},
-                            vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE)
+                            vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE, card=_card)
             model_path = rt["model_path"]
             if not model_path:
                 continue  # no curated token & no fallback → skip (never a wrong join)
@@ -1427,7 +1441,10 @@ def _rows():
         agree_best: dict[tuple[str, str], int] = {}
         for aj in sorted(VO_RUNS.glob("agreement_*.json")):
             name = aj.name.lower()
-            rt = resolve_vo(name, vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE)
+            if name.endswith(".card.json"):
+                continue  # run-card sidecars are routing INPUTS, not result files
+            rt = resolve_vo(name, vo_map=VO_FILE_TO_MODEL, vo_exclude=VO_EXCLUDE,
+                            card=_load_card(aj))
             if rt["excluded_by"]:
                 continue
             model_path = rt["model_path"]
@@ -1671,6 +1688,81 @@ def _rows():
     return rows
 
 
+def _resolve_vo_from_card(name: str, card: dict, metadata: dict | None, rt: dict) -> dict:
+    """Card-first routing (see resolve_vo docstring). Identity = the card's fields; the
+    filename contributes only the _v2/_cat tier. A malformed card degrades LOUDLY: any
+    missing required field sets admit=False with a distinct card_invalid sentinel —
+    never a silent fall-through to filename guessing (feedback_no_silent_fail)."""
+    import math
+    rt["carded"] = True
+    axis = str(card.get("axis") or "").strip().lower()
+    kind = {"singlestage": "single_stage", "stage2": "two_stage",
+            "agreement": "agreement"}.get(axis)
+    ckpt = str(card.get("checkpoint_path") or "").strip()
+    thinking = str(card.get("thinking") or "").strip().lower()
+    if kind is None or not ckpt or thinking not in ("on", "off"):
+        rt.update(admit=False,
+                  skip_reason=f"card_invalid:axis={axis!r},ckpt={'set' if ckpt else 'MISSING'},"
+                              f"thinking={thinking!r}")
+        return rt
+    rt["kind"] = kind
+    rt["model_path"] = ckpt
+    rt["thinking"] = thinking
+    rt["cohort"] = str(card.get("cohort") or "").strip()
+    arm = str(card.get("arm") or "").strip().lower()
+    obs_source = str(card.get("obs_source") or "").strip()
+    rt["is_expb_gtobs"] = arm == "gtobsbuild" or obs_source.upper() == "GT"
+    rt["is_expb_modelobs"] = arm == "modelobs"
+    rt["is_expb_selfloop"] = arm == "selfloop" or obs_source.lower() == "self"
+    rt["arm"] = arm if arm in ("modelobs", "selfloop", "agree") else ""
+    if kind == "agreement":
+        rt["tier"] = 1 if name.endswith("_v2.json") else 0
+    else:
+        rt["tier"] = (10 if name.endswith("_v2.json") else 0) + (1 if "_cat" in name else 0)
+    row_path = f"{ckpt}__cohort_{rt['cohort']}" if rt["cohort"] else ckpt
+    if rt["arm"] in ("modelobs", "selfloop"):
+        row_path += f"__arm_{rt['arm']}"
+    rt["row_path"] = row_path
+    rt["row_key"] = (_norm_path(row_path), thinking)
+    _expected = card.get("expected_n")
+    rt["floor"] = (math.floor(_expected * 0.99) if isinstance(_expected, (int, float)) and _expected
+                   else (2237 if rt["cohort"] == "1806" else 1169 if rt["cohort"] == "1105" else 1170))
+    if metadata is not None and kind in ("two_stage", "single_stage"):
+        _eN = metadata.get("evaluated_samples") or 0
+        if _eN < rt["floor"]:
+            pfx = "s1_" if kind == "single_stage" else ""
+            rt.update(admit=False, skip_reason=f"{pfx}below_floor:{_eN}<{rt['floor']}")
+    if kind == "two_stage":
+        if rt["is_expb_gtobs"]:
+            rt["obs_source_hint"] = "GT"
+            rt["family_hint"] = "2-stage-GT-VObs"
+        elif rt["is_expb_selfloop"]:
+            rt["obs_source_hint"] = "self"
+            rt["family_hint"] = "2-stage-OWN-MODEL-VObs"
+        elif rt["is_expb_modelobs"]:
+            rt["family_hint"] = "2-stage-DIF-MODEL-VObs"
+        else:
+            rt["family_hint"] = "2-stage-FIXED-REASONER-VObs"
+    elif kind == "single_stage":
+        rt["family_hint"] = "Single-stage"
+    else:
+        rt["family_hint"] = "VObs-agreement"
+    return rt
+
+
+def _load_card(json_path: Path) -> dict | None:
+    """Read `<file>.card.json` if present/valid; None otherwise (legacy file)."""
+    cp = Path(str(json_path) + ".card.json")
+    if not cp.exists():
+        return None
+    try:
+        c = json.loads(cp.read_text())
+        return c if isinstance(c, dict) else None
+    except Exception as e:
+        print(f"[card WARN] {cp.name}: unreadable ({e}) — falling back to filename routing")
+        return None
+
+
 def _route_report(paths) -> int:
     """ROUTING DRY-RUN (`--route`): print, for each VO result filename (existing file OR a
     planned name that doesn't exist yet), exactly where the compile pass will put it — row
@@ -1691,8 +1783,11 @@ def _route_report(paths) -> int:
                 note = ""
             except Exception as e:
                 note = f"file exists but unreadable ({e}) — metadata gates not checked"
-        rt = resolve_vo(fp.name, metadata=md, vo_map=vo_map, vo_exclude=vo_exclude)
+        rt = resolve_vo(fp.name, metadata=md, vo_map=vo_map, vo_exclude=vo_exclude,
+                        card=_load_card(fp))
         print(f"\n=== {fp.name}")
+        if rt["carded"]:
+            print("  card     : ✓ routed from <file>.card.json (no vo_tokens needed)")
         if note:
             print(f"  note     : {note}")
         if rt["kind"] is None:

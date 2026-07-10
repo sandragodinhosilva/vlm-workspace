@@ -233,6 +233,132 @@ class TestThinkingAndTiers(unittest.TestCase):
             self.assertIsNone(rv(n)["kind"])
 
 
+class TestCardRouting(unittest.TestCase):
+    """Step-4 run cards: identity comes from the producer-written sidecar, not the
+    filename — a carded file needs NO vo_tokens and cannot mis-route on naming."""
+
+    CARD = {"card_version": 1, "checkpoint_path": "/mnt/data/sgsilva/models/new-model",
+            "axis": "singlestage", "arm": None, "cohort": "1806", "thinking": "on",
+            "expected_n": None}
+
+    def test_card_beats_filename(self):
+        # A filename that would be INVISIBLE (no token) routes fine with a card —
+        # and the card's cohort wins even though the filename carries none.
+        r = rv("some_totally_unregistered_name_singlestage_thinkon.json")
+        self.assertEqual(r["model_path"], "")  # filename path: invisible
+        c = cer.resolve_vo("some_totally_unregistered_name_singlestage_thinkon.json",
+                           vo_map=VO_MAP, vo_exclude=VO_EXCLUDE, card=self.CARD)
+        self.assertTrue(c["carded"])
+        self.assertEqual(c["model_path"], "/mnt/data/sgsilva/models/new-model")
+        self.assertEqual(c["cohort"], "1806")
+        self.assertEqual(c["row_path"], "/mnt/data/sgsilva/models/new-model__cohort_1806")
+
+    def test_card_floor_from_expected_n(self):
+        # floor(0.99 * expected_n) reproduces every hand-set floor exactly.
+        for expected, want in ((2157, 2135), (2260, 2237), (1181, 1169)):
+            card = dict(self.CARD, axis="stage2", expected_n=expected)
+            c = cer.resolve_vo("x_thinkon.json", metadata={"evaluated_samples": expected},
+                               vo_map=VO_MAP, vo_exclude=VO_EXCLUDE, card=card)
+            self.assertEqual(c["floor"], want)
+            self.assertTrue(c["admit"])
+
+    def test_card_no_expected_n_falls_back_to_cohort_floor(self):
+        c = cer.resolve_vo("x_thinkon.json", metadata={"evaluated_samples": 2236},
+                           vo_map=VO_MAP, vo_exclude=VO_EXCLUDE,
+                           card=dict(self.CARD, axis="stage2"))
+        self.assertEqual(c["floor"], 2237)
+        self.assertFalse(c["admit"])  # 2236 < 2237, loud sentinel
+        self.assertTrue(c["skip_reason"].startswith("below_floor:"))
+
+    def test_card_two_stage_skips_sft2812_filter(self):
+        # A deliberately-written card is trusted like a curated token: no reasoner gate.
+        c = cer.resolve_vo("x_thinkon.json",
+                           metadata={"model": "/some/other/reasoner",
+                                     "evaluated_samples": 2237},
+                           vo_map=VO_MAP, vo_exclude=VO_EXCLUDE,
+                           card=dict(self.CARD, axis="stage2"))
+        self.assertTrue(c["admit"])
+
+    def test_card_arm_row_suffix(self):
+        c = cer.resolve_vo("x_thinkon.json", vo_map=VO_MAP, vo_exclude=VO_EXCLUDE,
+                           card=dict(self.CARD, axis="stage2", arm="modelobs"))
+        self.assertTrue(c["row_path"].endswith("__cohort_1806__arm_modelobs"))
+        self.assertEqual(c["family_hint"], "2-stage-DIF-MODEL-VObs")
+        g = cer.resolve_vo("x_thinkon.json", vo_map=VO_MAP, vo_exclude=VO_EXCLUDE,
+                           card=dict(self.CARD, axis="stage2", arm="gtobsbuild"))
+        self.assertNotIn("__arm_", g["row_path"])  # GT arm shares the plain cohort row
+        self.assertEqual(g["family_hint"], "2-stage-GT-VObs")
+        self.assertEqual(g["obs_source_hint"], "GT")
+
+    def test_malformed_card_is_loud_not_silent(self):
+        # feedback_no_silent_fail: a bad card must NOT fall back to filename guessing.
+        c = cer.resolve_vo("stage2_expb_stage2_ondemand_step562_1806_selfloop_thinkon.json",
+                           vo_map=VO_MAP, vo_exclude=VO_EXCLUDE,
+                           card={"axis": "stage2"})  # no checkpoint_path/thinking
+        self.assertFalse(c["admit"])
+        self.assertTrue(c["skip_reason"].startswith("card_invalid:"))
+        self.assertEqual(c["model_path"], "")
+
+    def test_agreement_card_same_row_as_singlestage_card(self):
+        a = cer.resolve_vo("y_agreement_whatever_thinkon.json", vo_map=VO_MAP,
+                           vo_exclude=VO_EXCLUDE, card=dict(self.CARD, axis="agreement"))
+        s = cer.resolve_vo("y_singlestage_thinkon.json", vo_map=VO_MAP,
+                           vo_exclude=VO_EXCLUDE, card=self.CARD)
+        self.assertEqual(a["row_key"], s["row_key"])
+
+
+class TestEvalNameNamer(unittest.TestCase):
+    """Step-3 namer: builds only grammar-clean names; refuses the known bad patterns."""
+
+    @classmethod
+    def setUpClass(cls):
+        import eval_name
+        cls.en = eval_name
+
+    def test_build_matches_real_conventions(self):
+        self.assertEqual(
+            self.en.build("/mnt/data/sgsilva/models/qwen35-27b-x-sft-step840",
+                          "singlestage", "on", cohort="1806"),
+            "qwen35-27b-x-sft-step840_1806_singlestage_thinkon.json")
+        self.assertEqual(
+            self.en.build("qwen35-4b-y-step987", "obs", "off", cohort="1105"),
+            "obs_qwen35-4b-y-step987_1105_thinkoff.json")
+        self.assertEqual(
+            self.en.build("m", "stage2", "on", cohort="1806", arm="modelobs",
+                          arm_detail="4bcatk5maj987"),
+            "stage2_m_1806_modelobs_4bcatk5maj987_thinkon.json")
+
+    def test_build_refuses_hf_basename(self):
+        with self.assertRaises(SystemExit):
+            self.en.build("/mnt/data/pmartins/vlm_ckpts/x/step_2812/hf", "singlestage", "off")
+
+    def test_build_refuses_unwired_arm_and_cohort(self):
+        with self.assertRaises(SystemExit):
+            self.en.build("m", "stage2", "on", cohort="1907")
+        with self.assertRaises(SystemExit):
+            self.en.build("m", "stage2", "on", cohort="1806", arm="newarm")
+        with self.assertRaises(SystemExit):
+            self.en.build("m", "agreement", "on", cohort="1806", arm="modelobs")
+
+    def test_check_catches_known_bad_patterns(self):
+        self.assertTrue(self.en.check("stage2_sft_step2812_vo_thinkon_thinkon.json"))
+        self.assertTrue(self.en.check("stage2_foo_1806_agree_extra_thinkon.json"))
+        self.assertTrue(self.en.check("stage2_no_think_tag.json"))
+        self.assertEqual(self.en.check(
+            "stage2_expb_stage2_ondemand_step562_1806_modelobs_4bcatk5maj987_thinkon.json"), [])
+        self.assertEqual(self.en.check(
+            "obs_qwen35-4b-vobs2906-categorical_k5majority-sft-step987_1105_thinkoff.json"), [])
+
+    def test_built_names_route(self):
+        # namer output must always be resolvable by the router (shared truth check)
+        n = self.en.build("qwen35-27b-expb-stage2-ondemand-sft-step562", "stage2", "on",
+                          cohort="1806", arm="selfloop")
+        r = rv(n)
+        self.assertEqual(r["kind"], "two_stage")
+        self.assertEqual(r["cohort"], "1806")
+        self.assertEqual(r["arm"], "selfloop")
+
+
 class TestLiveRegistrySmoke(unittest.TestCase):
     """Non-hermetic smoke: the REAL master_models.json must load, and every real
     stage2/singlestage/agreement file currently on disk must resolve to SOME model path

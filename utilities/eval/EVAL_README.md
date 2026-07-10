@@ -243,6 +243,20 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
 
 ## Unified master CSV (additive — does NOT touch the per-stage collectors/CSVs)
 - **Compiler:** `/home/sgsilva/utilities/eval/compile_eval_results.py` (read-only; re-run anytime).
+- **Routing preflight (2026-07-10, stabilization step 2):** `compile_eval_results.py --route
+  <file-or-PLANNED-name>…` simulates the compiler's row-routing (row key, cohort/arm, family,
+  floor, admission, matching allowlist entry) WITHOUT writing anything; exit 1 = something would
+  be invisible. `eval_all.sh`'s preflight runs it automatically over the planned VO filenames.
+  All routing rules live in ONE function (`resolve_vo()`); regression tests =
+  `tests/test_routing.py` (run via `python -m unittest discover -s tests`).
+- **Run cards (step 4):** `eval_all.sh` writes a `<result>.card.json` sidecar (checkpoint, axis,
+  cohort, thinking, test set) next to every singlestage/agreement artifact at generation time;
+  the compiler routes card-first — carded files need NO `vo_tokens` and cannot mis-route on
+  naming. Legacy files keep the filename fallback. (reasoner_sweep stage2 cards: pending.)
+- **Filename namer (step 3):** `eval_name.py build --ckpt … --axis … --thinking … [--cohort …
+  --arm …]` prints the canonical stem; `eval_name.py check <name>…` validates grammar (doubled
+  think tags, buried cohort, unwired arm/cohort). NEVER hand-template stems in campaign scripts.
+  Grammar registered in the /nomenclature skill.
 - **Rebuild is AUTOMATIC** — `eval_all.sh` runs `rebuild_board.sh` at the end of every run (and
   `eval_all.sbatch` inherits it): backup key CSVs → `results/_backups/<ts>/` → regen the COMBINED
   matrix AND each per-base `eval_matrix_{4b,27b}.csv` (a multi-base export writes ONLY the combined

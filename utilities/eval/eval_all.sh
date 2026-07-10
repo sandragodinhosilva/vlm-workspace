@@ -487,6 +487,19 @@ PY
     echo "    + LATER      $VO_OUT/stage2_${_pf_stem}_think${THINKING}{,_v2}.json"
     echo "                 ^ two-stage — THE BOARD vo_s2 value — only when a reasoner sweep runs over the obs above [via utilities/eval/reasoner_sweep.sh → eval/evaluate.py --two-stage, then eval/evaluate_vo.py rescore]"
     echo "  inspect after the run:  ls -la ${_pf_made[*]} 2>/dev/null"
+    # ---- BOARD ROUTING simulation (stabilization step 2, 2026-07-10): the SAME resolve_vo()
+    # the compiler uses, run over this launch's PLANNED filenames — shows the exact row key +
+    # display entry each artifact will land on, BEFORE any compute. This run's singlestage/
+    # agreement artifacts also get run-cards (step 4) so they route without vo_tokens; a
+    # "⚠ NO pattern matches" line below still means the row gets DROPPED by the allowlist —
+    # add the master_models.json entry in the SAME turn as this launch (feedback §7).
+    echo ""
+    echo "  BOARD ROUTING (simulated with compile_eval_results.py --route):"
+    "$VPT_PY" "$(dirname "$0")/compile_eval_results.py" --route \
+        "$VO_OUT/${_pf_stem}_singlestage_think${THINKING}.json" \
+        "$VO_OUT/agreement_${_pf_stem}_think${THINKING}.json" \
+        "$VO_OUT/stage2_${_pf_stem}_think${THINKING}.json" 2>/dev/null | sed 's/^/    /' \
+      || echo "    ⚠ ROUTING: at least one artifact above would be INVISIBLE on the board — add the master_models.json entry (pattern + vo_tokens) NOW, not after the run."
   fi
   # ---- ALWAYS-WRITTEN outputs (any stage): the unified board + this run's log ----
   echo "  ALWAYS OUTPUT MANIFEST (every run, all stages):"
@@ -567,6 +580,33 @@ if have_stage visualobs; then
   # first's obs (cohort contamination). Append the tag so each cohort gets its own file:
   #   obs_<model>_1105_thinkoff.json vs obs_<model>_1806_thinkoff.json. Empty => unchanged (single-cohort).
   [[ -n "${VO_COHORT_TAG:-}" ]] && stem="${stem}_${VO_COHORT_TAG}"
+  # ---- RUN CARD writer (stabilization step 4, 2026-07-10): every routed VO artifact gets a
+  # <file>.card.json sidecar stating its identity (checkpoint/axis/cohort/thinking/test set)
+  # AT GENERATION TIME. The board compiler routes card-first (resolve_vo), so a carded file
+  # reaches its row with NO vo_tokens entry and NO filename parsing — the invisible-row and
+  # wrong-row-merge classes end here for eval_all-produced artifacts. Never fatal.
+  write_card() {
+    local _t="$1" _axis="$2"
+    cat > "${_t}.card.json" <<CARDEOF || { echo "[card WARN] could not write ${_t}.card.json"; return 0; }
+{
+  "card_version": 1,
+  "checkpoint_path": "${SERVED_ID}",
+  "served_id": "${SERVED_ID}",
+  "base_model": "${BASE_MODEL:-}",
+  "axis": "${_axis}",
+  "arm": null,
+  "obs_source": null,
+  "reasoner": null,
+  "cohort": "${VO_COHORT_TAG:-}",
+  "test_set": "${VO_TEST:-}",
+  "expected_n": null,
+  "thinking": "${THINKING}",
+  "run_id": "${RUN_ID:-}",
+  "job_id": "${SLURM_JOB_ID:-}",
+  "ts": "$(date -Is)"
+}
+CARDEOF
+  }
   vmax="$([[ "$THINKING" == on ]] && echo 32768 || echo 4096)"
   mkdir -p "$VO_OUT"
   # ---- COLLISION GUARD (defense-in-depth, 2026-06-22): never overwrite ANOTHER model's VO file.
@@ -604,14 +644,18 @@ if have_stage visualobs; then
     echo "  visualobs: SKIPPED (collision guard tripped — see [FAIL] above)"
   elif ( cd "$VPT" && "${vargs[@]}" ); then
     STAGE_RESULTS+=("visualobs: OK -> $vo_obs")
+    write_card "$vo_obs" singlestage
     # ---- evaluate_v2 RESCORE (error-name-mismatch fix; no model re-run). Writes <stem>_..._v2.json
     # next to the original (never overwrites); the compiler prefers the _v2 tier. Scope the glob to
     # THIS run's single-stage file so we don't rescore the whole dir every time. Non-fatal: a rescore
     # failure leaves the (older-logic) singlestage json in place rather than failing the run. ----
     echo ""; echo ">>> visualobs: evaluate_v2 rescore (error-name-mismatch fix)"
-    ( cd "$VPT" && "$VPT_PY" "$VO_EVAL_V2" --results-dir "$VO_OUT" --glob "${stem}_singlestage_think${THINKING}.json" ) \
-      && STAGE_RESULTS+=("visualobs_v2: OK -> ${vo_obs%.json}_v2.json") \
-      || STAGE_RESULTS+=("visualobs_v2: WARN (rescore failed; singlestage json kept)")
+    if ( cd "$VPT" && "$VPT_PY" "$VO_EVAL_V2" --results-dir "$VO_OUT" --glob "${stem}_singlestage_think${THINKING}.json" ); then
+      STAGE_RESULTS+=("visualobs_v2: OK -> ${vo_obs%.json}_v2.json")
+      write_card "${vo_obs%.json}_v2.json" singlestage
+    else
+      STAGE_RESULTS+=("visualobs_v2: WARN (rescore failed; singlestage json kept)")
+    fi
     # ---- AGREEMENT (auto, model stage-1 obs vs HUMAN GT — no reasoner; the comparable single-stage
     # VO metric). model-vs-GT via --gt-source (human_error_severities); ±1 ordinal tolerance.
     # Two steps (canonical recipe = memory reference_visual_obs_eval_commands step a→b):
@@ -667,9 +711,12 @@ if have_stage visualobs; then
           --a "$obs_out" --b "$VO_GT_CAT" --gt-source "$VO_GT_CAT"
           --label-a model --label-b gt --categorical-tolerance 1
           --output "$agree_out" )
-        ( cd "$VPT" && "${aargs[@]}" ) \
-          && STAGE_RESULTS+=("agreement: OK -> $agree_out") \
-          || STAGE_RESULTS+=("agreement: FAILED")
+        if ( cd "$VPT" && "${aargs[@]}" ); then
+          STAGE_RESULTS+=("agreement: OK -> $agree_out")
+          write_card "$agree_out" agreement
+        else
+          STAGE_RESULTS+=("agreement: FAILED")
+        fi
         fi
       else
         STAGE_RESULTS+=("agreement: FAILED (obs generation)")
