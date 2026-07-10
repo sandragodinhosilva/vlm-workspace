@@ -66,6 +66,14 @@ Under the full convention these would also carry `-sft-` before `-step`. Existin
 older names without `-sft-` are grandfathered (the eval registry references them
 literally); apply the full shape to all NEW exports.
 
+**Grandfathered deviation (2026-07-10, Sandra's call):**
+`qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step{280,560,840}` are
+reasoning (thinkON) exports MISSING the `_thinkon` suffix — the post-export rename was
+skipped. Left as-is deliberately: their evaluation is complete and the registry entry,
+run cards, and every result stem reference the suffix-less basename consistently (one
+board row). Do NOT rename; the `train_reasoning: yes` registry field + `_thinkon` eval
+stems carry the thinking info. All NEW reasoning exports must still get `_thinkon`.
+
 ## Why the flags live where they do
 - `export_all_checkpoints.sh` hard-appends `-step<N>` to the prefix → the runtype
   token must be in the prefix, before `-step`.
