@@ -8,7 +8,9 @@
 #   RUNDIR=$(log_start --dir <category> <name>)   # multi-component -> echoes run dir
 #   log_end "$LOG" "$?"                            # footer + flips index status
 #
-# Categories (closed allowlist): grpo sft sam3d dataset export eval oracle serve claude misc
+# Categories (closed allowlist): grpo sft sam3d dataset export eval oracle serve judge claude misc
+#   judge (added 2026-07-10): LLM/VLM judge + dataset-quality verify runs — these were 60% of
+#   the eval/ category and drowned real model-eval logs in churn analyses; route them here.
 #
 # Claude usage (after sourcing):
 #   clog <category> <run_name> -- <command ...>
@@ -17,7 +19,7 @@
 LOG_ROOT="/mnt/data/sgsilva/logs"
 LOG_INDEX="$LOG_ROOT/index.jsonl"
 LOG_LOCK="$LOG_ROOT/index.lock"
-_LOG_CATS=" grpo sft sam3d dataset export oracle eval serve claude misc "
+_LOG_CATS=" grpo sft sam3d dataset export oracle eval serve judge claude misc "
 _LOG_ROTATE_BYTES=$(( 2 * 1024 * 1024 * 1024 ))   # 2 GiB per segment
 
 _log_err()  { printf '[log_run] %s\n' "$*" >&2; }
@@ -212,6 +214,11 @@ clog() {
     export LOG_CMD="$*"
     local LOG; LOG=$(log_start "$cat" "$name")
     _log_err "logging to: $LOG"
+    # log_start ran in a $() SUBSHELL, so its exported state (_LOG_RUN_META/_LOG_RUN_FILE)
+    # never reached THIS shell — log_end then finalized with an EMPTY meta, leaving every
+    # clog run's meta.json (and the rebuilt index) permanently 'running' (root cause of the
+    # 1216/1233 stuck-running index, found 2026-07-10). Reconstruct from the returned path.
+    export _LOG_RUN_FILE="$LOG" _LOG_RUN_META="${LOG%.log}.meta.json"
     # Redirect stdout+stderr directly to the log (no tee — avoids process-substitution
     # EXIT-trap side effects in bash). Output is captured; watch live with: tail -F "$LOG"
     "$@" >> "$LOG" 2>&1
