@@ -142,6 +142,13 @@ _VO_BLOCK_SUBBANDS = {
 
 
 FIELDS = [
+    # Row-family taxonomy (2026-07-09, see ~/.claude/EVAL_MAP.md) — FIRST column, so the taxonomy is
+    # the first thing a reader sees. Computed LAST (in _rows()), from which VObs metric blocks are
+    # actually populated on this row, never from the (possibly stale) display string. A row can
+    # legitimately carry more than one family (e.g. a merged orphan row with both single-stage and
+    # two-stage data) — semicolon-delimited when so. `unclassified` is a distinct sentinel for a row
+    # whose populated-block pattern doesn't match any known VObs family (never guess).
+    "family",
     # --- identity: who/what this row is (train_reasoning sits right before eval_thinking) ---
     "display", "model", "model_created", "owner", "is_baseline", "train_reasoning", "eval_thinking",
     # --- when: most-recent eval (model_created is up with identity) ---
@@ -206,7 +213,7 @@ FIELDS = [
 HEADER_LABELS = {
     "display": "Display", "model": "Model Path", "model_created": "Model Created",
     "owner": "Owner", "is_baseline": "Baseline?", "train_reasoning": "Trained w/ Reasoning",
-    "eval_thinking": "Eval Thinking", "last_eval_ts": "Last Eval",
+    "eval_thinking": "Eval Thinking", "last_eval_ts": "Last Eval", "family": "Family",
     "MMMU_val": "MMMU-val", "Video_MME": "Video-MME", "VSI_Bench": "VSI-Bench",
     "IF_Bench": "IF-Bench",
     "bench_method": "Benchmark Scoring",
@@ -691,6 +698,80 @@ def _video_source_split(video_results_json: str):
     return _acc("mcqa_video_3d_2705"), _acc("mcqa_video_1505")
 
 
+def _has(r, *fields) -> bool:
+    """True if ANY of the given fields is populated. A genuine 0.0 score is a REAL value (not
+    'missing') — only empty string counts as unpopulated, never a magic-number exclusion."""
+    return any(str(r.get(f, "")).strip() != "" for f in fields)
+
+
+def _classify_family(r: dict) -> str:
+    """Row-family taxonomy per ~/.claude/EVAL_MAP.md, derived ONLY from which VObs metric-block
+    columns this row actually has populated (+ the `_arm`/`vo_s2_obs_source` markers already written
+    by the two-stage/agreement blocks above) — never from `display`, which can be stale (the exact
+    ambiguity that caused the 2026-07-09 flipfix step840 incident). Aux/Benchmarks are NOT part of
+    this taxonomy — they ride along on nearly every row regardless of VObs family, and their presence
+    is already directly checkable via their own populated columns (`aux_acc_weighted_3mod`, `MMMU_val`,
+    etc.), so naming them here would just repeat "Aux;Benchmarks" on ~40 rows for no signal. A row can
+    legitimately match more than one VObs family (e.g. a merged single-stage/two-stage orphan row, see
+    step562 gtobs) — semicolon-joined, most-specific first. Returns 'unclassified' (never a guessed
+    happy-path label) when a row has NO populated VObs block at all — e.g. a pure section-banner row,
+    or a future block type this function doesn't yet know about.
+
+    2026-07-09 naming (Sandra correction, same day as the initial add): the FOUR two-stage families
+    all answer "whose VObs, reasoned over by whom" — do not confuse OWN-MODEL-VObs (one model, BOTH
+    roles) with FIXED-REASONER-VObs (the checkpoint's own VObs, but a DIFFERENT fixed model reasons):
+      - 2-stage-GT-VObs             : human-GT VObs inlined into the trained prompt (ceiling test)
+      - 2-stage-OWN-MODEL-VObs      : the checkpoint generates its OWN VObs AND reasons over them
+                                      itself (one model, both roles, closed loop — EVAL_MAP.md's
+                                      "SELF-LOOP arm"; historically the WORST of the two-stage arms)
+      - 2-stage-FIXED-REASONER-VObs : the checkpoint's own VObs, consumed by a DIFFERENT, FIXED
+                                      reference reasoner (e.g. sft2812) — the norm/default two-stage
+                                      setup for a plain/baseline checkpoint (EVAL_MAP.md's "MODEL-obs
+                                      arm (the norm for a plain/baseline checkpoint)")
+      - 2-stage-DIF-MODEL-VObs      : a DIFFERENT, already-served model's VObs feeds the reasoner
+                                      under test (EXP-B's cross-model drop-in arm)
+    """
+    fams = []
+    has_s1 = _has(r, "vo_s1_error_f1", "vo_s1_sample_f1", "vo_s1_severity_acc")
+    has_s2 = _has(r, "vo_s2_error_f1", "vo_s2_sample_f1", "vo_s2_severity_acc")
+    has_agree = _has(r, "vo_agree_errf1", "vo_agree_acc")
+    arm = (r.get("_arm") or "").strip()
+    obs_src = (r.get("vo_s2_obs_source") or "").strip()
+
+    if has_s2:
+        if arm == "modelobs":
+            # EXP-B's cross-model arm: a DIFFERENT, already-served model's VObs feeds the reasoner
+            # under test (a real drop-in-pipeline test) — distinct from both OWN-MODEL-VObs (the
+            # checkpoint reasons over its OWN VObs) and FIXED-REASONER-VObs (the checkpoint's own
+            # VObs but a DIFFERENT FIXED reasoner, e.g. sft2812, does the reasoning) below.
+            fams.append("2-stage-DIF-MODEL-VObs")
+        elif arm == "selfloop":
+            # the checkpoint generates its OWN stage-1 VObs (untrained task, live call) then
+            # consumes those SAME self-generated VObs in its own stage-2 call — ONE model plays
+            # BOTH the VObs-producer and reasoner roles (a closed loop, no external help).
+            fams.append("2-stage-OWN-MODEL-VObs")
+        elif obs_src == "GT":
+            fams.append("2-stage-GT-VObs")
+        else:
+            # Any other two-stage row — a resolved (non-EXP-B) obs source, OR obs-source metadata
+            # missing/unrecorded (never observed in the current 65 rows, but not impossible for a
+            # future run with a metadata gap) — is the ordinary/production-realistic mode: the
+            # checkpoint's own VObs consumed by a DIFFERENT, FIXED reference reasoner (e.g. sft2812)
+            # — see EVAL_MAP.md's "MODEL-obs arm (the norm for a plain/baseline checkpoint)" row.
+            # This is the DEFAULT two-stage family (Sandra 2026-07-09: no separate "unknown" sentinel
+            # — an unresolved obs source is assumed to be this common case, not flagged).
+            fams.append("2-stage-FIXED-REASONER-VObs")
+    if has_s1:
+        fams.append("Single-stage")
+    if has_agree:
+        # the self-agreement EXP-B arm (checkpoint scored vs GT with no stage-2 call) is the SAME
+        # "VObs agreement" family as every other agreement row — EVAL_MAP.md draws no distinction
+        # (arm only matters for whose VObs are being scored, carried by vo_s2_obs_source, not by Family).
+        fams.append("VObs-agreement")
+
+    return ";".join(fams) if fams else "unclassified"
+
+
 def _rows():
     """Return {(model_path, thinking): {field: value}} JOINED on the served checkpoint path."""
     rows: dict[tuple[str, str], dict] = {}
@@ -1056,12 +1137,17 @@ def _rows():
                 _is_expb_modelobs = bool(_vo_cohort(name)) and "expb" in name and "modelobs" in name
                 _is_expb_selfloop = bool(_vo_cohort(name)) and "expb" in name and "selfloop" in name
                 _is_expb_native = _is_expb_gtobs or _is_expb_modelobs or _is_expb_selfloop
-                # 397B GT-OBS CEILING EXCEPTION (2026-07-07): the 397B reasoner run over the
-                # PRECOMPUTED GT observations (--precomputed-visual-obs = the oracle 2906 file) is
-                # not sft2812 and not an EXP-B native-reasoner arm — it's a distinct reference-ceiling
-                # family ("stage-2 with a perfect stage-1"), one file, cohort-tagged + name-anchored
-                # to avoid ever admitting some OTHER unrelated 397B stage2 run by accident.
-                _is_397b_gtobs_ceiling = (bool(_vo_cohort(name)) and "397b" in name and "_gtobs_" in name
+                # 397B GT-OBS CEILING EXCEPTION (2026-07-07, extended 2026-07-09): the 397B reasoner
+                # run over the PRECOMPUTED GT observations (--precomputed-visual-obs = the oracle 2906
+                # file, OR the test-BUILD convention with GT obs inlined into messages[1]) is not
+                # sft2812 and not an EXP-B native-reasoner arm — it's a distinct reference-ceiling
+                # family ("stage-2 with a perfect stage-1"), cohort-tagged + name-anchored to avoid
+                # ever admitting some OTHER unrelated 397B stage2 run by accident. `_gtobsbuild` added
+                # 2026-07-09 (stage2_compare_397b_1806_gtobsbuild_thinkon.json, a new 397B comparison
+                # run against the EXP-B flipfix test build) — mirrors the EXP-B `_is_expb_gtobs` check
+                # above, which already accepted this naming convention for EXP-B checkpoints.
+                _is_397b_gtobs_ceiling = (bool(_vo_cohort(name)) and "397b" in name
+                                           and ("_gtobs_" in name or "gtobsbuild" in name)
                                            and "expb" not in name)
                 if not (_is_cohort_bakeoff or _is_expb_native or _is_397b_gtobs_ceiling) and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr):
                     continue   # not the sft2812 reasoner → historical, don't put it on the board
@@ -1071,7 +1157,13 @@ def _rows():
                 # EXP-B gtobsbuild/modelobs both run on the obs-covered subset (N=2157, = 2260 − 103
                 # no-GT-obs reps) → floor 2135 (99% of 2157), not the full-cohort 2237.
                 _eN = (d.get("metadata") or {}).get("evaluated_samples") or 0
-                _min = (2135 if _is_expb_native else
+                # Floor depends on which SUBSET this file evaluates, not which naming category
+                # matched it: any `gtobsbuild`-tagged file (EXP-B's OR another reasoner's, e.g. the
+                # 397B comparison run added 2026-07-09) runs on the test-BUILD's obs-covered subset
+                # (N=2157, = 2260 − 103 no-GT-obs reps) → floor 2135 (99% of 2157). A non-gtobsbuild
+                # cohort-tagged file (bake-off / plain 397B-gtobs ceiling) runs on the FULL cohort →
+                # 2237 (99% of 2260, 1806) / 1169 (1105).
+                _min = (2135 if "gtobsbuild" in name else
                         (2237 if _vo_cohort(name) == "1806" else 1169)
                         if (_is_cohort_bakeoff or _is_397b_gtobs_ceiling) else 1170)
                 if _eN < _min:
@@ -1183,7 +1275,15 @@ def _rows():
                 #   - "GT" -> ground-truth/oracle observations (the EXP-B gtobsbuild arm: GT obs
                 #     inlined into the trained prompt itself, single API call, no stage-1 query;
                 #     detected by the `_is_expb_gtobs` file-naming convention since metadata alone
-                #     can't distinguish "obs baked into prompt" from "no obs at all");
+                #     can't distinguish "obs baked into prompt" from "no obs at all"). ALSO the
+                #     non-EXP-B `_is_397b_gtobs_ceiling` convention (2026-07-09 fix): these files'
+                #     own metadata records `pipeline: "single-stage"` / no `precomputed_visual_obs_file`
+                #     (the GT obs is inlined into the test-BUILD prompt itself, same as EXP-B's
+                #     gtobsbuild — metadata alone can't tell "GT baked into the build" from "no obs
+                #     recorded" here either) — without this, both the existing oracle_gtobs_1806
+                #     ceiling row AND the new compare_397b_1806_gtobsbuild row fell through to
+                #     "unrecorded"/a resolved-obs-source guess and misclassified as
+                #     2-stage-FIXED-REASONER-VObs instead of 2-stage-GT-VObs;
                 #   - "self" -> the reasoner answered its OWN stage-1 prompt then consumed those
                 #     (the selfloop arm) — metadata.stage1_model == metadata.model in this case,
                 #     which would otherwise render as a real external model name; call it out
@@ -1191,7 +1291,7 @@ def _rows():
                 #   - "unrecorded" -> a two-stage file ALWAYS implies some obs, so this is a
                 #     missing-metadata FAILURE, not a real "no obs" condition — distinct sentinel
                 #     (never coalesce a metadata gap into a happy-path-shaped value like "none").
-                if _is_expb_gtobs:
+                if _is_expb_gtobs or _is_397b_gtobs_ceiling:
                     r["vo_s2_obs_source"] = "GT"
                 elif _is_expb_selfloop:
                     r["vo_s2_obs_source"] = "self"
@@ -1228,16 +1328,26 @@ def _rows():
             tier = 1 if name.endswith("_v2.json") else 0
             _cohort = _vo_cohort(name)
             _row_path = _vo_row_path(model_path, _cohort)  # cohort-aware, same as scored families
-            # EXP-B arm-aware routing (2026-07-06 fix): agreement files share the SAME real
-            # checkpoint path across all 3 EXP-B arms (GT-obs/model-obs/self-loop) — without an
-            # arm suffix here (unlike the two-stage block above, which already had one), an
-            # agreement run for the model-obs or self-loop arm silently landed on the GT-obs row's
-            # key instead of getting its own row (caught live: a modelobs agreement F1 of 52.42
-            # merged onto the GT-obs row before this fix, indistinguishable from that arm's own
-            # 75.90 err-F1). Mirrors the exact `_is_expb_modelobs`/`_is_expb_selfloop` detection
-            # and `__arm_*` suffix used in the two-stage block.
-            _is_expb_modelobs_agree = bool(_cohort) and "expb" in name and "modelobs" in name
-            _is_expb_selfloop_agree = bool(_cohort) and "expb" in name and "selfloop" in name
+            # EXP-B arm-aware routing (2026-07-06 fix, renamed 2026-07-09): the `__arm_*` suffix
+            # exists ONLY to separate genuinely DIFFERENT stage-2 EVALUATION SETUPS for the same
+            # checkpoint — i.e. "whose VObs, reasoned over by whom": DIF-MODEL-VObs (a different
+            # already-served model's VObs feeds the reasoner under test) and OWN-MODEL-VObs (the
+            # checkpoint generates its own VObs AND reasons over them itself — one model, both
+            # roles) are NOT comparable to the GT-VObs row and must stay on separate rows — without
+            # an arm suffix here, an agreement run for either arm silently landed on the GT-obs row's
+            # key (caught live: a modelobs agreement F1 of 52.42 merged onto the GT-obs row before
+            # the 2026-07-06 fix, indistinguishable from that arm's own 75.90 err-F1).
+            _is_expb_modelobs_agree = bool(_cohort) and "expb" in name and "modelobs" in name  # -> DIF-MODEL-VObs
+            _is_expb_selfloop_agree = bool(_cohort) and "expb" in name and "selfloop" in name  # -> OWN-MODEL-VObs
+            # GT-obs arm's own self-generated-VObs agreement run (2026-07-09 file rename, `_agree_`
+            # tag): NOT an arm-suffix case — this is the SAME evaluation as the GT-obs/single-stage
+            # rows for this checkpoint+cohort, just a different AXIS (VObs-agreement) measured on it.
+            # Gets NO `__arm_*` suffix (Sandra correction, same day): the `__arm_*` split exists to
+            # separate DIF-MODEL/OWN-MODEL from GT-obs (different stage-2 SETUPS), not to separate
+            # different axes measured on the SAME setup — those belong on ONE row (disjoint
+            # metric-column-blocks, so nothing overwrites); Family already names which axes that row
+            # carries (e.g. `2-stage-GT-VObs;VObs-agreement;Single-stage`).
+            _is_expb_agree_arm = bool(_cohort) and "expb" in name and "_agree_" in name
             if _is_expb_modelobs_agree:
                 _row_path = _row_path + "__arm_modelobs"
             elif _is_expb_selfloop_agree:
@@ -1262,6 +1372,17 @@ def _rows():
                 r["_arm"] = "modelobs"
             elif _is_expb_selfloop_agree and not r.get("_arm"):
                 r["_arm"] = "selfloop"
+            elif _is_expb_agree_arm and not r.get("_arm"):
+                r["_arm"] = "agree"
+            # reasoner-info columns (normally populated by the two-stage block, which this row
+            # never runs through) — an agreement row has no stage-2 call at all, but "which model
+            # produced the VObs being scored" is the equivalent question, and it's always THIS
+            # checkpoint (self-generated stage-1 obs, live call) — state it explicitly so the row
+            # doesn't read as blank/unknown next to the GT-VObs and single-stage rows.
+            if _is_expb_agree_arm and not r.get("vo_s2_obs_source"):
+                r["vo_s2_reasoner"] = model_path
+                r["vo_s2_reasoner_thinking"] = thinking
+                r["vo_s2_obs_source"] = f"{Path(model_path).name} (self-generated, agreement-only)"
             def am(k):
                 v = ov.get(k)
                 return round(v * 100, 2) if isinstance(v, (int, float)) else ""
@@ -1417,6 +1538,14 @@ def _rows():
     for key in [k for k in rows if k[1] == "unknown" and rows[k].get("is_baseline") == "yes"
                 and k[0] in tagged_baselines]:
         del rows[key]
+
+    # ---- FAMILY (2026-07-09, see ~/.claude/EVAL_MAP.md) ----
+    # Classify each row's taxonomy family from which metric blocks are ACTUALLY populated (never
+    # from the display string, which can be stale — that ambiguity is exactly what caused the
+    # 2026-07-09 flipfix step840 incident this column exists to prevent). Computed here, last, so
+    # it can just check `r.get(col)` against the same fields every other column already wrote.
+    for r in rows.values():
+        r["family"] = _classify_family(r)
 
     # ---- VISIBILITY for the two silent-acceptance paths the critique flagged ----
     # (1) aux runs admitted to the 1506 axis ONLY by the date fallback (no explicit 1506 token) —

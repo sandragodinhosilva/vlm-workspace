@@ -415,15 +415,39 @@
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step840"
   },
   {
+   "pattern": "compare_397b_gtobs_1806",
+   "display": "397B stage-2 reasoner over GT-VObs (comparison run) [1806]",
+   "train_reasoning": "NA",
+   "group": "oracle_397b_compare",
+   "note": "2026-07-09/10: new 397B GT-VObs reasoning run on the SAME test BUILD as the EXP-B flipfix comparison (2906 k5majority GT obs inlined, byte-exact trained prompt, expb_stage2_from_raw_ondemand_test_flagkeep). Initially N=2100/2157 (4 failed, ~53 unattempted) — TOPPED OFF via --resume against the still-served worker-13 397B (2026-07-09) to N=2157/2157, 0 failed; re-scored via evaluate_vo.py (_v2.json). Final: err-F1=74.14, severity_acc=77.40. Distinct row from the 'Oracle 397B visual-obs cat (ceiling, GT-fed s1) [1806]' entry (different source file: stage2_compare_397b_1806_gtobsbuild_thinkon.json vs stage2_Qwen3.5-397B-A17B_1806_gtobs_thinkon_v2.json) — kept as its own reference row rather than merged, since the two are separate runs/files even though they measure the same axis. Family fix 2026-07-10: `vo_s2_obs_source` now correctly resolves to \"GT\" for this row (was falling through to \"unrecorded\"/FIXED-REASONER-VObs misclassification — see `_is_397b_gtobs_ceiling` in compile_eval_results.py). vo_path RENAMED TWICE 2026-07-10: first attempt only changed `pattern` (not `vo_path`), which still collided — the ROW's `model` field is built from `vo_path`, and the plain-397B pattern (`shared/models/qwen3.5-397b`) is a substring of ANY path starting `/mnt/data/shared/models/Qwen3.5-397B-A17B...`, so moving this entry past the plain-397B entry in file order let that broader pattern hijack the row regardless of THIS entry's own pattern string. Fixed by changing `vo_path` itself to a string that does NOT start with the shared-models 397B prefix, so no existing pattern can match it — now safe to position anywhere (board-display request: 397B / flipfix step840 / bigger-mix-2906 as the final 3 board rows, in that order).",
+   "vo_tokens": [
+    "compare_397b_1806_gtobsbuild_thinkon"
+   ],
+   "vo_path": "COMPARE_397B_GTOBS_1806"
+  },
+  {
    "pattern": "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840",
-   "display": "27B EXP-B stage-2 ondemand reasoner step840 (flipfix, L/R-corrected) [1806]",
+   "display": "27B EXP-B stage-2 ondemand reasoner step840 (flipfix) [1806]",
    "train_reasoning": "yes",
    "group": "expb_stage2_27b_gtobs_flipfix",
-   "note": "L/R-inversion-FIXED retrain (2026-07-08/09, job 110073, 1-node TP4xDP2). Trained on need_to_flip-backfilled + regenerated (2 teachers: 397B+gemini-3-flash) + re-judged (85.2% accept) + clock-timestamp-leak-cleaned traces: expb_stage2_train_ondemand_flagkeep_reasoning_flipfix_sft_ready_clean (8977 rows). Side-agreement checker: 99.8% (403/404) vs the pre-fix 61% inversion rate. Compare vo_s2 err-F1 directly against the OLD (inverted) step840 row above -- same test set/N/thinking, only the L/R defect differs. See ~/.claude/reports/visual_observations/2026-07-07_expb_stage2_lr_inversion_audit.md + ~/.claude/reports/post_training/2026-07-08_expb_stage2_flipfix_sft_1node_strategy_change.md.",
+   "note": "L/R-inversion-FIXED retrain (2026-07-08/09, job 110073, 1-node TP4xDP2). ONE row carrying THREE axes of the same checkpoint+cohort evaluation (2026-07-09: consolidated from 3 separate master_models.json entries into 1, after the compiler stopped `__arm_`-suffixing the plain agreement/single-stage files for this checkpoint — see Family column, `2-stage-GT-VObs;Single-stage;VObs-agreement`): (1) 2-stage GT-VObs arm — single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157, via stage2_..._gtobsbuild_thinkon_v2.json; (2) VObs-agreement — the checkpoint answers its own ~10 VObs Q/A pairs per rep (untrained task, live call) scored vs 1806 human GT, via agreement_..._agree_1806_thinkon.json (files renamed 2026-07-09, single-stage sibling renamed same day to add the missing _1806 cohort tag so it joins onto this row); (3) Single-stage severity arm (model emits severity directly, no stage-1 obs) + aux-task legs, via ..._1806_singlestage_thinkon_v2.json. Trained on need_to_flip-backfilled + regenerated (2 teachers: 397B+gemini-3-flash) + re-judged (85.2% accept) + clock-timestamp-leak-cleaned traces: expb_stage2_train_ondemand_flagkeep_reasoning_flipfix_sft_ready_clean (8977 rows). Side-agreement checker: 99.8% (403/404) vs the pre-fix 61% inversion rate. Compare vo_s2 err-F1 directly against the OLD (inverted) step840 row -- same test set/N/thinking, only the L/R defect differs. See ~/.claude/reports/visual_observations/2026-07-07_expb_stage2_lr_inversion_audit.md + ~/.claude/reports/post_training/2026-07-08_expb_stage2_flipfix_sft_1node_strategy_change.md.",
    "vo_tokens": [
-    "expb_stage2_ondemand_step840_flipfix1node"
+    "expb_stage2_ondemand_step840_flipfix1node",
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_agree_1806_thinkon"
    ],
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840"
+  },
+  {
+   "pattern": "stage1-vobs-bigger-mix-2906-sft-step5337",
+   "display": "27B stage1 vobs bigger mix 2906 step5337 [1806]",
+   "train_reasoning": "no",
+   "group": "stage1_vobs_bigger_mix_2906",
+   "section": "VOBs experiments",
+   "note": "Stage-1 SFT on the 8-source bigger mix (174,287 rows: VObs categorical+angle k5majority(+1q) 104,091 / mix_12k_2906 train 13,900 / 1105_binary_test_split_1806testfiltered_flipready 20,738-post-drop / llm_fms_reasoning_judged_passonly 15,558 / repfe_comparison_nothink_20k 20,000). Config sft_vlm_qwen35_27b_stage1_vobs_bigger_mix_2906_megatron.yaml, TP4xDP8 4-node, thinkOFF (no enable_thinking field), lr5e-6 cosine, 3 planned epochs / 16,011 total steps. Job 109701 CANCELLED by user choice at ~28% (step 4521/16011) after step_5337 (epoch-1 save, save_period=5337) had already landed — curves were textbook (train loss 0.28-0.40, val falling 0.347@1780->0.2996@3560, no overfit), stop was a deliberate '1 checkpoint is enough' call, not a training problem. CAVEAT (2026-07-09, /check-settings row 3, verified from 20 sampled actual training rows not the config comment): NOT 100% clean thinkoff — 15/20 no <think> tag, 2/20 empty <think></think> wrapper (mix_12k_2906 video subset, harmless), 3/20 REAL substantive <think> reasoning 300-527 chars (llm_fms source, ~9% of the mix) — confirmed genuine model-target reasoning (not judge/repair artifact) by direct message inspection. Serve/eval decision unchanged (thinkOFF still matches the ~90%+ majority) but noted here since it may show as reasoning leakage in raw thinkoff outputs. ONE row will carry multiple VObs axes as they land (Single-stage / 2-stage-GT-VObs / 2-stage-FIXED-REASONER-VObs via sft2812 / 2-stage-OWN-MODEL-VObs selfloop / VObs-agreement), categorical schema only, 1806 test cohort N~2157, per the eval plan frozen 2026-07-09. See project_vobs_oracle_cot_unknown_1806.md.",
+   "vo_tokens": [
+    "stage1-vobs-bigger-mix-2906-sft-step5337"
+   ],
+   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-stage1-vobs-bigger-mix-2906-sft-step5337"
   }
  ],
  "vo_exclude": [
