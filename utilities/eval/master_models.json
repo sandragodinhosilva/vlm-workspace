@@ -393,6 +393,21 @@
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step562"
   },
   {
+   "pattern": "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840",
+   "display": "Thrive-VLM 27B ondemand step840 (flipfix)",
+   "train_reasoning": "yes",
+   "group": "expb_stage2_27b_gtobs_flipfix",
+   "note": "L/R-inversion-FIXED retrain (2026-07-08/09, job 110073, 1-node TP4xDP2). ONE row carrying THREE axes of the same checkpoint+cohort evaluation (2026-07-09: consolidated from 3 separate master_models.json entries into 1, after the compiler stopped `__arm_`-suffixing the plain agreement/single-stage files for this checkpoint \u2014 see Family column, `2-stage-GT-VObs;Single-stage;VObs-agreement`): (1) 2-stage GT-VObs arm \u2014 single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157, via stage2_..._gtobsbuild_thinkon_v2.json; (2) VObs-agreement \u2014 the checkpoint answers its own ~10 VObs Q/A pairs per rep (untrained task, live call) scored vs 1806 human GT, via agreement_..._agree_1806_thinkon.json (files renamed 2026-07-09, single-stage sibling renamed same day to add the missing _1806 cohort tag so it joins onto this row); (3) Single-stage severity arm (model emits severity directly, no stage-1 obs) + aux-task legs, via ..._1806_singlestage_thinkon_v2.json. Trained on need_to_flip-backfilled + regenerated (2 teachers: 397B+gemini-3-flash) + re-judged (85.2% accept) + clock-timestamp-leak-cleaned traces: expb_stage2_train_ondemand_flagkeep_reasoning_flipfix_sft_ready_clean (8977 rows). Side-agreement checker: 99.8% (403/404) vs the pre-fix 61% inversion rate. Compare vo_s2 err-F1 directly against the OLD (inverted) step840 row -- same test set/N/thinking, only the L/R defect differs. See ~/.claude/reports/visual_observations/2026-07-07_expb_stage2_lr_inversion_audit.md + ~/.claude/reports/post_training/2026-07-08_expb_stage2_flipfix_sft_1node_strategy_change.md.",
+   "vo_tokens": [
+    "expb_stage2_ondemand_step840_flipfix1node",
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_agree_1806_thinkon",
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_gtobsbuild_thinkon",
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_selfloop_thinkon",
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_thinkon"
+   ],
+   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840"
+  },
+  {
    "pattern": "step840_1806_selfloop",
    "display": "27B EXP-B stage-2 ondemand reasoner step840 (SELF-LOOP arm) \u26a0\ufe0f L/R-INVERTED",
    "train_reasoning": "yes",
@@ -436,18 +451,6 @@
     "expb_stage2_ondemand_step840"
    ],
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-sft-step840"
-  },
-  {
-   "pattern": "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840",
-   "display": "Thrive-VLM 27B ondemand step840 (flipfix)",
-   "train_reasoning": "yes",
-   "group": "expb_stage2_27b_gtobs_flipfix",
-   "note": "L/R-inversion-FIXED retrain (2026-07-08/09, job 110073, 1-node TP4xDP2). ONE row carrying THREE axes of the same checkpoint+cohort evaluation (2026-07-09: consolidated from 3 separate master_models.json entries into 1, after the compiler stopped `__arm_`-suffixing the plain agreement/single-stage files for this checkpoint \u2014 see Family column, `2-stage-GT-VObs;Single-stage;VObs-agreement`): (1) 2-stage GT-VObs arm \u2014 single-pass on the test BUILD (2906 k5majority GT obs inlined, byte-exact trained prompt), N=2157, via stage2_..._gtobsbuild_thinkon_v2.json; (2) VObs-agreement \u2014 the checkpoint answers its own ~10 VObs Q/A pairs per rep (untrained task, live call) scored vs 1806 human GT, via agreement_..._agree_1806_thinkon.json (files renamed 2026-07-09, single-stage sibling renamed same day to add the missing _1806 cohort tag so it joins onto this row); (3) Single-stage severity arm (model emits severity directly, no stage-1 obs) + aux-task legs, via ..._1806_singlestage_thinkon_v2.json. Trained on need_to_flip-backfilled + regenerated (2 teachers: 397B+gemini-3-flash) + re-judged (85.2% accept) + clock-timestamp-leak-cleaned traces: expb_stage2_train_ondemand_flagkeep_reasoning_flipfix_sft_ready_clean (8977 rows). Side-agreement checker: 99.8% (403/404) vs the pre-fix 61% inversion rate. Compare vo_s2 err-F1 directly against the OLD (inverted) step840 row -- same test set/N/thinking, only the L/R defect differs. See ~/.claude/reports/visual_observations/2026-07-07_expb_stage2_lr_inversion_audit.md + ~/.claude/reports/post_training/2026-07-08_expb_stage2_flipfix_sft_1node_strategy_change.md.",
-   "vo_tokens": [
-    "expb_stage2_ondemand_step840_flipfix1node",
-    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_agree_1806_thinkon"
-   ],
-   "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840"
   },
   {
    "pattern": "stage1-vobs-bigger-mix-2906-sft-step5337",

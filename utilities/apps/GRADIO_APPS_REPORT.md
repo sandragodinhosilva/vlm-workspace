@@ -567,7 +567,7 @@ All app tooling consolidated under `~/utilities/apps/`:
 | sft-dashboard | Tensorboard event files (`nemo-rl-vlm/logs/<run>/exp_NNN/tensorboard`) | Written automatically by SFT training loop |
 | vobs-schema | `visual_observations_{angle,categorical}_<version>.json` | VObs schema authoring pipeline; `--version` selects |
 | rft-harvest | `.ckpt.jsonl` checkpoint sidecar | `harvest_stage2_rft_traces.py` (pass `--input` at launch) |
-| multiturn-tools | Cached stage-1 GT obs bank (2906/1806) | `visual_obs/_campaign/202607/query_obs_tool_executor.py` |
+| multiturn-tools | Cached stage-1 GT obs bank (2906/1806) | `visual_obs/query_obs_tool_executor.py` |
 
 ---
 

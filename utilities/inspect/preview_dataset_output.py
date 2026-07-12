@@ -384,6 +384,7 @@ def _score_vs_gt(w, row, gt_severity_raw, parsed: Dict):
     # python on THIS ROW's errors. The real eval pools these across the whole test
     # set, so a per-row number is noisier — same formula, smaller denominator.
     if gt_severity:
+        no_answer = not pred_severity
         if any(nm in pred_severity for nm in gt_severity):
             pairs = [(g, pred_severity.get(nm, 0)) for nm, g in gt_severity.items()]
             pairing = "name"
@@ -394,23 +395,35 @@ def _score_vs_gt(w, row, gt_severity_raw, parsed: Dict):
             pairs = [(g, 0) for g in gt_severity.values()]
             pairing = "none (all GT errors counted as missed)"
         n_err = len(pairs)
-        sev_exact = sum(p == g for g, p in pairs) / n_err
-        sev_within1 = sum(abs(p - g) <= 1 for g, p in pairs) / n_err
-        sev_mae = sum(abs(p - g) for g, p in pairs) / n_err
         tp = sum(1 for g, p in pairs if g > 1 and p > 1)
         fp = sum(1 for g, p in pairs if g <= 1 and p > 1)
         fn = sum(1 for g, p in pairs if g > 1 and p <= 1)
         tn = n_err - tp - fp - fn
-        det_acc = (tp + tn) / n_err
         det_prec = tp / (tp + fp) if (tp + fp) else 0.0
         det_rec = tp / (tp + fn) if (tp + fn) else 0.0
         det_f1 = (2 * det_prec * det_rec / (det_prec + det_rec)
                   if (det_prec + det_rec) else 0.0)
         w(f"  Error detection (binary, severity>1 = error; pairing={pairing}):")
-        w(f"    Acc={det_acc:.3f}  Precision={det_prec:.3f}  Recall={det_rec:.3f}  "
-          f"F1={det_f1:.3f}   (TP={tp} FP={fp} FN={fn} TN={tn}, n={n_err})")
-        w(f"  Severity scoring: exact-acc={sev_exact:.3f}  within-1={sev_within1:.3f}  "
-          f"MAE={sev_mae:.3f}")
+        if no_answer:
+            # p=0 in every pair is a NO-ANSWER STAND-IN, not a real predicted
+            # severity — Acc/TN and the severity-scoring block (exact/within-1/MAE)
+            # would silently give partial credit for a value the model never
+            # predicted (e.g. a GT severity of 1 reads as "within 1" of the
+            # stand-in 0). Only Precision/Recall/F1 are well-defined here (TP=0
+            # always, so F1=0 correctly) — report those, flag the rest as N/A
+            # rather than compute a misleading number. `[[feedback_no_silent_fail]]`
+            w(f"    NO ANSWER PARSED — Acc/severity-scoring N/A (would give false partial")
+            w(f"    credit for the p=0 stand-in). Precision={det_prec:.3f}  Recall={det_rec:.3f}  "
+              f"F1={det_f1:.3f}   (TP={tp} FP={fp} FN={fn}, n={n_err})")
+        else:
+            det_acc = (tp + tn) / n_err
+            sev_exact = sum(p == g for g, p in pairs) / n_err
+            sev_within1 = sum(abs(p - g) <= 1 for g, p in pairs) / n_err
+            sev_mae = sum(abs(p - g) for g, p in pairs) / n_err
+            w(f"    Acc={det_acc:.3f}  Precision={det_prec:.3f}  Recall={det_rec:.3f}  "
+              f"F1={det_f1:.3f}   (TP={tp} FP={fp} FN={fn} TN={tn}, n={n_err})")
+            w(f"  Severity scoring: exact-acc={sev_exact:.3f}  within-1={sev_within1:.3f}  "
+              f"MAE={sev_mae:.3f}")
 
 
 def _final_answer_text(row, msgs) -> str:
@@ -659,7 +672,16 @@ def _render(label, d, n, w, meta_fields, group_cols=None, row_layout="auto"):
                     w(f"[{m.get('role','?')}] {_text_of(m.get('content',''))}")
             else:
                 w("<no messages column>")
-            final_text = _raw_of(r) or ""
+            # Parse from the <think>-stripped final answer, NOT raw output —
+            # raw includes the <think> scratchpad, and both regexes here are
+            # unanchored (search, not match-at-position): [ERRORS] can find a
+            # draft error-list the model wrote and discarded mid-reasoning, and
+            # [FEEDBACK] is greedy-to-end-of-string, so with no [ERRORS] found
+            # first it swallows the ENTIRE think block as "feedback" while
+            # scoring severity as empty. Found 2026-07-09 on real arm-2 (pushed)
+            # smoke output: 6/10 rows silently mis-scored this way before the
+            # fix. `[[feedback_no_silent_fail]]`
+            final_text = _final_answer_text(r, msgs)
 
             gt_severity_raw = r.get("severity_scores")
             if gt_severity_raw:

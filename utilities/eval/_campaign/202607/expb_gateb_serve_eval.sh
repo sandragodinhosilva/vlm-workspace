@@ -73,8 +73,11 @@ VPT=/home/sgsilva/vlm-post-training
 # *_gtobs_DESCDRIFT_thinkon.json). Single-stage on the build uses the stored prompt verbatim —
 # no reconstruction, no drift. (The two-stage stance path is still needed for the MODEL-obs arm;
 # its description source must be fixed to build_ref_desc before that arm runs.)
-BUILD=/mnt/data/sgsilva/datasets/1806/expb_stage2_from_raw_ondemand_test_flagkeep
-EXPECTED_N=2157
+# BUILD/TESTDIR/EXPECTED_N env-overridable since 2026-07-12 (1806 re-baseline: min1s build=2142,
+# min1s repetitions_test=2245). Defaults unchanged for the legacy (pre-min1s) callers.
+_EXPECTED_N_ENV="${EXPECTED_N:-}"
+BUILD="${BUILD:-/mnt/data/sgsilva/datasets/1806/expb_stage2_from_raw_ondemand_test_flagkeep}"
+EXPECTED_N="${EXPECTED_N:-2157}"
 if [ "$MODE" = "modelobs" ]; then
     OBS_JSON="${OBS_JSON:?MODE=modelobs needs OBS_JSON=<stage-1 obs json>}"
     OBS_TAG="${OBS_TAG:?MODE=modelobs needs OBS_TAG=<short output stem>}"
@@ -82,9 +85,10 @@ if [ "$MODE" = "modelobs" ]; then
     TESTDIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test
 elif [ "$MODE" = "selfloop" ]; then
     OUT=/mnt/data/sgsilva/results/visual_obs/runs/stage2_expb_stage2_ondemand_${STEP}_1806_selfloop_thinkon.json
-    TESTDIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test
-    # 2260 total reps in repetitions_test; selfloop has no GT-obs-coverage gate, so N=2260 not 2157.
-    EXPECTED_N=2260
+    TESTDIR="${TESTDIR:-/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test}"
+    # 2260 total reps in raw repetitions_test (min1s re-baseline: pass TESTDIR=…_min1s + EXPECTED_N=2245);
+    # selfloop has no GT-obs-coverage gate, so its N is the cohort N, not the build N.
+    EXPECTED_N="${_EXPECTED_N_ENV:-2260}"
 elif [ "$MODE" = "singlestage" ]; then
     # Filename carries "singlestage" (not "stage2_") so the compiler's vo_s1 ingestion (not vo_s2)
     # picks it up, matching every other board model's single-stage family.
