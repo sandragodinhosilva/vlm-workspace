@@ -25,6 +25,13 @@ DEFAULT_LOGS_DIR = "/mnt/data/sgsilva/logs/grpo_logs"
 # Unknown task types are discovered dynamically from reward_details keys.
 KNOWN_TASK_COMPONENTS = {
     "repetition": ["detection", "correctness", "severity", "format"],
+    # Tool-loop GRPO (2026-07-13 scaffold): f1 = the eval-anchored component;
+    # tool_rounds/tool_n_questions plotted per step = the always-query-rate
+    # watch (GT-vs-noisy bank canary readout); tool_penalty_fraction = the
+    # multiplicative shaping term. Report: 2026-07-13_grpo_vobs_tool_scaffold.md
+    "repetition_tool": ["f1", "detection", "correctness", "severity", "format",
+                        "answer_reward_prepenalty", "tool_penalty_fraction",
+                        "tool_rounds", "tool_n_questions"],
     "full_exercise": ["correctness", "severity", "format"],
     "comparison": ["correctness", "format"],
     "video_mcqa": ["correctness", "format"],
@@ -44,6 +51,9 @@ KNOWN_TASK_COMPONENTS = {
 # Non-score detail fields shown in rollout browser (not aggregated/plotted)
 EXTRA_DETAIL_FIELDS = {
     "repetition": ["gt_effectiveness", "gt_injury_risk", "pred_effectiveness", "pred_injury_risk"],
+    "repetition_tool": ["gt_effectiveness", "gt_injury_risk", "pred_effectiveness",
+                        "pred_injury_risk", "tool_n_malformed", "tool_n_offbank",
+                        "tool_n_duplicates"],
     "full_exercise": ["gt_effectiveness", "gt_injury_risk", "pred_effectiveness", "pred_injury_risk"],
     "comparison": ["gt_verdict", "pred_verdict"],
     "video_mcqa": ["gt_answer", "pred_answer"],
@@ -75,6 +85,7 @@ COLORS = [
 
 TASK_TYPE_LABELS = {
     "repetition": "Repetition Analysis",
+    "repetition_tool": "Repetition (tool-loop)",
     "full_exercise": "Full Exercise Analysis",
     "comparison": "Comparison",
     "video_mcqa": "Video MCQ",
