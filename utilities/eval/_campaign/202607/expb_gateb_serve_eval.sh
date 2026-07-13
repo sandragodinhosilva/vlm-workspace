@@ -84,10 +84,18 @@ if [ "$MODE" = "modelobs" ]; then
     OUT=/mnt/data/sgsilva/results/visual_obs/runs/stage2_expb_stage2_ondemand_${STEP}_1806_modelobs_${OBS_TAG}_thinkon.json
     TESTDIR=/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test
 elif [ "$MODE" = "selfloop" ]; then
-    OUT=/mnt/data/sgsilva/results/visual_obs/runs/stage2_expb_stage2_ondemand_${STEP}_1806_selfloop_thinkon.json
+    # Non-EXP-B (MODEL_TAG set): eval_name-grammar stem stage2_{base}_{cohort}_selfloop_think{T}
+    # (the expb_stage2_ondemand prefix would trip the compiler's EXP-B flags on a plain baseline);
+    # plain --two-stage with NO stance/desc-build (the 2026-07-13 397B-selfloop precedent) → the
+    # achievable N is the FULL cohort (no desc-build coverage gate), unlike the stance path.
+    if [ -n "${MODEL_TAG:-}" ]; then
+        OUT=/mnt/data/sgsilva/results/visual_obs/runs/stage2_${STEP}_1806_selfloop_thinkon.json
+    else
+        OUT=/mnt/data/sgsilva/results/visual_obs/runs/stage2_expb_stage2_ondemand_${STEP}_1806_selfloop_thinkon.json
+    fi
     TESTDIR="${TESTDIR:-/mnt/data/shared/vlm/data/human_annotation_datasets/1806_after_format_review_diverse_reasoning/repetitions_test}"
     # 2260 total reps in raw repetitions_test (min1s re-baseline: pass TESTDIR=…_min1s + EXPECTED_N=2245);
-    # selfloop has no GT-obs-coverage gate, so its N is the cohort N, not the build N.
+    # STANCE selfloop has the desc-build coverage gate (N = build N); plain selfloop = cohort N.
     EXPECTED_N="${_EXPECTED_N_ENV:-2260}"
 elif [ "$MODE" = "singlestage" ]; then
     # Filename carries "singlestage" (not "stage2_") so the compiler's vo_s1 ingestion (not vo_s2)
@@ -136,7 +144,12 @@ if [ "$MODE" = "modelobs" ]; then
 elif [ "$MODE" = "selfloop" ]; then
     # NO --precomputed-visual-obs: evaluate.py falls through to a LIVE stage-1 call
     # (build_stage1_prompt, 2906 categorical) served by this SAME checkpoint.
-    EXTRA_ARGS=(--two-stage --stage2-stance ondemand --stage2-desc-build "$BUILD" --visual-obs-variant categorical)
+    if [ -n "${MODEL_TAG:-}" ]; then
+        # non-EXP-B baseline: not a stance reasoner — plain two-stage, no desc-build
+        EXTRA_ARGS=(--two-stage --visual-obs-variant categorical)
+    else
+        EXTRA_ARGS=(--two-stage --stage2-stance ondemand --stage2-desc-build "$BUILD" --visual-obs-variant categorical)
+    fi
 fi
 for pass in 1 2; do
     echo "=== eval pass $pass (mode=$MODE) ==="

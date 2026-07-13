@@ -22,8 +22,14 @@
         {"path": "/mnt/data/shared/models/Qwen3.5-4B", "cohort": "1806", "arm": "", "thinking": "on", "comment": "4B baseline thinkon — re-keyed to cohort 1806 (2026-07-13 re-baseline)"},
         {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "1806", "arm": "", "thinking": "off", "comment": "27B baseline thinkoff — re-keyed to cohort 1806 (2026-07-13 re-baseline)"},
         {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "1806", "arm": "", "thinking": "on", "comment": "27B baseline thinkon — re-keyed to cohort 1806 (2026-07-13 re-baseline)"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "1806", "arm": "compare_gtobs", "thinking": "on", "comment": "27B baseline GT-VObs arm (Sandra's 2026-07-13 override of the plan SKIP — 4-row block like 397B; job 114087, card pre-written)"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "1806", "arm": "selfloop", "thinking": "on", "comment": "27B baseline OWN-MODEL-VObs self-loop arm (same override; job 114088)"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-397B-A17B", "cohort": "1806", "arm": "", "thinking": "off", "comment": "397B plain baseline thinkoff (single-stage/agreement/aux/benchmarks) — added 2026-07-13 ahead of the thinkoff serve round; spec warns until the files exist"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-397B-A17B", "cohort": "1806", "arm": "", "thinking": "on", "comment": "397B plain baseline thinkon (single-stage/agreement/aux/benchmarks) — added 2026-07-13 ahead of the main-run landing; spec warns until the files exist"},
         {"path": "/mnt/data/shared/models/Qwen3.5-397B-A17B", "cohort": "1806", "arm": "compare_gtobs", "thinking": "on", "comment": "397B reasoner over GT-VObs, comparison run (card-routed; synthetic key retired 2026-07-10)"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-397B-A17B", "cohort": "1806", "arm": "selfloop", "thinking": "on", "comment": "397B OWN-MODEL-VObs self-loop arm — added 2026-07-13 ahead of landing"},
         {"path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840", "cohort": "1806", "arm": "", "thinking": "on", "comment": "EXP-B flipfix step840 (GT-obs/agreement/single-stage axes)"},
+        {"path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840", "cohort": "1806", "arm": "selfloop", "thinking": "on", "comment": "flipfix step840 OWN-MODEL-VObs self-loop arm (min1s re-run, job 113615) — added 2026-07-13"},
         {"path": "/mnt/data/sgsilva/models/qwen35-27b-stage1-vobs-bigger-mix-2906-sft-step5337", "cohort": "1806", "arm": "", "thinking": "off", "comment": "27B stage1 vobs bigger-mix step5337 — re-keyed to cohort 1806 (2026-07-13): min1s re-baseline files (_1806-tagged, jobs 111927/113530) are live; the old bare-key files were the 111364 wrong-cohort (1105) artifacts, quarantined to runs/_superseded_20260711/."}
       ]
     }
