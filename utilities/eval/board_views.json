@@ -18,13 +18,13 @@
     "selected": {
       "note": "Sandra's current working comparison — STARTER SET seeded 2026-07-10, edit freely.",
       "rows": [
-        {"path": "/mnt/data/shared/models/Qwen3.5-4B", "cohort": "", "arm": "", "thinking": "off", "comment": "4B baseline thinkoff"},
-        {"path": "/mnt/data/shared/models/Qwen3.5-4B", "cohort": "", "arm": "", "thinking": "on", "comment": "4B baseline thinkon"},
-        {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "", "arm": "", "thinking": "off", "comment": "27B baseline thinkoff"},
-        {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "", "arm": "", "thinking": "on", "comment": "27B baseline thinkon"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-4B", "cohort": "1806", "arm": "", "thinking": "off", "comment": "4B baseline thinkoff — re-keyed to cohort 1806 (2026-07-13 re-baseline; bare-key rows were the 1105-era evals)"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-4B", "cohort": "1806", "arm": "", "thinking": "on", "comment": "4B baseline thinkon — re-keyed to cohort 1806 (2026-07-13 re-baseline)"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "1806", "arm": "", "thinking": "off", "comment": "27B baseline thinkoff — re-keyed to cohort 1806 (2026-07-13 re-baseline)"},
+        {"path": "/mnt/data/shared/models/Qwen3.5-27B", "cohort": "1806", "arm": "", "thinking": "on", "comment": "27B baseline thinkon — re-keyed to cohort 1806 (2026-07-13 re-baseline)"},
         {"path": "/mnt/data/shared/models/Qwen3.5-397B-A17B", "cohort": "1806", "arm": "compare_gtobs", "thinking": "on", "comment": "397B reasoner over GT-VObs, comparison run (card-routed; synthetic key retired 2026-07-10)"},
         {"path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840", "cohort": "1806", "arm": "", "thinking": "on", "comment": "EXP-B flipfix step840 (GT-obs/agreement/single-stage axes)"},
-        {"path": "/mnt/data/sgsilva/models/qwen35-27b-stage1-vobs-bigger-mix-2906-sft-step5337", "cohort": "", "arm": "", "thinking": "off", "comment": "27B stage1 vobs bigger-mix step5337 — bare-key row: its files carry NO cohort tag; display '[1806]' is a STALE curated label (job 111364 actually ran 1105, repair in flight). Re-key to cohort 1806 after the proper re-run."}
+        {"path": "/mnt/data/sgsilva/models/qwen35-27b-stage1-vobs-bigger-mix-2906-sft-step5337", "cohort": "1806", "arm": "", "thinking": "off", "comment": "27B stage1 vobs bigger-mix step5337 — re-keyed to cohort 1806 (2026-07-13): min1s re-baseline files (_1806-tagged, jobs 111927/113530) are live; the old bare-key files were the 111364 wrong-cohort (1105) artifacts, quarantined to runs/_superseded_20260711/."}
       ]
     }
   }

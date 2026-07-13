@@ -692,6 +692,17 @@ def _aux_banks():
         print(f"[aux-testset] WARNING: cannot read {TESTSETS_FILE} ({e}) — using built-in bank list")
     return ["2906", "1506"]
 
+def _aux_current_bank() -> str:
+    """The CURRENT aux bank from testsets.json 'aux_testsets.current' ('2906' as of the
+    2026-07-10 re-baseline). Loud fallback mirrors _aux_banks()."""
+    try:
+        cur = json.loads(TESTSETS_FILE.read_text()).get("aux_testsets", {}).get("current", "")
+        if cur:
+            return cur
+    except Exception as e:
+        print(f"[aux-testset] WARNING: cannot read {TESTSETS_FILE} ({e}) — assuming current bank 2906")
+    return "2906"
+
 def _aux_bank_label(ts_class):
     """Explicit 'Aux Test Set' cell for a classification ('1506?' = date-inferred 1506)."""
     base = ts_class.rstrip("?")
@@ -1073,7 +1084,18 @@ def _rows():
         if not matrix.exists():
             continue
         with matrix.open() as f:
-            for rec in csv.DictReader(f):
+            _recs = list(csv.DictReader(f))
+            # CURRENT-BANK-FIRST (2026-07-13): first-match-per-(path,thinking) below means matrix
+            # ROW ORDER decides which aux run wins a key. A model re-evaluated on the current bank
+            # (testsets.json aux_testsets.current) must not lose its key to an older legacy-bank
+            # record that happens to sit earlier in the file (the 1806 re-baseline baselines lost
+            # to their 1506-era rows exactly this way). Stable sort: current-bank records first,
+            # original order otherwise — models with only legacy records are untouched.
+            _cur_bank = _aux_current_bank()
+            _recs.sort(key=lambda rec: 0 if _aux_testset(
+                rec.get("run_id", ""), rec.get("eval_family", ""), rec.get("tag", ""),
+                rec.get("timestamp", "")).rstrip("?") == _cur_bank else 1)
+            for rec in _recs:
                 model_path = (rec.get("model") or "").strip()
                 if not model_path:
                     continue  # distinct sentinel: skip empty-model rows, don't invent a key
@@ -1654,6 +1676,17 @@ def _rows():
         _plain_cohort_siblings = [k for k in _siblings if "__arm_" not in k[0]]
         if len(_plain_cohort_siblings) == 1:
             _siblings = _plain_cohort_siblings
+        elif len(_plain_cohort_siblings) > 1:
+            # COHORT-TOKEN DISAMBIGUATION (2026-07-13): a model evaluated on BOTH cohorts (1105 +
+            # 1806 re-baseline) has two plain cohort rows; the aux/bench orphan belongs to the one
+            # whose cohort appears as a token in its aux run_id (aux runs stamp it there — e.g.
+            # 'rebaseline1806_aux2906_thinkoff' → the __cohort_1806 row). No token match → stay
+            # ambiguous, don't guess.
+            _rid = (_orow.get("aux_run_id") or "").lower()
+            _tok_hits = [k for k in _plain_cohort_siblings
+                         if k[0].rsplit("__cohort_", 1)[-1] in _rid]
+            if len(_tok_hits) == 1:
+                _siblings = _tok_hits
         if len(_siblings) != 1:
             continue  # still ambiguous (0 or >1 candidate) — leave both rows, don't guess
         _sib = rows[_siblings[0]]
