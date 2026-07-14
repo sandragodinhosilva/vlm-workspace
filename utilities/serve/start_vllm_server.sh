@@ -55,6 +55,28 @@ GPU_BUSY_THRESHOLD_MIB="${GPU_BUSY_THRESHOLD_MIB:-4096}"
 # Set STARTUP_HEARTBEAT_SECS to a positive integer to print periodic startup
 # progress messages while vLLM is coming up. Default is disabled.
 STARTUP_HEARTBEAT_SECS="${STARTUP_HEARTBEAT_SECS:-0}"
+
+# ── Optional performance knobs (for sweeping serve settings) ──────────────────
+# ALL default to today's exact behavior — the script is a drop-in replacement and
+# NOTHING changes unless you explicitly set one of these. See serve-monitor app
+# (port 7878) to watch the effect on KV-cache usage / throughput / concurrency.
+#
+#   GPU_MEM_UTIL     override --gpu-memory-utilization. Unset => keep the per-branch
+#                    default (Qwen3.5=0.85, standard=0.90, Kimi=0.9). Raise toward
+#                    0.92 when KV-cache usage is low but you want more concurrency.
+#   MAX_NUM_SEQS     add --max-num-seqs N (max concurrent sequences in a batch).
+#                    Unset => vLLM's own default. Raise (e.g. 384) when decode-bound
+#                    with idle KV headroom, to pack more requests per step.
+#   EXTRA_VLLM_ARGS  free-form extra flags appended verbatim to EVERY branch
+#                    (e.g. "--kv-cache-dtype fp8" or "--max-num-batched-tokens 16384").
+#                    Unset => nothing appended.
+#
+# NOTE on --max-model-len: it is still positional arg #3 (MAX_MODEL_LEN). To sweep
+# it, just pass a smaller value there, e.g. 131072 instead of 262144 — the login-time
+# "Maximum concurrency for N tokens per request" line scales inversely with it.
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-}"
+EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR"
 QWEN35_VENV="${QWEN35_VENV:-}"
@@ -194,6 +216,29 @@ print_startup_heartbeat_status() {
     fi
 }
 
+# Build the optional performance-knob args into a global array PERF_ARGS.
+# Called by each branch AFTER it knows its default gpu-mem-util. Pass the
+# branch default as $1; GPU_MEM_UTIL overrides it if set. MAX_NUM_SEQS and
+# EXTRA_VLLM_ARGS are appended when set. Prints what it resolved.
+build_perf_args() {
+    local default_gpu_util="$1"
+    local effective_gpu_util="${GPU_MEM_UTIL:-$default_gpu_util}"
+    PERF_ARGS=(--gpu-memory-utilization "$effective_gpu_util")
+    if [ -n "$GPU_MEM_UTIL" ]; then
+        echo "Perf knob: --gpu-memory-utilization $GPU_MEM_UTIL (OVERRIDE; branch default was $default_gpu_util)"
+    fi
+    if [ -n "$MAX_NUM_SEQS" ]; then
+        PERF_ARGS+=(--max-num-seqs "$MAX_NUM_SEQS")
+        echo "Perf knob: --max-num-seqs $MAX_NUM_SEQS"
+    fi
+    if [ -n "$EXTRA_VLLM_ARGS" ]; then
+        # shellcheck disable=SC2206  # intentional word-split of free-form flags
+        local extra=($EXTRA_VLLM_ARGS)
+        PERF_ARGS+=("${extra[@]}")
+        echo "Perf knob: EXTRA_VLLM_ARGS = $EXTRA_VLLM_ARGS"
+    fi
+}
+
 resolve_venv_path() {
     local label="$1"
     local requested="$2"
@@ -259,6 +304,34 @@ else
     fi
 fi
 
+# ── Self-logging so EVERY server is discoverable on disk ──────────────────────
+# Interactive-srun launches (bash shell, no sbatch StdOut) otherwise send vLLM
+# output to the terminal and leave NO log file — which is why the serve-monitor
+# app's auto-find couldn't locate the 397B log. When SERVE_LOG is unset we tee all
+# output to a predictable, greppable path under the canonical serve-log dir:
+#   /mnt/data/sgsilva/logs/serve/serve_<model>_<node>_p<port>_<PID>.out
+# Set SERVE_LOG=/path to override, or SERVE_LOG=0/none to disable (e.g. when an
+# outer log_run.sh/sbatch is already capturing stdout — avoids double-writing).
+if [ -z "${_SERVE_LOG_ACTIVE:-}" ]; then
+    _sl="${SERVE_LOG:-}"
+    if [ "$_sl" = "0" ] || [ "$_sl" = "none" ]; then
+        :  # explicitly disabled
+    else
+        if [ -z "$_sl" ]; then
+            _logdir="/mnt/data/sgsilva/logs/serve"
+            mkdir -p "$_logdir" 2>/dev/null
+            _node="$(hostname -s 2>/dev/null || hostname)"
+            _msafe="$(basename "${MODEL_INPUT%/}" | tr -c 'A-Za-z0-9._-' '_')"
+            _sl="${_logdir}/serve_${_msafe}_${_node}_p${PORT}_$$.out"
+        fi
+        echo "Self-logging to: $_sl  (SERVE_LOG=0 to disable)"
+        # Re-exec through tee so BOTH the terminal and the file get all output.
+        # _SERVE_LOG_ACTIVE guards against an infinite re-exec loop.
+        export _SERVE_LOG_ACTIVE=1
+        exec > >(tee -a "$_sl") 2>&1
+    fi
+fi
+
 echo "Starting vLLM server with:"
 echo "  Model Name: $MODEL_NAME"
 echo "  Model Path: $MODEL_PATH"
@@ -290,6 +363,7 @@ if [[ "$MODEL_PATH" == *"Qwen3.5"* ]] || [[ "$MODEL_PATH" == *"Qwen/Qwen3.5"* ]]
     # (Errno 36) for long external ckpt paths. Unset => identical to before (served id = path).
     SERVED_NAME_ARGS=()
     [[ -n "${SERVED_MODEL_NAME:-}" ]] && { SERVED_NAME_ARGS+=(--served-model-name "$SERVED_MODEL_NAME"); echo "Served model name: $SERVED_MODEL_NAME (alias for $MODEL_PATH)"; }
+    build_perf_args 0.85
     run_qwen35_vllm serve "$MODEL_PATH" \
         --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
         --max-model-len "$MAX_MODEL_LEN" \
@@ -298,9 +372,9 @@ if [[ "$MODEL_PATH" == *"Qwen3.5"* ]] || [[ "$MODEL_PATH" == *"Qwen/Qwen3.5"* ]]
         --mm-processor-cache-type shm \
         --media-io-kwargs '{"video": {"num_frames": 2048}}' \
         --port "$PORT" \
-        --gpu-memory-utilization 0.85 \
         --enable-chunked-prefill \
         --no-enable-prefix-caching \
+        "${PERF_ARGS[@]}" \
         "${SERVED_NAME_ARGS[@]}" \
         "${THINKING_ARGS[@]}"
 
@@ -308,6 +382,7 @@ elif [[ "$MODEL_PATH" == *"Kimi-K2.5"* ]]|| [[ "$MODEL_PATH" == *"kimi"* ]]; the
     echo "Detected Kimi K2.5 - using the preferred Kimi serving env"
     echo ""
     print_startup_heartbeat_status
+    build_perf_args 0.9
     run_kimi_vllm serve "$MODEL_PATH" \
         --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
         --max-model-len "$MAX_MODEL_LEN" \
@@ -315,9 +390,9 @@ elif [[ "$MODEL_PATH" == *"Kimi-K2.5"* ]]|| [[ "$MODEL_PATH" == *"kimi"* ]]; the
         --tool-call-parser kimi_k2 \
         --reasoning-parser kimi_k2 \
         --mm-encoder-tp-mode data \
-        --gpu-memory-utilization 0.9 \
         --port "$PORT" \
-        --no-enable-prefix-caching
+        --no-enable-prefix-caching \
+        "${PERF_ARGS[@]}"
 
 elif [[ "$MODEL_PATH" == *"GLM-4.7"* ]]; then
     echo "Detected GLM-4.7 model - using GLM-4.7-specific configuration"
@@ -326,6 +401,12 @@ elif [[ "$MODEL_PATH" == *"GLM-4.7"* ]]; then
     GLM47_MAX_LEN=$MAX_MODEL_LEN
     if [ "$GLM47_MAX_LEN" -gt 202752 ]; then GLM47_MAX_LEN=202752; fi
     print_startup_heartbeat_status
+    # GLM-4.7 had no explicit --gpu-memory-utilization (vLLM default 0.9). Only
+    # emit the flag when GPU_MEM_UTIL is set, to keep default behavior identical.
+    GLM_PERF_ARGS=()
+    [ -n "$GPU_MEM_UTIL" ] && { GLM_PERF_ARGS+=(--gpu-memory-utilization "$GPU_MEM_UTIL"); echo "Perf knob: --gpu-memory-utilization $GPU_MEM_UTIL"; }
+    [ -n "$MAX_NUM_SEQS" ] && { GLM_PERF_ARGS+=(--max-num-seqs "$MAX_NUM_SEQS"); echo "Perf knob: --max-num-seqs $MAX_NUM_SEQS"; }
+    [ -n "$EXTRA_VLLM_ARGS" ] && { read -ra _ex <<< "$EXTRA_VLLM_ARGS"; GLM_PERF_ARGS+=("${_ex[@]}"); echo "Perf knob: EXTRA_VLLM_ARGS = $EXTRA_VLLM_ARGS"; }
     run_qwen35_vllm serve "$MODEL_PATH" \
         --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
         --max-model-len "$GLM47_MAX_LEN" \
@@ -336,7 +417,8 @@ elif [[ "$MODEL_PATH" == *"GLM-4.7"* ]]; then
         --mm_processor_cache_type shm \
         --media-io-kwargs '{"video": {"num_frames": 2048}}' \
         --allowed-local-media-path / \
-        --port "$PORT"
+        --port "$PORT" \
+        "${GLM_PERF_ARGS[@]}"
 
 else
     echo "Using standard vLLM configuration"
@@ -351,6 +433,7 @@ else
         THINKING_ARGS+=(--default-chat-template-kwargs '{"enable_thinking": false}')
         echo "Thinking mode: DISABLED (pass ENABLE_THINKING=1 to enable)"
     fi
+    build_perf_args 0.90
     run_qwen35_vllm serve "$MODEL_PATH" \
         --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
         --max-model-len "$MAX_MODEL_LEN" \
@@ -359,8 +442,8 @@ else
         --mm-processor-cache-type shm \
         --media-io-kwargs '{"video": {"num_frames": 2048}}' \
         --port "$PORT" \
-        --gpu-memory-utilization 0.90 \
         --enable-chunked-prefill \
         --no-enable-prefix-caching \
+        "${PERF_ARGS[@]}" \
         "${THINKING_ARGS[@]}"
 fi

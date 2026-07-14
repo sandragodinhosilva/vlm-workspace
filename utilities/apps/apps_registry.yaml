@@ -260,6 +260,15 @@ apps:
     port: 7861
     venv: /home/sgsilva/browser-app-home-venv/bin/python
 
+  serve-monitor:
+    label: "vLLM serve monitor — live load, prefill/decode timing, GPUs, settings"
+    workstream: Utilities
+    goal: "Monitor a live vLLM server (MY servers only by default): requests running/waiting, rolling prompt+generation tok/s, KV-cache usage, AND the per-request time split (queue vs prefill vs decode) + per-GPU nvidia-smi (util/mem/power/temp). Second tab shows KEY prefill/decode/serving settings LIVE-vs-SCRIPT side by side and lets you ask the served model about itself. Default server = the live 397B (worker-20:8000); Scan cluster to switch. For EXPERIMENTING with serve settings and watching the effect live."
+    repo: /home/sgsilva/utilities/apps
+    script: serve_monitor.py
+    port: 7878
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+
   claude-tracker:
     label: "Claude usage tracker (token cost dashboard)"
     workstream: Utilities
