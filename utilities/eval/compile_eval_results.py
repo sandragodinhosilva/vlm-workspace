@@ -642,12 +642,18 @@ def resolve_vo(name: str, metadata: dict | None = None,
     # skips these by passing metadata=None).
     if metadata is not None and rt["admit"]:
         if kind == "two_stage":
-            # sft2812-only board rule + the three naming-convention exceptions
-            # (cohort bake-off / EXP-B native arms / 397B GT-obs ceiling).
+            # sft2812-only board rule + the naming-convention exceptions
+            # (cohort bake-off / EXP-B native arms / 397B GT-obs ceiling / generic selfloop arm).
             _rsnr = str(metadata.get("model", "")).lower()
             _is_expb_native = (rt["is_expb_gtobs"] or rt["is_expb_modelobs"]
                                or rt["is_expb_selfloop"])
-            if (not (rt["is_cohort_bakeoff"] or _is_expb_native or rt["is_397b_ceiling"])
+            # A self-loop arm (generic _selfloop_ cohort stem, NOT just EXP-B) uses the model as
+            # its OWN reasoner by definition — the sft2812-reasoner rule must not reject it
+            # (2026-07-13: Sandra's 27B/397B 4-row-block override adds generic-selfloop rows;
+            # is_expb_selfloop requires 'expb' in name so these fell into reasoner_not_sft2812).
+            _is_generic_selfloop = rt["arm"] == "selfloop"
+            if (not (rt["is_cohort_bakeoff"] or _is_expb_native or rt["is_397b_ceiling"]
+                     or _is_generic_selfloop)
                     and not ("fe_comparison" in _rsnr and "step_2812" in _rsnr)):
                 rt.update(admit=False, skip_reason="reasoner_not_sft2812")
             else:

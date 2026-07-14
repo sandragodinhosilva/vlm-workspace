@@ -403,7 +403,10 @@
     "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_agree_1806_thinkon",
     "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_gtobsbuild_thinkon",
     "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_selfloop_thinkon",
-    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_thinkon"
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_thinkon",
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_agree_1806_thinkoff",
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_singlestage_thinkoff",
+    "expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840_1806_thinkoff"
    ],
    "vo_path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840"
   },
