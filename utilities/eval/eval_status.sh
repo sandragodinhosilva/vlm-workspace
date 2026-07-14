@@ -64,7 +64,9 @@ _substep() {
     vo_s2)
       # FIXED reasoner sweep rep count lives in the SLURM .out, not the run-log
       local so; so="$(_slurmout "$jid")"
-      [[ -n "$so" ]] && grep -oE 'Evaluating samples: *[0-9]+/[0-9]+|Processed: [0-9]+/[0-9]+' "$so" 2>/dev/null | tail -1;;
+      # -a: the SLURM .out is a 'data' file (tqdm \r bytes); without it grep can print
+      # "Binary file matches" and tail grabs a stale value instead of the live rep count.
+      [[ -n "$so" ]] && grep -aoE 'Evaluating samples: *[0-9]+/[0-9]+|Processed: [0-9]+/[0-9]+' "$so" 2>/dev/null | tail -1;;
     aux)        grep -oE 'Running (video|text|image)[ a-zA-Z]*' "$log" 2>/dev/null | tail -1;;
     benchmarks)
       # Prefer the latest [RUN] line (the benchmark actually executing) so a [SKIP] line
