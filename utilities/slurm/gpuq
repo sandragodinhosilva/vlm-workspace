@@ -10,6 +10,7 @@ Usage:
     ./gpuq.py                          # default: slurm + ssh probe
     ./gpuq.py --no-probe               # slurm only, no ssh
     ./gpuq.py --procs                  # also show owner+model per GPU process
+    ./gpuq.py --serving                # show a "what's served with vLLM" section
     ./gpuq.py --extra dev01,dev02      # also include nodes outside slurm
     ./gpuq.py --timeout 5              # bump ssh timeout
     watch -c -n2 ./gpuq.py             # live refresh
@@ -389,6 +390,69 @@ def extract_model(args_str):
     return None
 
 
+# ─── vLLM serving detection ───────────────────────────────────────────
+# A process is a vLLM API server if its cmdline launches the OpenAI-compatible
+# server. Covers both entrypoints: `vllm serve ...` and the module form
+# `python -m vllm.entrypoints.openai.api_server ...`.
+def _is_vllm_server(args_str):
+    if not args_str:
+        return False
+    # Exclude our own probe payload (a bash -c loop that greps for 'vllm serve'
+    # would otherwise match itself).
+    if "/proc/[0-9]*/cmdline" in args_str or "GPUQ-PROCS" in args_str:
+        return False
+    # Every vLLM OpenAI-server entrypoint form seen in the wild:
+    #   vllm serve <model>                              (console script)
+    #   python -m vllm.entrypoints.openai.api_server    (legacy module)
+    #   python -m vllm.entrypoints.cli.main serve       (modern CLI module)
+    #   .../bin/vllm serve                              (venv console script)
+    if "vllm.entrypoints.openai.api_server" in args_str:
+        return True
+    if "vllm.entrypoints.cli.main" in args_str and " serve" in args_str:
+        return True
+    # `vllm serve` where the token before 'serve' ends in 'vllm' (bare command,
+    # console-script path, or `python .../vllm serve`).
+    if re.search(r"(^|/|\s)vllm\s+serve(\s|$)", args_str):
+        return True
+    return False
+
+
+def _extract_port(args_str, default=8000):
+    """Port a vLLM server listens on: `--port N` / `--port=N`, else the default
+    (start_vllm_server.sh's default is 8000)."""
+    m = re.search(r"--port[=\s]+(\d+)", args_str or "")
+    return int(m.group(1)) if m else default
+
+
+def _vllm_servers_from_cmdlines(ppid, user_of, cmdline):
+    """Find vLLM API-server processes on a node from its full process table.
+
+    Returns list of dicts: {pid, user, port, model} — deduped by port so a
+    parent launcher + its api-server child don't both show up.
+    """
+    by_port = {}
+    for pid, args in cmdline.items():
+        if not _is_vllm_server(args):
+            continue
+        port = _extract_port(args)
+        by_port.setdefault(port, {
+            "pid": pid,
+            "user": user_of.get(pid, "?"),
+            "port": port,
+            # Prefer --served-model-name (the id evals use); fall back to the
+            # served path / model flag, then a parent-chain walk.
+            "model": (_served_model_name(args) or extract_model(args)
+                      or _model_for_pid(pid, ppid, cmdline)),
+        })
+    return list(by_port.values())
+
+
+def _served_model_name(args_str):
+    """The --served-model-name value, if the launch set one."""
+    m = re.search(r"--served-model-name[=\s]+(\S+)", args_str or "")
+    return m.group(1) if m else None
+
+
 def _model_for_pid(pid, ppid, cmdline, depth=12):
     """Walk a PID up its parent chain, returning the first model label found.
 
@@ -441,13 +505,73 @@ def _parse_procs(apps_block, uuid_block, tree_block, cmd_block):
     return rows
 
 
-def probe_node(host, timeout, want_procs=False):
+def probe_vllm_health(host, ports, timeout):
+    """Curl /v1/models on host for each port (from the node, over localhost).
+
+    Returns {port: served_id_or_None}. served_id is the exact id vLLM reports
+    (what evals must copy verbatim) — None means the port didn't answer, i.e.
+    the process is still starting up or wedged.
+    """
+    if not ports:
+        return {}
+    # One SSH: loop the ports, curl each, print 'PORT<TAB>json-or-empty'.
+    plist = " ".join(str(p) for p in ports)
+    remote = (
+        "for p in " + plist + "; do "
+        "printf '%s\\t' \"$p\"; "
+        "curl -s --max-time 3 http://127.0.0.1:$p/v1/models 2>/dev/null; "
+        "echo; done"
+    )
+    cmd = ["ssh", "-o", f"ConnectTimeout={int(timeout)}", *SSH_OPTS, host, remote]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout + 5 + 3 * len(ports))
+    except (subprocess.TimeoutExpired, OSError):
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        if "\t" not in line:
+            continue
+        port_s, body = line.split("\t", 1)
+        try:
+            port = int(port_s)
+        except ValueError:
+            continue
+        served = None
+        m = re.search(r'"id"\s*:\s*"([^"]+)"', body)
+        if m:
+            served = m.group(1)
+        out[port] = served
+    return out
+
+
+def _parse_tree_cmd(tree_block, cmd_block):
+    """Parse the ps tree + /proc cmdline blocks into (ppid, user_of, cmdline)."""
+    ppid, user_of = {}, {}
+    for line in tree_block.strip().splitlines():
+        m = re.match(r"\s*(\d+)\s+(\d+)\s+(\S+)\s*$", line)
+        if m:
+            ppid[m.group(1)] = m.group(2)
+            user_of[m.group(1)] = m.group(3)
+    cmdline = {}
+    for line in cmd_block.strip().splitlines():
+        if "\t" in line:
+            pid, args = line.split("\t", 1)
+            cmdline[pid.strip()] = args.strip()
+    return ppid, user_of, cmdline
+
+
+def probe_node(host, timeout, want_procs=False, want_serving=False):
     """SSH to host, run nvidia-smi, return a probe dict (or None on failure).
 
     Keys: total, busy (idx set), type. With want_procs, also 'procs': a list of
-    (gpu_idx, pid, user, model_label) for live compute processes.
+    (gpu_idx, pid, user, model_label) for live compute processes. With
+    want_serving, also 'servers': a list of {pid, user, port, model} for vLLM
+    API-server processes found on the node.
     """
-    remote = GPU_QUERY + ((" ; " + PROC_QUERY) if want_procs else "")
+    # Serving detection needs the same full cmdline/tree payload as --procs.
+    need_payload = want_procs or want_serving
+    remote = GPU_QUERY + ((" ; " + PROC_QUERY) if need_payload else "")
     cmd = ["ssh", "-o", f"ConnectTimeout={int(timeout)}", *SSH_OPTS, host, remote]
     try:
         r = subprocess.run(
@@ -479,18 +603,25 @@ def probe_node(host, timeout, want_procs=False):
             name = _norm_gpu_name(parts[3])
 
     result = {"total": total, "busy": busy, "type": name}
-    if want_procs and len(blocks) >= 5:
-        result["procs"] = _parse_procs(blocks[1], blocks[2], blocks[3], blocks[4])
+    if need_payload and len(blocks) >= 5:
+        if want_procs:
+            result["procs"] = _parse_procs(
+                blocks[1], blocks[2], blocks[3], blocks[4])
+        if want_serving:
+            ppid, user_of, cmdline = _parse_tree_cmd(blocks[3], blocks[4])
+            result["servers"] = _vllm_servers_from_cmdlines(
+                ppid, user_of, cmdline)
     return result
 
 
-def probe_all(hosts, timeout, want_procs=False):
+def probe_all(hosts, timeout, want_procs=False, want_serving=False):
     """Probe many hosts in parallel. Returns dict host -> result-or-None."""
     if not hosts:
         return {}
     out = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as ex:
-        futs = {ex.submit(probe_node, h, timeout, want_procs): h for h in hosts}
+        futs = {ex.submit(probe_node, h, timeout, want_procs, want_serving): h
+                for h in hosts}
         for fut in concurrent.futures.as_completed(futs):
             out[futs[fut]] = fut.result()
     return out
@@ -559,7 +690,21 @@ def parse_args():
     p.add_argument("--procs", action="store_true",
                    help="Show a per-node sub-line of live GPU processes "
                         "(gpu#, owner, detected model). Extra ssh cost.")
-    return p.parse_args()
+    p.add_argument("--serving", "--vllm", action="store_true", dest="serving",
+                   help="Show a 'what's served with vLLM' section: each live "
+                        "vLLM server's node:port, exact served-id (from "
+                        "/v1/models), model, and owner. Extra ssh cost.")
+    # Bare subcommand: `gpuq vllm` (or `gpuq serving`) == `gpuq --serving`.
+    p.add_argument("mode", nargs="?", default=None,
+                   help="Optional subcommand. 'vllm'/'serving' = show the "
+                        "vLLM serving section (same as --serving).")
+    args = p.parse_args()
+    if args.mode in ("vllm", "serving", "serve"):
+        args.serving = True
+    elif args.mode is not None:
+        p.error(f"unknown subcommand: {args.mode!r} "
+                "(did you mean 'vllm'?)")
+    return args
 
 
 def print_squeue_listing():
@@ -591,18 +736,27 @@ def main():
     fetch_reservations(nodes)
 
     extras = [n.strip() for n in args.extra.split(",") if n.strip()]
-    do_probe = not args.no_probe or extras  # extras imply probe
+    # --serving needs SSH; it overrides --no-probe (you can't detect servers
+    # without reaching the nodes).
+    do_probe = not args.no_probe or extras or args.serving
+
+    # host -> [ {pid,user,port,model}, ... ] for vLLM servers, filled during probe.
+    servers_by_host = {}
 
     # Probe slurm-known nodes for rogue usage + any extras for everything.
     if do_probe:
         targets = list(nodes.keys()) + extras
-        probed = probe_all(targets, args.timeout, want_procs=args.procs)
+        probed = probe_all(targets, args.timeout,
+                           want_procs=args.procs, want_serving=args.serving)
 
         for name, result in probed.items():
             if result is None:
                 continue
             ptotal, pbusy, pname = result["total"], result["busy"], result["type"]
             pprocs = result.get("procs")
+            psrv = result.get("servers")
+            if psrv:
+                servers_by_host[name] = psrv
             if name in nodes:
                 # Slurm node: derive rogue = busy - slurm_allocated
                 d = nodes[name]
@@ -738,7 +892,69 @@ def main():
               DIM, YELLOW),
             file=sys.stderr,
         )
+
+    if args.serving:
+        print_serving_section(servers_by_host, args.timeout)
+
     return 0
+
+
+def print_serving_section(servers_by_host, timeout):
+    """Print a 'what's served with vLLM' table below the node dashboard.
+
+    For each detected vLLM server, health-check /v1/models from the node itself
+    to get the EXACT served-id (what evals must copy verbatim per the eval-plan
+    gate) and confirm the endpoint answers. A server that's still coming up (no
+    /v1/models yet) shows a 'starting?' health flag, not a happy-path guess.
+    """
+    print()
+    print(c("── SERVED WITH vLLM ──", BOLD, CYAN))
+    if not servers_by_host:
+        print(c("  (no live vLLM servers detected on any probed node)", DIM))
+        return
+
+    # Health-check each host's ports in parallel (one SSH per host).
+    healths = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as ex:
+        futs = {
+            ex.submit(probe_vllm_health, host,
+                      [s["port"] for s in srvs], timeout): host
+            for host, srvs in servers_by_host.items()
+        }
+        for fut in concurrent.futures.as_completed(futs):
+            healths[futs[fut]] = fut.result()
+
+    # Flatten to rows and compute column widths.
+    rows = []
+    for host in sorted(servers_by_host):
+        health = healths.get(host, {})
+        for s in sorted(servers_by_host[host], key=lambda x: x["port"]):
+            served = health.get(s["port"])  # None => not answering
+            rows.append({
+                "endpoint": f"{host}:{s['port']}",
+                "served": served,
+                "model": s["model"] or "(unknown)",
+                "user": s["user"],
+                "live": served is not None,
+            })
+
+    w_ep = max(8, max(len(r["endpoint"]) for r in rows) + 1)
+    w_served = max(10, max(len(r["served"] or "starting?") for r in rows) + 1)
+    w_user = max(6, max(len(r["user"]) for r in rows) + 1)
+    print(c("  " + vpad("ENDPOINT", w_ep) + vpad("SERVED-ID", w_served)
+            + vpad("USER", w_user) + "MODEL", BOLD, DIM))
+    for r in rows:
+        served_txt = (c(r["served"], GREEN) if r["live"]
+                      else c("starting?", YELLOW))
+        print(
+            "  "
+            + vpad(c(r["endpoint"], BOLD), w_ep)
+            + vpad(served_txt, w_served)
+            + vpad(c(r["user"], CYAN), w_user)
+            + c(r["model"], DIM)
+        )
+    print(c("  SERVED-ID = exact /v1/models id — copy verbatim for evals.",
+            DIM))
 
 
 if __name__ == "__main__":
