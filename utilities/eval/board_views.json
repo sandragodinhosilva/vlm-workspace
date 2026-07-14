@@ -30,7 +30,8 @@
         {"path": "/mnt/data/shared/models/Qwen3.5-397B-A17B", "cohort": "1806", "arm": "selfloop", "thinking": "on", "comment": "397B OWN-MODEL-VObs self-loop arm — added 2026-07-13 ahead of landing"},
         {"path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840", "cohort": "1806", "arm": "", "thinking": "on", "comment": "EXP-B flipfix step840 (GT-obs/agreement/single-stage axes)"},
         {"path": "/mnt/data/sgsilva/models/qwen35-27b-expb-stage2-ondemand-reasoning-flipfix-1node-sft-step840", "cohort": "1806", "arm": "selfloop", "thinking": "on", "comment": "flipfix step840 OWN-MODEL-VObs self-loop arm (min1s re-run, job 113615) — added 2026-07-13"},
-        {"path": "/mnt/data/sgsilva/models/qwen35-27b-stage1-vobs-bigger-mix-2906-sft-step5337", "cohort": "1806", "arm": "", "thinking": "off", "comment": "27B stage1 vobs bigger-mix step5337 — re-keyed to cohort 1806 (2026-07-13): min1s re-baseline files (_1806-tagged, jobs 111927/113530) are live; the old bare-key files were the 111364 wrong-cohort (1105) artifacts, quarantined to runs/_superseded_20260711/."}
+        {"path": "/mnt/data/sgsilva/models/qwen35-27b-stage1-vobs-bigger-mix-2906-sft-step5337", "cohort": "1806", "arm": "", "thinking": "off", "comment": "27B stage1 vobs bigger-mix step5337 — re-keyed to cohort 1806 (2026-07-13): min1s re-baseline files (_1806-tagged, jobs 111927/113530) are live; the old bare-key files were the 111364 wrong-cohort (1105) artifacts, quarantined to runs/_superseded_20260711/."},
+        {"path": "/mnt/data/sgsilva/models/qwen35-27b-oracle-obs-merged-1805-binary-aux12k-union-sft-step4127", "cohort": "1806", "arm": "", "thinking": "off", "comment": "27B aux12k-union step4127 — 1806 thinkoff re-baseline (job 115160, 2026-07-14): replicates bigger-mix's 2-stage-FIXED-REASONER;Single-stage;VObs-agreement axes (Sandra's request to sit next to it). FIXED N=2231/2245."}
       ]
     }
   }

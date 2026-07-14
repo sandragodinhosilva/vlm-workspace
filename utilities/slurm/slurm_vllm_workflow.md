@@ -23,12 +23,12 @@ Cluster: 8× NVIDIA B300 SXM6 per worker node, ~2.5 TB RAM, 192 CPUs per node. `
 This is the formula recommended for the cluster — it gives you exactly your proportional share of a node and never over-claims:
 
 ```bash
-NUM_GPUS=2
+NUM_GPUS=4
 srun --nodes=1 \
      --gres=gpu:${NUM_GPUS} \
      -c $((24*NUM_GPUS)) \
      --mem=$((311*NUM_GPUS))G \
-     --job-name=27b \
+     --job-name=reasoner \
      --pty bash -i 
 
 NUM_GPUS=2
