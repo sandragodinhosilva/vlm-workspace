@@ -76,7 +76,13 @@ _substep() {
       [[ -z "$sub" ]] && sub="$(grep -oE 'MMMU_DEV_VAL\] Sample [0-9]+|IFBench prompt-level' "$log" 2>/dev/null | tail -1)"
       [[ -z "$sub" ]] && sub="$(grep -oE '\[SKIP\] (VSI-Bench|MMMU|Video-MME|IFBench)[^]]*' "$log" 2>/dev/null | tail -1)"
       echo "$sub";;
-    agreement)  grep -oE 'step [12]/2|Processing: [^ ]+' "$log" 2>/dev/null | tail -1;;
+    agreement)
+      # step 1/2 (obs generation) emits "... Complete | N/2157"; show that as a Processed count,
+      # tagged with the current step phase. step 2/2 (GT scoring) has no per-rep counter (fast).
+      local ph cnt
+      ph="$(grep -aoE 'step [12]/2' "$log" 2>/dev/null | tail -1)"
+      cnt="$(grep -aoE 'Complete \| [0-9]+/[0-9]+' "$log" 2>/dev/null | tail -1 | grep -oE '[0-9]+/[0-9]+')"
+      if [[ -n "$cnt" ]]; then echo "${ph:+$ph }Processed: $cnt"; else echo "$ph"; fi;;
   esac
 }
 
