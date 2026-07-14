@@ -21,11 +21,32 @@ _logfor() {
   done
 }
 
-# current stage KEY from a run-log (machine-readable; latest reached wins)
+# SLURM .out for a given jobid — carries the WITH_VO_S2 post-script markers that the RUN-log
+# does NOT (the vo_s2 FIXED sweep runs in the sbatch wrapper AFTER eval_all.sh's own RUN END).
+# Dated subdir (current wrapper) or flat (older). Empty if the job wasn't an sbatch (srun).
+_slurmout() {
+  local jid="$1" d p
+  for d in "$(date -u +%F)" "$(date -u -d yesterday +%F 2>/dev/null)"; do
+    p="$LOG_ROOT/slurm/$d/eval_all_slurm-${jid}.out"; [[ -f "$p" ]] && { echo "$p"; return; }
+  done
+  p="$LOG_ROOT/slurm/eval_all_slurm-${jid}.out"; [[ -f "$p" ]] && { echo "$p"; return; }
+}
+
+# current stage KEY from a run-log (machine-readable; latest reached wins).
+# $2 = jobid (optional) → after RUN END, check the SLURM .out for an in-flight WITH_VO_S2 sweep,
+# which runs in the sbatch wrapper AFTER eval_all.sh's RUN END and is invisible to the run-log.
 _stage_key() {
-  local log="$1"
+  local log="$1" jid="${2:-}"
   [[ -z "$log" || ! -f "$log" ]] && { echo "no-log"; return; }
-  grep -q "==== RUN END ===="          "$log" 2>/dev/null && { echo DONE; return; }
+  if grep -q "==== RUN END ====" "$log" 2>/dev/null; then
+    # eval_all.sh finished — but a vo_s2 FIXED sweep may still be running in the wrapper.
+    local so; so="$(_slurmout "$jid")"
+    if [[ -n "$so" ]] && grep -q "WITH_VO_S2:" "$so" 2>/dev/null \
+         && ! grep -qE "WITH_VO_S2: reasoner_sweep rc=|vo_s2 SKIPPED" "$so" 2>/dev/null; then
+      echo vo_s2; return   # FIXED reasoner sweep still in flight → NOT done
+    fi
+    echo DONE; return
+  fi
   grep -q "PREFLIGHT FAIL"             "$log" 2>/dev/null && { echo PREFLIGHT-FAIL; return; }
   local s="serving"
   grep -q "PREFLIGHT PASS"             "$log" 2>/dev/null && s="preflight"
@@ -36,10 +57,14 @@ _stage_key() {
   echo "$s"
 }
 
-# live sub-step text for the current stage (for display)
+# live sub-step text for the current stage (for display). $3 = jobid (for vo_s2 → SLURM .out).
 _substep() {
-  local log="$1" stage="$2"
+  local log="$1" stage="$2" jid="${3:-}"
   case "$stage" in
+    vo_s2)
+      # FIXED reasoner sweep rep count lives in the SLURM .out, not the run-log
+      local so; so="$(_slurmout "$jid")"
+      [[ -n "$so" ]] && grep -oE 'Evaluating samples: *[0-9]+/[0-9]+|Processed: [0-9]+/[0-9]+' "$so" 2>/dev/null | tail -1;;
     aux)        grep -oE 'Running (video|text|image)[ a-zA-Z]*' "$log" 2>/dev/null | tail -1;;
     benchmarks)
       # Prefer the latest [RUN] line (the benchmark actually executing) so a [SKIP] line
@@ -122,14 +147,14 @@ squeue -u "$USER_ID" -h -o '%i|%j|%T|%M|%N|%b|%R' 2>/dev/null | grep -iE 'eval|3
   eta="—"; stg="$reason"
   if [[ "$state" == RUNNING ]]; then
     log="$(_logfor "$jid")"
-    key="$(_stage_key "$log")"
+    key="$(_stage_key "$log" "$jid")"
     if [[ "$key" == no-log ]]; then
       stg="(no eval-log: interactive/srun?)"
     else
-      sub="$(_substep "$log" "$key")"
+      sub="$(_substep "$log" "$key" "$jid")"
       stg="$key${sub:+  ($sub)}"
       # ETA only for true eval_all runs in a real stage
-      case "$key" in DONE) eta="~done";; PREFLIGHT-FAIL) eta="—";; *)
+      case "$key" in DONE) eta="~done";; PREFLIGHT-FAIL) eta="—";; vo_s2) eta="~15m";; *)
         base="$(grep -oE -- '--base-model [^ ]+' "$log" 2>/dev/null | head -1 | awk '{print $2}')"
         think="$(grep -oE -- '--thinking (on|off)' "$log" 2>/dev/null | head -1 | awk '{print $2}')"
         eta="$(_fmt_eta "$(_eta_min "$log" "$key" "${base:-}" "${think:-off}")" "$log")";;
