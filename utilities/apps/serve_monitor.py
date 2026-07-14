@@ -126,6 +126,20 @@ def _histogram_percentiles(raw: str, metric: str, ps=(50, 90, 99)) -> dict:
                 hit = le
                 break
         out[p] = hit
+    # Per-bucket counts (cumulative differences) → actual populated range.
+    # A cumulative histogram can't give exact extremes, only which coarse
+    # bucket the smallest/largest request fell into. Store each as the
+    # bucket INTERVAL (lower_edge, upper_edge] so the coarseness is explicit
+    # — vLLM's top edges (5k, 20k, 50k, +Inf) are very wide.
+    prev_cum, prev_edge = 0.0, 0.0
+    populated = []  # list of (lo, hi) intervals that received hits
+    for le, cum in edges:
+        if cum - prev_cum > 0:
+            populated.append((prev_edge, le))
+        prev_cum, prev_edge = cum, le
+    if populated:
+        out["min"] = populated[0]   # (lo, hi] of smallest populated bucket
+        out["max"] = populated[-1]  # (lo, hi] of largest populated bucket
     return out
 
 
@@ -259,17 +273,29 @@ def render_token_stats(m: dict) -> str:
     pout = _histogram_percentiles(raw, "request_generation_tokens")
     n = pin.get("_n", 0)
 
+    def interval(iv):
+        # iv is (lo, hi] of the bucket the extreme fell into; show the range.
+        if not iv:
+            return "—"
+        lo, hi = iv
+        return f"{_fmt_tok(hi)}" if lo <= 0 else f"({_fmt_tok(lo)}, {_fmt_tok(hi)}]"
+
     def cell(label, avg, pc):
         return (f"<div style='flex:1;min-width:170px;padding:12px;background:#eef2f7;border-radius:8px'>"
                 f"<div style='font-size:12px;color:#555'>{label}</div>"
                 f"<div style='font-size:24px;font-weight:700'>{_fmt_tok(avg) if avg else '—'}"
                 f"<span style='font-size:12px;color:#777'> avg</span></div>"
                 f"<div style='font-size:12px;color:#555'>p50 ≤{_fmt_tok(pc.get(50,0))} · "
-                f"p90 ≤{_fmt_tok(pc.get(90,0))} · p99 ≤{_fmt_tok(pc.get(99,0))}</div></div>")
+                f"p90 ≤{_fmt_tok(pc.get(90,0))} · p99 ≤{_fmt_tok(pc.get(99,0))}</div>"
+                f"<div style='font-size:12px;color:#555'>min {interval(pc.get('min'))} · "
+                f"max {interval(pc.get('max'))}</div></div>")
 
     note = ("<div style='font-size:12px;color:#777;margin-top:6px'>Percentiles are histogram "
-            "upper-edges (coarse): “≤ this many tokens”. Compare p99 to --max-model-len — a p99 "
-            "far below max-len means the context window is over-provisioned.</div>")
+            "upper-edges (coarse): “≤ this many tokens”. min/max show the (lo, hi] bucket the "
+            "smallest/largest request fell into — vLLM's top edges (5k, 20k, 50k) are very wide, "
+            "so a wide max interval just means low granularity there, not a huge request. "
+            "Compare p99 to --max-model-len — a p99 far below max-len means the context window "
+            "is over-provisioned.</div>")
     return (f"<div style='font-family:system-ui'>"
             f"<div style='font-size:13px;font-weight:600;margin-bottom:4px'>Request size — tokens "
             f"in / out (n={n:,} completed)</div>"
@@ -708,7 +734,7 @@ def build():
             refresh_btn = gr.Button("↻ Refresh now", variant="primary")
             mon_html = gr.HTML()
             with gr.Group():
-                gr.Markdown("#### 📏 Request size — tokens in / out (avg + p50/p90/p99)")
+                gr.Markdown("#### 📏 Request size — tokens in / out (avg + p50/p90/p99 + min/max)")
                 tokens_html = gr.HTML()
             with gr.Group():
                 gr.Markdown("#### ⏱ Time per request — prefill vs decode vs queue")
