@@ -72,7 +72,7 @@ for item in "${RUNS[@]}"; do
     --precomputed-visual-obs "$R/$s1" \
     --model "$REASONER" \
     --server-url "http://$HOST:$PORT/v1" \
-    --max-tokens 16384 --max-workers 16 \
+    --max-tokens 16384 --max-workers 32 \
     --output-file "$OUT" --resume \
     > "$R/stage2_${tag}.log" 2>&1
   if [[ ! -f "$OUT" ]]; then

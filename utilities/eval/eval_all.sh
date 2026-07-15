@@ -724,7 +724,7 @@ CARDEOF
         --model "$SERVED_ID" --server-url "$BASE_URL"
         --processed-dir "$VO_PROCESSED_DIR"
         --visual-obs-variant "$VO_SCHEMA"
-        --max-tokens "$omax" --max-workers 16
+        --max-tokens "$omax" --max-workers 48
         --output-file "$obs_out" --resume )
       # 2906 schema: pass the explicit question file (categorical/angle _2906.json) — else the
       # generator resolves the OLD repo-root categorical file from the variant name. (feedback: 2906)

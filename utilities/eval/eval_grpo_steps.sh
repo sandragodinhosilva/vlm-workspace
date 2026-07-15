@@ -141,7 +141,7 @@ for MD in "${MODEL_DIRS[@]}"; do
     --server-url "http://$HOST:$PORT/v1" \
     --visual-obs-variant categorical \
     --visual-obs-file "$OBSFILE" \
-    $THINK_FLAG --max-tokens "$MAXTOK" --max-workers 16 \
+    $THINK_FLAG --max-tokens "$MAXTOK" --max-workers 32 \
     --output-file "$STAGE1" --resume \
     > "$RESULTS/stage1_${NAME}_${TAG}.log" 2>&1
   if [[ ! -f "$STAGE1" ]]; then
