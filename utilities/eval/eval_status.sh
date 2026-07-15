@@ -32,6 +32,23 @@ _slurmout() {
   p="$LOG_ROOT/slurm/eval_all_slurm-${jid}.out"; [[ -f "$p" ]] && { echo "$p"; return; }
 }
 
+# SLURM .out for a STANDALONE reasoner_sweep_node.sbatch job (serve sft2812 TP8 + sweep an ONLY
+# list; NOT an eval_all run, so it writes no eval_all run-log — flat path only). Empty if absent.
+_sweepout() {
+  local p="$LOG_ROOT/slurm/reasoner_sweep_tp8_slurm-${1}.out"; [[ -f "$p" ]] && echo "$p"
+}
+
+# stage of a standalone reasoner_sweep job from its .out: serving → sweep → DONE.
+_sweep_stage() {
+  local so="$1"
+  [[ -z "$so" || ! -f "$so" ]] && return
+  grep -qE "reasoner_sweep_node COMPLETE|sweep exited \(rc=" "$so" 2>/dev/null && { echo DONE; return; }
+  grep -qE "\[FAIL\]" "$so" 2>/dev/null && { echo SWEEP-FAIL; return; }
+  grep -q "launching sweep" "$so" 2>/dev/null && { echo reasoner-sweep; return; }
+  grep -qE "WARM after|serving \(TP8\)" "$so" 2>/dev/null && { echo serving; return; }
+  echo serving
+}
+
 # current stage KEY from a run-log (machine-readable; latest reached wins).
 # $2 = jobid (optional) → after RUN END, check the SLURM .out for an in-flight WITH_VO_S2 sweep,
 # which runs in the sbatch wrapper AFTER eval_all.sh's RUN END and is invisible to the run-log.
@@ -157,7 +174,21 @@ squeue -u "$USER_ID" -h -o '%i|%j|%T|%M|%N|%b|%R' 2>/dev/null | grep -iE 'eval|3
     log="$(_logfor "$jid")"
     key="$(_stage_key "$log" "$jid")"
     if [[ "$key" == no-log ]]; then
-      stg="(no eval-log: interactive/srun?)"
+      # not an eval_all job — could be a STANDALONE reasoner_sweep_node.sbatch (serve+sweep).
+      swo="$(_sweepout "$jid")"
+      if [[ -n "$swo" ]]; then
+        skey="$(_sweep_stage "$swo")"
+        case "$skey" in
+          reasoner-sweep)
+            cnt="$(grep -aoE 'Processed: [0-9]+/[0-9]+|Evaluating samples: *[0-9]+/[0-9]+' "$swo" 2>/dev/null | tail -1)"
+            stg="reasoner-sweep${cnt:+  ($cnt)}"; eta="$(_fmt_eta 30 "$swo")";;
+          serving)     stg="serving (reasoner TP8)"; eta="$(_fmt_eta 40 "$swo")";;
+          DONE)        stg="DONE"; eta="~done";;
+          SWEEP-FAIL)  stg="SWEEP-FAIL"; eta="—";;
+        esac
+      else
+        stg="(no eval-log: interactive/srun?)"
+      fi
     else
       sub="$(_substep "$log" "$key" "$jid")"
       stg="$key${sub:+  ($sub)}"
