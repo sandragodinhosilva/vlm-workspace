@@ -14,7 +14,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=192
-#SBATCH --mem=2000G
+#SBATCH --mem=2400G   # whole-node job (TP8): grab ALL node mem so no leftover slice invites a co-tenant [[feedback_full_node_request_all_mem]]
 #SBATCH --time=12:00:00
 #SBATCH --output=/mnt/data/sgsilva/logs/eval/slurm/reasoner_sweep_tp8_slurm-%j.out
 #SBATCH --error=/mnt/data/sgsilva/logs/eval/slurm/reasoner_sweep_tp8_slurm-%j.err
