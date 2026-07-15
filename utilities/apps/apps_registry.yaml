@@ -23,6 +23,7 @@
 #   7876  vobs-schema         utilities/apps/vobs_schema_inspector.py
 #   7877  rft-harvest         data_preparation/reasoning/inspect/rft_harvest_app.py
 #   7879  multiturn-tools     web/gradio_app_multiturn.py
+#   7880  pipeline-inspector  utilities/apps/vobs_tool_pipeline/app.py
 #   8080  claude-tracker      utilities/apps/claude-tracker.py
 
 # Entries are grouped into 6 WORKSTREAMS (banner comments below). Each entry also
@@ -118,6 +119,18 @@ apps:
     port: 7877
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
     # Pass --input /path/to/*.ckpt.jsonl [--max-k N] at launch time.
+
+  pipeline-inspector:
+    label: "VObs-tool-SFT pipeline inspector (gen→rewrite→judge trail + row video + step_metrics)"
+    workstream: Visual Observations
+    goal: "Inspect + judge the VObs-tool-SFT synthetic pipeline (run_tool_sft_4k.py) row by row: the rep video built from the row's OWN video_frames (fps + need_to_flip honored), the verbatim prompt/raw/parsed triple per stage (generation best-of-K, rewrite, judge+regen), the per-step step_metrics table (is_perfect-first, change-ratios highlighted), the final shipped messages, and a run-level per-flavor overview via the producer's own summarize_step_metrics(). Loads kept + .dropped.jsonl together; filter by flavor / kept-dropped-judge-excluded / prompt_origin / judge_verdict_kind. Schema-driven rendering: new flavors, stages, or step_metrics fields appear with no code change. The app only MIRRORS the data — a row missing its self-describing fields shows a loud pipeline-gap state, never a reconstructed path."
+    repo: /home/sgsilva/utilities/apps/vobs_tool_pipeline
+    script: app.py
+    port: 7880
+    venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
+    # DEFAULT_JSONL = kept-rows jsonl; the sibling .dropped.jsonl auto-loads.
+    env:
+      DEFAULT_JSONL: /mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_selfdesc_0715/smoke.jsonl
 
   reasoning-prompt:
     label: "Reasoning-trace prompt editor — TUNE dataset-GENERATION prompts (4 task formatters)"
