@@ -165,6 +165,7 @@ FIELDS = [
     "vo_s1_error_f1", "vo_s1_sample_f1", "vo_s1_severity_acc",
     "_spacer_two_stage",   # blank spacer: single-stage │ ⎵ │ two-stage
     "vo_s2_error_f1", "vo_s2_sample_f1", "vo_s2_severity_acc",
+    "_spacer_agreement",   # blank spacer: two-stage │ ⎵ │ agreement (added 2026-07-15)
     #   visual-obs AGREEMENT vs HUMAN GT (single-stage obs; error_relevant.vs_gt.a.overall) —
     #   the comparable no-reasoner signal the old formatted CSV showed as its own band
     "vo_agree_errf1", "vo_agree_acc", "vo_agree_prec", "vo_agree_rec",
@@ -244,7 +245,7 @@ HEADER_LABELS = {
     # blank spacer columns between metric groups (identity │ benchmarks │ VO │ aux │ metadata)
     "_spacer_identity": "", "_spacer_bench": "", "_spacer_vo": "", "_spacer_aux": "",
     "_spacer_prov_bench": "", "_spacer_prov_vo": "", "_spacer_prov_train": "",
-    "_spacer_detail": "", "_spacer_two_stage": "", "_spacer_vo_usage": "",
+    "_spacer_detail": "", "_spacer_two_stage": "", "_spacer_vo_usage": "", "_spacer_agreement": "",
     "vo_s2_usage_mean": "VO Usage Mean %", "vo_s2_usage_full_pct": "VO Usage 100% Samples %",
     "vo_s2_usage_zero_pct": "VO Usage 0% Samples %",
     "vo_s2_usage_ctrl": "VO Usage Shuffled Ctrl %", "vo_s2_usage_headroom": "VO Usage Headroom (pp)",
@@ -1799,7 +1800,11 @@ def _resolve_vo_from_card(name: str, card: dict, metadata: dict | None, rt: dict
     axis = str(card.get("axis") or "").strip().lower()
     kind = {"singlestage": "single_stage", "stage2": "two_stage",
             "agreement": "agreement"}.get(axis)
-    ckpt = str(card.get("checkpoint_path") or "").strip()
+    # rstrip("/") — a trailing slash in the card's checkpoint_path (some producers write
+    # ".../Qwen3.5-397B-A17B/") becomes an INTERNAL slash once composed into row_path
+    # ("...A17B/__cohort_1806"), which _norm_path can't strip and the view's exact-key match
+    # then rejects — splitting single-stage off its two-stage row (2026-07-15 397B SS-empty bug).
+    ckpt = str(card.get("checkpoint_path") or "").strip().rstrip("/")
     thinking = str(card.get("thinking") or "").strip().lower()
     if kind is None or not ckpt or thinking not in ("on", "off"):
         rt.update(admit=False,
