@@ -405,12 +405,16 @@ def _load_allowlist():
     # before a more SPECIFIC one would steal the specific row's curated display/train_reasoning. That
     # ordering invariant is invisible and a future append can break it — so warn when one pattern is a
     # substring of another (the order-sensitive case). Not fatal: hand-ordering can be intentional.
+    # Only the DANGEROUS ordering is worth a warning: a BROAD pattern (a, a substring of b) listed
+    # BEFORE the more SPECIFIC b (i < j) — first-match then lets broad steal specific's row. The
+    # reverse (specific before broad, i > j) is the DESIRED order and must stay silent, else every
+    # correctly-ordered specific/broad pair (e.g. 397b-a17b_1806_selfloop before 397b-a17b_1806)
+    # emits noise forever. (2026-07-15: silenced the false-positive on the well-ordered 397b pair.)
     for i, a in enumerate(out):
         for j, b in enumerate(out):
-            if i != j and a["pattern"] in b["pattern"] and a["pattern"] != b["pattern"]:
-                rel = "BEFORE" if i < j else "after"
-                print(f"[allowlist WARN] pattern {a['pattern']!r} is a substring of {b['pattern']!r} "
-                      f"and is listed {rel} it — first-match may mis-assign. Order specific-before-broad.")
+            if i < j and a["pattern"] in b["pattern"] and a["pattern"] != b["pattern"]:
+                print(f"[allowlist WARN] BROAD pattern {a['pattern']!r} is listed BEFORE the more "
+                      f"specific {b['pattern']!r} — first-match may mis-assign. Order specific-before-broad.")
     return out
 
 
