@@ -27,6 +27,10 @@ bash /home/sgsilva/utilities/serve/start_vllm_server.sh /mnt/data/shared/models/
 ENABLE_THINKING=0 /home/sgsilva/utilities/serve/start_vllm_server.sh qwen3.5-397b-a17b 8 262144 8000
 ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh qwen3.5-397b-a17b 8 262144 8000
 
+# optimized - swaps --max-model-len to 131072 and GPU_MEM_UTIL= from 0.85 to 0.92
+ENABLE_THINKING=1 GPU_MEM_UTIL=0.92 MAX_NUM_SEQS=384 /home/sgsilva/utilities/serve/start_vllm_server.sh qwen3.5-397b-a17b 8 131072 8000
+
+
 # 122b (thinkON) — serving venv
 QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv bash ./start_vllm_server.sh qwen3.5-122b-a10b 8 262144 8000
 
