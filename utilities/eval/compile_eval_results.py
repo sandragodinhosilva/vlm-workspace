@@ -971,20 +971,31 @@ def _bench_display_to_path() -> dict[str, str]:
 
 def _video_source_split(video_results_json: str):
     """Read a video eval results_json's `by_source` and return (acc_3d, acc_non3d) percentages,
-    or ('', '') if unavailable. The 1506 video stage evaluates TWO sources tagged
-    metadata.source_dataset: mcqa_video_3d_2705 (3D spatial MCQA, harder) and mcqa_video_1505
-    (non-3D). Each by_source entry carries an `accuracy` (already a pct). Distinct '' sentinel on
-    any miss — never fabricate a number."""
+    or ('', '') if unavailable. The video stage evaluates TWO sources tagged
+    metadata.source_dataset: a 3D spatial MCQA source (`mcqa_video_3d_2705…`, harder) and a
+    non-3D source (`mcqa_video_1505…`). The testset REVISION suffixes the source name
+    (`mcqa_video_3d_2705_2906`, `mcqa_video_1505_2906` for the 2906 aux set — the whole board),
+    so match by SUBSTRING, not exact key, or every 2906/newer run reads ('','') (2026-07-16 fix:
+    Aux Video 3D/non-3D were blank on all board rows for exactly this reason). Each by_source
+    entry carries an `accuracy` (already a pct). Distinct '' sentinel on any miss — never
+    fabricate a number."""
     if not video_results_json:
         return "", ""
     try:
         bs = (json.loads(Path(video_results_json).read_text()).get("by_source") or {})
     except Exception:
         return "", ""
-    def _acc(src):
-        v = bs.get(src)
-        if isinstance(v, dict):
-            a = v.get("accuracy")
+    def _acc(token):
+        # first by_source key whose name contains the source token (revision suffix tolerant);
+        # prefer an exact match if one exists so a bare-named run is unaffected.
+        cand = bs.get(token)
+        if not isinstance(cand, dict):
+            for k, v in bs.items():
+                if token in k and isinstance(v, dict):
+                    cand = v
+                    break
+        if isinstance(cand, dict):
+            a = cand.get("accuracy")
             if isinstance(a, (int, float)):
                 return round(a, 2)
         return ""
@@ -1437,6 +1448,23 @@ def _rows():
                     r["vo_s1_eval_n"] = f"{_ev1}/{_fl1}" if _fl1 else str(_ev1)
             # full detail block (all formatted-CSV metrics) for this stage — appended after metadata
             _write_vo_block(r, m, "vo_s2" if is_two else "vo_s1")
+            # TWO-STAGE "Avg Dist Exercise" (the Variability column) — the two-stage analogue of the
+            # agreement-side categorical mean_index_distance (filled at vo_s1_blk_var_dist from the
+            # agreement JSON). The stage-2 JSON carries per_exercise_metrics[*].overall_severity_mae
+            # = the mean categorical index-distance between the reasoner's severity answer and GT for
+            # that exercise (same units/range as the single-stage side). Mean OVER exercises (the
+            # column reads "…Exercise" → per-exercise mean, not the pooled overall). Distinct '' if
+            # no per-exercise severity data (never fabricate). 2026-07-16: previously hardcoded blank.
+            if is_two:
+                try:
+                    _pem = (d.get("per_exercise_metrics") or {})
+                    _md = [ev["overall_severity_mae"] for ev in _pem.values()
+                           if isinstance(ev, dict)
+                           and isinstance(ev.get("overall_severity_mae"), (int, float))]
+                    if _md:
+                        r["vo_s2_blk_var_dist"] = round(sum(_md) / len(_md), 4)
+                except Exception:
+                    pass
             # VO USAGE (two-stage only, 2026-07-07): grounding proxy computed from this file's own
             # per_sample_results. Shuffled control = each VO block scored against the NEXT sample's
             # trace (deterministic shift-by-1); headroom = mean − control is the readable signal
