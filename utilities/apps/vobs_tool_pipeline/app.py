@@ -60,13 +60,27 @@ except Exception as _e:  # loud, not fatal — per-row rendering still works
     summarize_step_metrics = None
     _SUMMARIZE_IMPORT_ERROR = repr(_e)
 
+# The CLI previewer's per-sample text renderer — REUSED for the app's "download
+# this sample as .txt" so the download is byte-for-byte the /preview-output view
+# (single source of truth; the reasoning fields we added live in that module).
+try:
+    from preview_tool_sft_pipeline import render_sample as _render_sample_txt  # noqa: E402
+    _PREVIEW_IMPORT_ERROR = None
+except Exception as _e:  # loud, not fatal — download just degrades to a JSON dump
+    _render_sample_txt = None
+    _PREVIEW_IMPORT_ERROR = repr(_e)
+
 import gradio as gr  # noqa: E402
 
 DATASET_ROOT = os.environ.get(
     "DATASET_ROOT", "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k")
 DEFAULT_JSONL = os.environ.get(
     "DEFAULT_JSONL",
-    "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_selfdesc_0715/smoke.jsonl")
+    # smoke_final_0715 = the canonical inspection run: all 5 flavours + every
+    # 2026-07-15 fix (inline judge, step_metrics, self-describing frames, regen
+    # change-ratio, E multi-call prompt). The ↻ Runs button + dropdown still let
+    # you pick any other run under DATASET_ROOT.
+    "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_final_0715/smoke.jsonl")
 VIDEO_CACHE_DIR = os.environ.get(
     "VIDEO_CACHE_DIR", "/mnt/data/sgsilva/tmp/vobs_tool_pipeline_videos")
 
@@ -126,6 +140,214 @@ def discover_runs() -> List[str]:
 
 
 # ---------------------------------------------------------------------------
+# App Guidance — plain-language glossary of the workflow's vocabulary + the
+# live workflow diagram, so someone who doesn't know the pipeline can read the
+# app. The diagram is the CANONICAL .mmd from the repo (single source of truth —
+# it updates when the pipeline does), rendered client-side by mermaid.js.
+# ---------------------------------------------------------------------------
+_WORKFLOW_MMD = os.path.join(_VISUAL_OBS_DIR, "workflow_tool_use.mmd")
+
+
+def _read_workflow_mmd() -> str:
+    try:
+        with open(_WORKFLOW_MMD) as fh:
+            return fh.read()
+    except Exception as e:  # loud, not fatal
+        return f"%% could not read {_WORKFLOW_MMD}: {e!r}"
+
+
+def guidance_html() -> str:
+    """The App Guidance tab: what every idea in this app means, then the live
+    workflow diagram. Read straight from the .mmd so it can't drift."""
+    import html as _html
+    mmd = _read_workflow_mmd()
+    mmd_esc = _html.escape(mmd)
+
+    # Render the diagram inside an <iframe srcdoc> (2026-07-15 fix): Gradio's
+    # gr.HTML sanitizes component HTML and STRIPS <script> tags, so an inline
+    # mermaid.js loader never runs → the diagram didn't render. An iframe's srcdoc
+    # is an isolated document Gradio does NOT sanitize, so the mermaid <script>
+    # executes inside it. The mermaid source goes in a <pre class="mermaid"> and we
+    # escape it for HTML; the whole srcdoc is then attribute-escaped (&quot; etc.).
+    # Zoom controls live INSIDE the iframe (the sandbox isolates it, so parent
+    # JS can't reach in): a sticky toolbar of +/−/reset buttons scales the
+    # rendered SVG via CSS transform. The scroll container keeps the enlarged
+    # diagram pannable instead of clipping it.
+    inner_doc = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<style>"
+        "body{margin:0;background:#fff;font-family:Helvetica,Arial,sans-serif}"
+        "#bar{position:sticky;top:0;z-index:10;background:#f8fafc;"
+        "border-bottom:1px solid #e2e8f0;padding:6px 10px;display:flex;"
+        "gap:6px;align-items:center}"
+        "#bar button{font-size:15px;font-weight:600;cursor:pointer;"
+        "border:1px solid #cbd5e1;border-radius:6px;background:#fff;"
+        "padding:2px 10px;min-width:34px}"
+        "#bar span{color:#64748b;font-size:12px}"
+        # grab/grabbing cursor + no text-selection while dragging to pan
+        "#scroll{overflow:auto;padding:8px;cursor:grab;user-select:none}"
+        "#scroll.dragging{cursor:grabbing}"
+        "#zoom{transform-origin:top left;transition:transform .08s}"
+        ".mermaid{padding:8px}"
+        # only stop foreignObject from CLIPPING; do NOT force-wrap the label text
+        # (word-break/overflow-wrap:anywhere with wrap:true collapsed the label to
+        # ~1 char wide → per-character vertical text, 2026-07-16 regression). The
+        # .mmd already uses explicit <br/> breaks, so leave label flow alone.
+        ".mermaid foreignObject{overflow:visible}"
+        ".mermaid .nodeLabel{white-space:nowrap}"
+        "</style></head><body>"
+        "<div id='bar'><button id='zout'>−</button>"
+        "<button id='zin'>+</button><button id='zrst'>reset</button>"
+        "<span id='zlbl'>100%</span></div>"
+        "<div id='scroll'><div id='zoom'>"
+        f"<pre class='mermaid'>{mmd_esc}</pre>"
+        "</div></div>"
+        "<script type='module'>"
+        "import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';"
+        # htmlLabels renders each label as HTML (honours the .mmd's <br/> breaks) and
+        # sizes the box to the text — no clipping. Do NOT set wrap:true here: it makes
+        # mermaid recompute label width and, with the label CSS, collapsed nodes to
+        # 1-char-wide vertical text (2026-07-16 regression). padding gives edge room.
+        "mermaid.initialize({startOnLoad:true,securityLevel:'loose',"
+        "flowchart:{htmlLabels:true,padding:12}});"
+        "let z=1;const zt=document.getElementById('zoom'),"
+        "lbl=document.getElementById('zlbl');"
+        "function apply(){zt.style.transform='scale('+z+')';"
+        "lbl.textContent=Math.round(z*100)+'%';}"
+        "document.getElementById('zin').onclick=()=>{z=Math.min(4,z+0.25);apply();};"
+        "document.getElementById('zout').onclick=()=>{z=Math.max(0.5,z-0.25);apply();};"
+        "document.getElementById('zrst').onclick=()=>{z=1;apply();};"
+        # click-and-drag to PAN the (zoomed) diagram: track pointer delta and
+        # scroll the container by it (Sandra 2026-07-16). scrollLeft/Top pan the
+        # overflow:auto container, so this works at any zoom level.
+        "const sc=document.getElementById('scroll');"
+        "let drag=false,px=0,py=0,sl=0,st=0;"
+        "sc.addEventListener('pointerdown',e=>{drag=true;px=e.clientX;py=e.clientY;"
+        "sl=sc.scrollLeft;st=sc.scrollTop;sc.classList.add('dragging');"
+        "sc.setPointerCapture(e.pointerId);});"
+        "sc.addEventListener('pointermove',e=>{if(!drag)return;"
+        "sc.scrollLeft=sl-(e.clientX-px);sc.scrollTop=st-(e.clientY-py);});"
+        "const end=e=>{drag=false;sc.classList.remove('dragging');};"
+        "sc.addEventListener('pointerup',end);"
+        "sc.addEventListener('pointercancel',end);"
+        # ctrl/cmd + wheel zooms toward the cursor; plain wheel scrolls as usual
+        "sc.addEventListener('wheel',e=>{if(!(e.ctrlKey||e.metaKey))return;"
+        "e.preventDefault();z=Math.min(4,Math.max(0.5,z+(e.deltaY<0?0.15:-0.15)));apply();},"
+        "{passive:false});"
+        "mermaid.run().then(()=>{const s=document.querySelector('svg');"
+        "if(s){s.style.maxWidth='none';}apply();});"
+        "</script></body></html>"
+    )
+    srcdoc = _html.escape(inner_doc, quote=True)
+    iframe = (f"<iframe srcdoc=\"{srcdoc}\" "
+              "style='width:100%;height:1600px;border:1px solid #e2e8f0;"
+              "border-radius:8px;background:#fff' "
+              "sandbox='allow-scripts'></iframe>")
+
+    def row(term, meaning):
+        return (f"<tr><td style='padding:6px 12px;vertical-align:top;white-space:nowrap;"
+                f"font-weight:600;color:#1e1b4b'>{term}</td>"
+                f"<td style='padding:6px 12px;color:#334155'>{meaning}</td></tr>")
+
+    def bullets(intro, items):
+        """A cell rendered as a short intro + a bulleted list, so dense
+        multi-item fields (drop reasons, judge tags) read line-by-line instead
+        of as a run-on paragraph (Sandra 2026-07-16)."""
+        lis = "".join(f"<li style='margin:2px 0'>{it}</li>" for it in items)
+        head = f"{intro}<br>" if intro else ""
+        return (f"{head}<ul style='margin:4px 0 0;padding-left:18px;"
+                f"list-style:disc'>{lis}</ul>")
+
+    flavors = "".join(row(t, m) for t, m in [
+        ("A · zero-call", "The model grades from the video ALONE and never calls the tool. Harvested from a free-choice pool — kept only when the teacher <i>naturally</i> chose not to call. The most common 'normal' behaviour."),
+        ("B · one call, many Q", "One tool call that batches several questions at once. The everyday tool-use shape."),
+        ("C · spot wrong answer", "The tool is deliberately fed a plausible-but-WRONG answer; a good C trace NOTICES it, distrusts it, and grades correctly anyway. Teaches skepticism of the tool."),
+        ("D · one call, one Q", "A single call asking the single most useful question. The minimal tool use."),
+        ("E · several calls", "Ask, read the answer, then ask again in light of it — genuine iterative querying. <b>RARE by design (~5% of the mix)</b>: multi-call is a situational, 'the model is genuinely confused' behaviour, not a habit. If the final model never multi-calls, that's fine."),
+    ])
+
+    stages = "".join(row(t, m) for t, m in [
+        ("① Generation", "The 397B teacher writes the reasoning trace, best-of-K tries (K=16), stopping early when it exactly matches the correct grade (severity-exact, not just presence)."),
+        ("② Rewrite — stage-2 GT-align", "If the trace's grade isn't already correct, re-reason it onto the correct grade (with the rep's video attached). A clip can OPT OUT instead of laundering — A emits <code>[CANNOT_GROUND_GT]</code>, B/C/D/E emit <code>[CANNOT_RECONCILE_GT]</code> → dropped with a distinct sentinel rather than fabricating cues. Also condenses a rambling &lt;think&gt;. (Distinct from the STAGE-4 repair that runs after the judge — see regen.)"),
+        ("③ Judging (inline) — 3-judge cascade", bullets(
+            "The Gate-3 judge is a CASCADE of three specialists (2026-07-16), each its own axis:", [
+            "<b>J2 format/coherence</b> runs first (cheapest) — a malformed clip is dropped before the rest.",
+            "<b>J1 grounding/laundering</b> — is every grade EARNED from a named video cue, or reverse-engineered from the target?",
+            "<b>J3 flavour-purpose</b> — does the tool-use match this flavour?",
+            "A clip is kept only if ALL THREE pass. On any fail → one shared regen with the failing tags' hints → the whole cascade RE-runs; still failing → EXCLUDED. All in the SAME run.",
+            "(Legacy single 15-tag judge still available via <code>--judge-mode single</code>.)",
+        ])),
+        ("Up to ~7+ calls", "One clip can cost several teacher calls: generate → rewrite → cascade (J2+J1+J3) → on fail regen → re-run cascade, up to the regen budget (<code>--max-regen</code>)."),
+    ])
+
+    fields = "".join(row(t, m) for t, m in [
+        ("flavor", "Which of A–E behaviours this clip teaches."),
+        ("prompt_origin", "<code>forced</code> = generated on this flavour's own prompt. <code>free_choice</code> = an A-pool clip that DID call the tool, re-routed to its observed flavour (B/D/E) — the behaviour is the signal, so the compute isn't wasted."),
+        ("drop_reason", bullets(
+            "Why a clip was set aside (never silently thrown away — kept for inspection):", [
+            "<b>Judge drops:</b> <code>judge:regen_still_failing</code> (a cascade pass kept failing) · <code>judge:regen_error</code> (the rewrite's own post-check rejected the repair — e.g. <code>tool_parts_changed</code>, <code>final_neq_gt</code>) · <code>judge:parse_failed</code> / <code>judge_error</code>.",
+            "<b>Opt-out drops</b> (teacher declined to launder): <code>sample_excluded_gt_ungroundable</code> (A) · <code>sample_excluded_gt_unreconcilable</code> (B/C/D/E).",
+            "<b>Other:</b> <code>C_no_corrupted_served</code>.",
+        ])),
+        ("judge_failed_pass", "Which specialist errored / parse-failed (<code>format</code> | <code>grounding</code> | <code>flavor_purpose</code>) when the whole cascade bailed. (<code>judge_mode</code> is always <code>complementary</code> now — the legacy single judge was removed.)"),
+        ("judge cascade tags — ALL possible flags (why a clip failed)", bullets(
+            "Each specialist has its OWN closed tag set; every flag it can raise:", [
+            "<b>J2 format</b> — <code>structured_answer_leak</code> full report block inside &lt;think&gt; · <code>fabricated_tool_exchange</code> narrated a tool call that never happened · <code>too_long</code> waffle-loop think · <code>too_short</code> barely reasons · <code>incoherent</code> final doesn't follow the reasoning · <code>malformed_final</code> wrong section format.",
+            "<b>J1 grounding</b> — <code>ungrounded_conclusion</code> score not established from the video · <code>fabricated_detail</code> invented cue · <code>unearned_reversal</code> score flips with no new observation · <code>override_without_cue</code> overrode a tool answer with no named cue · <code>target_restated</code> cue just paraphrases the target · <code>source_leak</code> implies it was handed the answer.",
+            "<b>J3 flavour-purpose</b> (per flavour):",
+            "&nbsp;&nbsp;• <b>A</b> confident non-use — <code>unexpected_tool_call</code> called the tool (A is zero-call) · <code>fabricated_tool_narration</code> narrated a phantom consult · <code>should_have_asked</code> scored through admitted uncertainty · <code>rule_narration</code> cited the rule as its motive.",
+            "&nbsp;&nbsp;• <b>B</b> batching — <code>over_batched</code> queried unneeded points · <code>premature_drafting_turn1</code> drafted the answer in turn-1 · <code>tool_answer_ignored</code> got an answer then scored against it · <code>rule_narration</code> cited the rule.",
+            "&nbsp;&nbsp;• <b>C</b> notice+override — <code>silent_endorsement</code> accepted a corrupted answer · <code>unaddressed_corruption</code> never engaged a corrupted cell · <code>false_alarm</code> distrusted a correct answer · <code>blanket_distrust</code> dismissed the whole tool · <code>rule_narration</code> cited the rule.",
+            "&nbsp;&nbsp;• <b>D</b> single-Q — <code>filler_single_q</code> asked a non-uncertain question · <code>premature_drafting_turn1</code> drafted in turn-1 · <code>tool_oracle_override</code> reversed a confident read to obey the tool · <code>multi_question_creep</code> asked &gt;1 question · <code>rule_narration</code> cited the rule.",
+            "&nbsp;&nbsp;• <b>E</b> iteration — <code>preplanned_split</code> front-planned round-2 in turn-1 · <code>non_reactive_followup</code> follow-up ignores round-1 answers · <code>manufactured_followup</code> fired a needless 2nd round · <code>report_drafting_turn1</code> drafted the assessment in turn-1 · <code>rule_narration</code> cited the rule.",
+        ])),
+        ("is_perfect vs severity_exact vs f1", bullets(
+            "Three signals, increasing strictness:", [
+            "<b>is_perfect</b> = the right errors are PRESENT/ABSENT (severity binarized at &gt;1) — a grade of 5 where GT is 2 still counts 'perfect' here.",
+            "<b>severity_exact</b> = every severity MAGNITUDE matches GT — the real 'is this grade correct?' signal (2026-07 audit).",
+            "<b>full_exact</b> = also matches Effectiveness+Injury (tri-state: True / False / None-when-unknown, never a silent True).",
+            "<b>f1</b> can read 0.0 on a clip with NO graded errors while is_perfect is still true — NOT a failure.",
+            "➜ Trust <b>severity_exact</b> for correctness; is_perfect overstates it (~1.5× on the 0715 smoke).",
+        ])),
+        ("natural_severity_exact", "Whether the BEST natural (pre-rewrite) attempt already matched GT magnitudes — the RFT-vs-repair signal. High = the flavour earns GT without rewriting (RFT-lean); low = it needs the repair pass."),
+        ("step_metrics", "Per-stage panel on every clip: prompt/output size (chars + tokens), the grade-score AT each stage (should stay perfect after generation), how much the REWRITE and the JUDGE-regen changed the answer (changed_ratio 0→1), wall-time, and #model-calls."),
+        ("changed_ratio", "How much a step rewrote the answer: 0.0 = identical, 1.0 = fully replaced. High rewrite changed_ratio = the teacher's first draft needed heavy repair."),
+        ("re-route", "An A-pool clip that called the tool becomes a B/D/E clip (not dropped) — see prompt_origin=free_choice."),
+        ("regen — stage-4 repair", "The judge-triggered rewrite: when ANY cascade pass fails, a STAGE-4 repair runs — keyed to the failing pass's class (<code>format</code> keeps grade+tool turns identical · <code>grounding</code> re-derives the flagged score from a named cue · <code>workflow</code> restructures the tool rounds), then the WHOLE cascade re-checks it. Distinct from the stage-2 GT-align rewrite (②). Bounded by <code>--max-regen</code>."),
+    ])
+
+    tbl = ("style='border-collapse:collapse;width:100%;font-size:14px;"
+           "border:1px solid #e2e8f0;border-radius:8px;overflow:hidden'")
+    section = lambda title, body: (
+        f"<h3 style='color:#1e1b4b;margin:18px 0 8px'>{title}</h3>"
+        f"<table {tbl}>{body}</table>")
+
+    return f"""
+<div style="max-width:1100px;line-height:1.5">
+  <p style="color:#475569;font-size:15px">
+    This app inspects the <b>VObs-tool-SFT pipeline</b> — how a VLM is taught
+    <b>when to consult a visual-observation tool</b> while grading physiotherapy videos.
+    Below: what every term in this app means, then the live workflow diagram.
+  </p>
+  {section("The five flavours (tool-use behaviours)", flavors)}
+  {section("The three stages (one run, up to 5 teacher calls)", stages)}
+  {section("Fields &amp; metrics you'll see on each clip", fields)}
+
+  <h3 style="color:#1e1b4b;margin:22px 0 8px">The full workflow</h3>
+  <p style="color:#64748b;font-size:13px;margin:0 0 8px">
+    Source of truth: <code>visual_obs/workflow_tool_use.mmd</code> — rendered live, so it
+    stays current as the pipeline changes.</p>
+  {iframe}
+  <details style="margin-top:8px">
+    <summary style="cursor:pointer;color:#64748b;font-size:13px">diagram source (mermaid)</summary>
+    <pre style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;
+                font-size:12px;overflow:auto">{mmd_esc}</pre>
+  </details>
+</div>
+"""
+
+
+# ---------------------------------------------------------------------------
 # Filters — choices derived from the data, never hardcoded
 # ---------------------------------------------------------------------------
 
@@ -135,7 +357,7 @@ def _choices(field: str) -> List[str]:
 
 
 def disposition_choices() -> List[str]:
-    # judge-excluded = dropped specifically by the Gate-4 judge (drop_reason
+    # judge-excluded = dropped specifically by the Gate-3 judge (drop_reason
     # sentinel `judge:<verdict_kind>`) — a subset of dropped worth first-class access.
     return [ALL, "kept", "dropped", "judge-excluded"]
 
@@ -178,9 +400,12 @@ def _esc(x) -> str:
 
 def _pre(text, empty="<not present on row>") -> str:
     body = _esc(text) if (text is not None and text != "") else _esc(empty)
+    # font-size is driven by the --pre-fs CSS var (set live by the "Prompt text
+    # size" slider); falls back to 12px if the var is absent.
     return (f"<pre style='white-space:pre-wrap;word-break:break-word;"
             f"background:var(--background-fill-secondary);padding:10px;"
-            f"border-radius:6px;max-height:520px;overflow:auto;font-size:12px'>"
+            f"border-radius:6px;max-height:520px;overflow:auto;"
+            f"font-size:var(--pre-fs,12px)'>"
             f"{body}</pre>")
 
 
@@ -247,9 +472,17 @@ def _fmt_cell(v) -> str:
         ok = v.get("is_perfect")
         f1 = v.get("f1")
         f1s = "—" if f1 is None else f"{f1:.3f}"
+        # severity_exact is the magnitude-truth (2026-07 audit); show it when the
+        # score dict carries it — a presence-perfect but severity-wrong grade is
+        # the exact case the old is_perfect-only display hid.
+        sev = v.get("is_severity_exact")
         if ok:
             note = " <small>(no GT errors)</small>" if f1 == 0.0 else ""
-            return f"✅ perfect <small>f1={f1s}</small>{note}"
+            if sev is False:
+                return (f"⚠️ <b>presence-ok, severity WRONG</b> "
+                        f"<small>f1={f1s} (magnitude ≠ GT)</small>{note}")
+            sev_tag = " <small>· severity_exact ✓</small>" if sev else ""
+            return f"✅ perfect <small>f1={f1s}</small>{sev_tag}{note}"
         return f"<span style='color:#b91c1c;font-weight:700'>✗ not perfect</span> <small>f1={f1s}</small>"
     if isinstance(v, dict):
         return _esc(json.dumps(v, default=str))
@@ -360,49 +593,180 @@ def render_trail(r: Dict) -> str:
     if r.get("rewrite_prompt"):
         meta = (f"kind={_esc(r.get('rewrite_kind'))} · applied={r.get('rewrite_applied')} · "
                 f"failed_reason={_esc(r.get('rewrite_failed_reason'))}")
+        # The teacher's own <think> for the rewrite — 397B is in thinking mode, so
+        # this is the natural reasoning BEFORE the [REWRITTEN REASONING] output.
+        # Captured separately by the producer (rewrite_reasoning); shown open so
+        # it's visible (it's the thing that was previously invisible).
+        rr = r.get("rewrite_reasoning")
+        think_block = _details(
+            "② REWRITE — teacher &lt;think&gt; (natural reasoning before the rewrite)",
+            _pre(rr, empty="<no separate reasoning captured — server ran non-thinking, "
+                 "or think was inline in the raw response below>"),
+            open_=True) if "rewrite_reasoning" in r else ""
         out.append(
             "<h4>② Rewrite — GT-align pass (the rep VIDEO is attached in the real call)</h4>"
             f"<div style='font-size:13px;margin-bottom:4px'>{meta}</div>"
+            + think_block
             + _details("② REWRITE PROMPT (verbatim, incl. embedded transcript)",
                        _pre(r.get("rewrite_prompt")))
-            + _details("② REWRITE RAW RESPONSE", _pre(r.get("rewrite_raw_response"))))
+            + _details("② REWRITE RAW RESPONSE (parsed content — post-think)",
+                       _pre(r.get("rewrite_raw_response"))))
     elif "rewrite_applied" in r:
         out.append("<h4>② Rewrite</h4><div style='opacity:.7'>no rewrite — natural "
                    f"generation already on GT (rewrite_applied={r.get('rewrite_applied')})</div>")
 
-    # ③ JUDGE (+ regen) — one block per judge_attempts entry, depth is data-driven
+    # ③ JUDGE (+ regen) — one block per judge_attempts entry, depth is data-driven.
+    # TWO attempt shapes (--judge-mode, 2026-07-16):
+    #   single       — each attempt carries a FLAT judge_prompt/judge_raw_response/
+    #                   judge_verdict (the legacy 15-tag flavour judge).
+    #   complementary — a CASCADE attempt carries `cascade: [{judge_key, pass, tags,
+    #                   notes, judge_prompt, judge_raw_response, judge_reasoning}, ...]`
+    #                   (one entry per specialist J2 format / J1 grounding / J3
+    #                   flavour-purpose); a REGEN attempt carries regen_prompt/
+    #                   regen_union_tags. Render EACH of the (up to 3) passes so the
+    #                   app shows all three judges (Sandra 2026-07-16), and don't fall
+    #                   back to the flat fields (which are absent → "not present").
     jatt = r.get("judge_attempts") or []
+    _JKEY_LABEL = {"format": "J2 FORMAT/COHERENCE", "grounding": "J1 GROUNDING/LAUNDERING",
+                   "flavor_purpose": "J3 FLAVOUR-PURPOSE"}
     if jatt:
-        parts = [f"<div style='font-size:13px;margin-bottom:4px'>final verdict: "
-                 f"<b>{_esc(r.get('judge_verdict_kind'))}</b> · tags={_esc(r.get('judge_tags'))} · "
-                 f"accepted_after_regen={r.get('judge_accepted_after_regen')} · "
-                 f"notes={_esc(r.get('judge_notes'))}</div>"]
+        _mode = r.get("judge_mode", "single")
+        _fp = r.get("judge_failed_pass")
+        header = (f"<div style='font-size:13px;margin-bottom:4px'>mode: "
+                  f"<b>{_esc(_mode)}</b> · final verdict: "
+                  f"<b>{_esc(r.get('judge_verdict_kind'))}</b> · tags={_esc(r.get('judge_tags'))} · "
+                  f"accepted_after_regen={r.get('judge_accepted_after_regen')}"
+                  + (f" · failed_pass=<b>{_esc(_fp)}</b>" if _fp else "")
+                  + f" · notes={_esc(r.get('judge_notes'))}</div>")
+        parts = [header]
         for a in jatt:
             n = a.get("attempt")
-            if a.get("regen_prompt"):
+            # --- REGEN entry (shared between modes) ---
+            if a.get("regen_prompt") or a.get("regen_union_tags") is not None:
+                ut = a.get("regen_union_tags")
+                rr = a.get("regen_reason")
+                tag = (f" → union_tags={ut}" if ut is not None else "")
+                tag += (f" → <b>{_esc(rr)}</b>" if rr else "")
                 parts.append(_details(
                     f"③ attempt {n} — REGEN PROMPT (rewrite re-run with the judge's "
-                    "correction hint)", _pre(a["regen_prompt"])))
-                parts.append(_details(f"③ attempt {n} — REGEN RAW RESPONSE",
+                    f"correction hint){_esc(tag)}",
+                    _pre(a.get("regen_prompt"), empty="<regen failed before a prompt was built>")))
+                if "regen_reasoning" in a:
+                    parts.append(_details(
+                        f"③ attempt {n} — REGEN teacher &lt;think&gt; (natural reasoning)",
+                        _pre(a.get("regen_reasoning"),
+                             empty="<no separate reasoning captured>"), open_=True))
+                parts.append(_details(f"③ attempt {n} — REGEN RAW RESPONSE (post-think)",
                                       _pre(a.get("regen_raw_response"))))
+                continue
+            # --- CASCADE entry (complementary mode): render each specialist pass ---
+            if "cascade" in a:
+                passes = a.get("cascade") or []
+                shown = ", ".join(p.get("judge_key", "?") for p in passes)
+                parts.append(f"<div style='font-size:12px;opacity:.75;margin:8px 0 4px'>"
+                             f"③ attempt {n} — cascade ran: <b>{_esc(shown)}</b> "
+                             f"(J2 first; a J2 fail short-circuits J1/J3)</div>")
+                # per-judge SUB-PANEL: each specialist gets its own colored box so
+                # J2 / J1 / J3 read as distinct sub-groups, not one flat list
+                # (Sandra 2026-07-16). bg tints + accent border per judge_key.
+                _JCOLOR = {  # (accent border, bg tint, chip text)
+                    "format":        ("#d97706", "#fffbeb", "#92400e"),  # amber  J2
+                    "grounding":     ("#2563eb", "#eff6ff", "#1e3a8a"),  # blue   J1
+                    "flavor_purpose":("#7c3aed", "#f5f3ff", "#5b21b6"),  # purple J3
+                }
+                for p in passes:
+                    key = p.get("judge_key")
+                    lbl = _JKEY_LABEL.get(key, key or "?")
+                    acc, bg, chip = _JCOLOR.get(key, ("#94a3b8", "#f8fafc", "#334155"))
+                    kind = p.get("kind")
+                    if kind == "ok":
+                        ok = p.get("pass")
+                        badge = ("✓ PASS" if ok else "✗ FAIL")
+                        badge_bg = "#dcfce7" if ok else "#fee2e2"
+                        badge_fg = "#166534" if ok else "#991b1b"
+                        tagline = f" tags={p.get('tags')}" if p.get("tags") else ""
+                    else:  # judge_error / parse_failed on this pass
+                        badge = f"⚠ {kind}"; badge_bg = "#fef3c7"; badge_fg = "#92400e"
+                        tagline = f" {p.get('error') or p.get('reason')}"
+                    inner = []
+                    inner.append(_details(
+                        f"{lbl} PROMPT (verbatim)", _pre(p.get("judge_prompt"))))
+                    if "judge_reasoning" in p:
+                        inner.append(_details(
+                            f"{lbl} teacher &lt;think&gt;",
+                            _pre(p.get("judge_reasoning"),
+                                 empty="<no separate reasoning captured>"), open_=True))
+                    inner.append(_details(
+                        f"{lbl} RAW RESPONSE (verdict — post-think)",
+                        _pre(p.get("judge_raw_response"))))
+                    if p.get("notes"):
+                        inner.append(f"<div style='font-size:12px;opacity:.85;"
+                                     f"margin:4px 0 2px'>notes: {_esc(p.get('notes'))}</div>")
+                    header = (f"<div style='font-weight:700;font-size:13px;color:{chip};"
+                              f"margin:0 0 4px;display:flex;align-items:center;gap:8px'>"
+                              f"<span>{_esc(lbl)}</span>"
+                              f"<span style='background:{badge_bg};color:{badge_fg};"
+                              f"border-radius:10px;padding:1px 8px;font-size:11px'>"
+                              f"{badge}</span>"
+                              f"<span style='font-weight:400;opacity:.7;font-size:11px'>"
+                              f"{_esc(tagline)}</span></div>")
+                    parts.append(
+                        f"<div style='border:1px solid {acc}33;border-left:3px solid {acc};"
+                        f"background:{bg};border-radius:8px;padding:8px 10px;margin:0 0 8px'>"
+                        f"{header}{''.join(inner)}</div>")
+                continue
+            # --- FLAT single-judge entry (legacy mode) ---
             v = a.get("judge_verdict") or {}
             vline = (f" → pass={v.get('pass')} tags={v.get('tags')}"
                      if v else " → <no parsed verdict>")
             parts.append(_details(f"③ attempt {n} — JUDGE PROMPT (verbatim){_esc(vline)}",
                                   _pre(a.get("judge_prompt"))))
-            parts.append(_details(f"③ attempt {n} — JUDGE RAW RESPONSE",
+            if "judge_reasoning" in a:
+                parts.append(_details(
+                    f"③ attempt {n} — JUDGE teacher &lt;think&gt; (natural reasoning)",
+                    _pre(a.get("judge_reasoning"),
+                         empty="<no separate reasoning captured>"), open_=True))
+            parts.append(_details(f"③ attempt {n} — JUDGE RAW RESPONSE (verdict — post-think)",
                                   _pre(a.get("judge_raw_response"))))
-        out.append("<h4>③ Gate-4 judge (+ regen)</h4>" + "".join(parts))
+        _title = "③ Gate-3 judge — 3-specialist cascade (+ stage-4 repair)"
+        out.append(f"<h4>{_title}</h4>" + "".join(parts))
     else:
-        out.append("<h4>③ Gate-4 judge</h4><div style='opacity:.7'>not run for this row "
+        out.append("<h4>③ Gate-3 judge</h4><div style='opacity:.7'>not run for this row "
                    "(--no-judge run, or dropped before the judge)</div>")
 
     if not out:
         return "<div style='opacity:.7'>no pipeline-trail fields on this row</div>"
-    return "".join(out)
+    # Wrap each stage (each `out` entry begins with its own <h4>) in a spaced,
+    # bordered card so the three stages read as distinct blocks instead of running
+    # together (Sandra 2026-07-16). A left accent bar colour-codes the stage.
+    _ACCENT = {"①": "#16a34a", "②": "#2563eb", "③": "#ea580c"}
+    cards = []
+    for blk in out:
+        mark = next((m for m in _ACCENT if m in blk[:8]), None)
+        bar = _ACCENT.get(mark, "#94a3b8")
+        cards.append(
+            f"<section style='margin:0 0 18px;padding:10px 14px;"
+            f"border:1px solid #e2e8f0;border-left:4px solid {bar};"
+            f"border-radius:8px;background:#fff'>{blk}</section>")
+    return "".join(cards)
 
 
 def render_final_messages(r: Dict) -> str:
+    # A DROPPED row ships NOTHING — SFT trains on zero rows for it, so the
+    # "final shipped messages" panel must NOT present its (failed) last trace as
+    # if it trains (Sandra 2026-07-16). The `messages` field still carries the
+    # last attempt for INSPECTION on the trail above; here we show the shipped
+    # state, which for a drop is empty. `drop_reason` set == not shipped.
+    dropped = r.get("drop_reason") not in (None, "")
+    if dropped:
+        return ("<div style='color:#b91c1c;font-weight:700;font-size:14px'>"
+                "⛔ NOT shipped — this clip was DROPPED "
+                f"(<code>{_esc(r.get('drop_reason'))}</code>), so SFT trains on "
+                "NOTHING from it.</div>"
+                "<div style='opacity:.75;font-size:13px;margin-top:4px'>The failed "
+                "trace is still visible in the pipeline trail above (kept for "
+                "inspection — paid compute is never discarded), but it is NOT part "
+                "of the training set.</div>")
     msgs = r.get("messages") or []
     if not msgs:
         return ("<div style='color:#b91c1c;font-weight:700'>no `messages` on this row"
@@ -429,7 +793,7 @@ _RENDERED_KEYS = {
     "injury_risk", "judge_verdict_kind", "judge_tags", "judge_accepted_after_regen",
     "judge_notes", "judge_attempts", "step_metrics", "messages", "all_attempts",
     "generation_prompt", "raw_model_output", "rewrite_prompt", "rewrite_raw_response",
-    "rewrite_applied", "rewrite_kind", "rewrite_failed_reason",
+    "rewrite_reasoning", "rewrite_applied", "rewrite_kind", "rewrite_failed_reason",
     "video_frames", "images_path", "fps", "video_fps", "need_to_flip",
     "num_frames", "num_frames_attached", "partial_row",
 }
@@ -469,6 +833,46 @@ def show_row(abs_idx: int, disposition: str, flavor: str, origin: str, verdict: 
     return (video, vstatus, render_header(r), render_step_metrics(r),
             render_trail(r), render_final_messages(r), render_other_fields(r),
             counter, abs_idx)
+
+
+def download_sample_txt(abs_idx: int, disposition, flavor, origin, verdict):
+    """Write the CURRENTLY-DISPLAYED row to a well-formatted .txt (same layout as
+    /preview-output) and return the path for gr.File to serve. Reuses the CLI
+    previewer's render_sample — the single source of truth — so the download and
+    the terminal preview never drift. Falls back to a pretty JSON dump if that
+    module couldn't import."""
+    rows = STATE["rows"]
+    if not rows:
+        return None
+    sel = filtered(disposition, flavor, origin, verdict)
+    if abs_idx not in sel and sel:
+        abs_idx = sel[0]
+    abs_idx = max(0, min(abs_idx, len(rows) - 1))
+    r = rows[abs_idx]
+
+    lines: List[str] = []
+    w = lines.append
+    if _render_sample_txt is not None:
+        try:
+            _render_sample_txt(w, r)
+        except Exception as e:  # never a blank download — surface + dump
+            w(f"[render_sample failed: {e!r} — full JSON below]")
+            w(json.dumps(r, indent=2, default=str, ensure_ascii=False))
+    else:
+        w(f"[preview_tool_sft_pipeline import failed: {_PREVIEW_IMPORT_ERROR} — "
+          "raw JSON dump]")
+        w(json.dumps(r, indent=2, default=str, ensure_ascii=False))
+    # +disposition/drop info at the very top so a dropped sample is self-labelling.
+    disp = r.get("_disposition")
+    head = (f"# disposition={disp}  drop_reason={r.get('drop_reason')}  "
+            f"judge_verdict_kind={r.get('judge_verdict_kind')}\n")
+
+    os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
+    stem = f"{r.get('flavor')}_{r.get('session_id')}_{r.get('rep_index')}_{disp}"
+    stem = "".join(c if (c.isalnum() or c in "_-") else "_" for c in str(stem))
+    out = Path(VIDEO_CACHE_DIR) / f"sample_{stem}.txt"
+    out.write_text(head + "\n".join(lines), encoding="utf-8")
+    return str(out)
 
 
 def nav(delta: Optional[int], abs_idx: int, disposition, flavor, origin, verdict):
@@ -605,6 +1009,10 @@ def build_ui() -> gr.Blocks:
             run_dd = gr.Dropdown(choices=discover_runs(), value=None,
                                  label=f"Runs under {DATASET_ROOT} (newest first)",
                                  scale=3, allow_custom_value=True)
+            # Re-scan the dataset root for NEW runs produced after the app started
+            # (e.g. a fresh smoke) — without this the dropdown is frozen at launch
+            # time, so a just-produced run wouldn't be selectable until restart.
+            rescan_btn = gr.Button("↻ Runs", scale=1)
             path_tb = gr.Textbox(value=DEFAULT_JSONL, label="…or kept-rows JSONL path "
                                  "(sibling .dropped.jsonl auto-loads)", scale=3)
             load_btn = gr.Button("Load / Reload", variant="primary", scale=1)
@@ -623,6 +1031,21 @@ def build_ui() -> gr.Blocks:
                     nav_widgets.make_nav_row()
                 jump_input, jump_btn = nav_widgets.make_jump_row("Jump to row index (0-based)")
 
+                # Prompt text size — sets the --pre-fs CSS var live (client-side,
+                # no server round-trip) so every prompt/output <pre> scales.
+                with gr.Row():
+                    pre_fs = gr.Slider(8, 28, value=12, step=1,
+                                       label="Prompt text size (px)", scale=3)
+                    dl_btn = gr.Button("⬇ Download this sample (.txt)", scale=1)
+                pre_fs.change(
+                    None, pre_fs, None,
+                    js="(v)=>{document.documentElement.style.setProperty("
+                       "'--pre-fs', v+'px'); return [];}")
+                # Full formatted dump of the displayed sample (same layout as
+                # /preview-output). Appears when the button is clicked.
+                dl_file = gr.File(label="sample .txt (all data for this one sample)",
+                                  visible=True)
+
                 header_html = gr.HTML()
                 with gr.Row():
                     with gr.Column(scale=2):
@@ -637,7 +1060,7 @@ def build_ui() -> gr.Blocks:
                 trail_html = gr.HTML(label="pipeline trail")
                 gr.Markdown("**FINAL shipped `messages`** — what SFT actually trains on")
                 final_html = gr.HTML()
-                with gr.Accordion("All row fields not rendered above (future-proof dump)",
+                with gr.Accordion("All row fields not rendered above",
                                   open=False):
                     other_html = gr.HTML()
 
@@ -646,6 +1069,11 @@ def build_ui() -> gr.Blocks:
                                          variant="primary")
                 overview_html = gr.HTML()
                 overview_plot = gr.Plot(label="change-ratio distributions per flavor")
+
+            with gr.Tab("App Guidance"):
+                # Plain-language glossary of every idea in this app + the live
+                # workflow diagram (read from the canonical .mmd, so it can't drift).
+                gr.HTML(guidance_html())
 
         idx_state = gr.State(0)
 
@@ -665,6 +1093,13 @@ def build_ui() -> gr.Blocks:
                        [load_status, disp_dd, flavor_dd, origin_dd, verdict_dd]
                        + row_outputs)
 
+        # Re-discover runs (newest first) and repopulate the dropdown, selecting the
+        # newest so a fresh smoke is one click away. Does NOT load — user hits Load.
+        def do_rescan():
+            runs = discover_runs()
+            return gr.update(choices=runs, value=(runs[0] if runs else None))
+        rescan_btn.click(do_rescan, [], [run_dd])
+
         for dd in filter_inputs:
             dd.change(lambda i, d, f, o, v: show_row(i, d, f, o, v),
                       [idx_state] + filter_inputs, row_outputs)
@@ -678,6 +1113,9 @@ def build_ui() -> gr.Blocks:
                           [idx_state] + filter_inputs, row_outputs)
         jump_btn.click(lambda j, d, f, o, v: show_row(int(j), d, f, o, v),
                        [jump_input] + filter_inputs, row_outputs)
+
+        dl_btn.click(download_sample_txt,
+                     [idx_state] + filter_inputs, [dl_file])
 
         overview_btn.click(overview, [], [overview_html, overview_plot])
 
