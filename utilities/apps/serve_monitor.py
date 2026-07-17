@@ -161,6 +161,22 @@ def fetch_served_model(server: str) -> str:
     return ""
 
 
+def resolve_default_server() -> tuple:
+    """Pick a server to open with: DEFAULT_SERVER if it's actually alive, else
+    fall back to a live cluster scan for MY_USER's most-recently-seen server.
+    Never trust a hardcoded hostname blindly — the node behind it may have been
+    reassigned to another job since the env var/default was set."""
+    if fetch_served_model(DEFAULT_SERVER):
+        return DEFAULT_SERVER, fetch_served_model(DEFAULT_SERVER)
+    _summary, results, _choices = scan_cluster()
+    mine = [r for r in results if r[3] == MY_USER]
+    if mine:
+        node, port, models, _owner = mine[0]
+        url = f"http://{node}:{port}"
+        return url, (models[0] if models else fetch_served_model(url))
+    return DEFAULT_SERVER, ""
+
+
 def _avg(m: dict, sum_key: str, count_key: str):
     c = m.get(count_key, 0.0)
     if c and c > 0:
@@ -742,7 +758,7 @@ def build():
             mon_plot = gr.Plot()
             with gr.Accordion("🖥 GPUs on this node (nvidia-smi)", open=True):
                 gpu_html = gr.HTML()
-            timer = gr.Timer(REFRESH_SECS, active=True)
+            timer = gr.Timer(REFRESH_SECS, active=False)  # activated after server resolves (demo.load)
 
         with gr.Tab("Settings & Ask"):
             set_btn = gr.Button("↻ Read settings (live + script)", variant="primary")
@@ -774,6 +790,14 @@ def build():
             return url, served, served
 
         server_box.submit(_sync_server, server_box, [server_state, model_state, model_box])
+
+        def _load_default():
+            """Runs once per page load. Re-resolves the server instead of trusting the
+            hardcoded DEFAULT_SERVER — if that host is dead (job ended, node reassigned),
+            fall back to a live scan for MY_USER's server so the app opens on a working
+            target instead of a dead one."""
+            url, served = resolve_default_server()
+            return url, served, url, served
 
         def _scan(show_all_servers):
             _summary, results, _choices = scan_cluster()
@@ -832,7 +856,18 @@ def build():
             return cfg, tail
         log_read_btn.click(_read_log, log_path, [log_config, log_tail])
 
-        demo.load(_sync_server, server_box, [server_state, model_state, model_box])
+        # Resolve the server FIRST, then run the initial monitor render off the
+        # resolved state via .then() — avoids a race where gr.Timer's first tick
+        # (which starts as soon as the page loads) fires against server_state's
+        # construction-time value (the possibly-dead DEFAULT_SERVER) before
+        # _load_default finishes updating it.
+        demo.load(
+            _load_default, None, [server_state, model_state, server_box, model_box]
+        ).then(
+            _mon, [server_state, model_state, hist_state], mon_outputs
+        ).then(
+            lambda on: gr.update(active=on), auto, timer
+        )
     return demo
 
 

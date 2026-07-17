@@ -886,6 +886,8 @@ def main():
     ap.add_argument("--logs-dir", default=DEFAULT_LOGS_DIR)
     ap.add_argument("--port", type=int, default=7875)
     ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--share", action="store_true",
+                     help="expose a public gradio-share link (expires in 1 week)")
     args = ap.parse_args()
 
     logs_dirs = [args.logs_dir] + [d for d in EXTRA_LOGS_DIRS if os.path.isdir(d)]
@@ -893,11 +895,11 @@ def main():
     print(f"[sft-dashboard] {len(state.runs)} runs from {logs_dirs}")
     demo = build_ui(state)
     try:
-        demo.launch(server_name=args.host, server_port=args.port, share=False,
+        demo.launch(server_name=args.host, server_port=args.port, share=args.share,
                     theme=gr.themes.Soft())
     except TypeError:
         # Older Gradio (<6): theme belongs on Blocks, not launch — fall back plain.
-        demo.launch(server_name=args.host, server_port=args.port, share=False)
+        demo.launch(server_name=args.host, server_port=args.port, share=args.share)
 
 
 if __name__ == "__main__":

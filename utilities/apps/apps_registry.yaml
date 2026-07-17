@@ -130,7 +130,7 @@ apps:
     venv: /home/sgsilva/vlm-post-training-home-venv/bin/python
     # DEFAULT_JSONL = kept-rows jsonl; the sibling .dropped.jsonl auto-loads.
     env:
-      DEFAULT_JSONL: /mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_selfdesc_0715/smoke.jsonl
+      DEFAULT_JSONL: /mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_stage4_0716c/smoke.jsonl
 
   reasoning-prompt:
     label: "Reasoning-trace prompt editor — TUNE dataset-GENERATION prompts (4 task formatters)"
