@@ -81,7 +81,7 @@ DEFAULT_JSONL = os.environ.get(
     # (0716b was renamed _pre_efix mid-session) — the ↻ Runs button + dropdown
     # always let you pick the actual newest run under DATASET_ROOT if this
     # default has gone stale.
-    "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_stage4_0716c/smoke.jsonl")
+    "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_team_demo_0717/smoke.jsonl")
 VIDEO_CACHE_DIR = os.environ.get(
     "VIDEO_CACHE_DIR", "/mnt/data/sgsilva/tmp/vobs_tool_pipeline_videos")
 
@@ -259,16 +259,17 @@ def guidance_html() -> str:
         "#scroll.dragging{cursor:grabbing}"
         "#zoom{transform-origin:top left;transition:transform .08s}"
         ".mermaid{padding:8px}"
-        # TEXT-OVERFLOW + READABILITY FIX (2026-07-16, definitive). We use htmlLabels
-        # (so the .mmd's <b>/<i>/&lt; markup renders — SVG-text mode showed them as
-        # LITERAL '<i>' / '&lt;think&gt;', the unreadable state in Sandra's 2nd
-        # screenshot). The overflow the FIRST screenshot showed is cured by pinning the
-        # label to a FIXED width and letting it WRAP: mermaid then measures the box at
-        # that same width, so text and box agree and nothing spills. The historical
-        # 1-char-vertical collapse came from adding word-break/overflow-wrap:break-word
-        # on TOP of wrap — so we set ONLY white-space:normal + a width, never word-break.
-        ".mermaid .nodeLabel{white-space:normal !important;"
-        "display:inline-block;max-width:260px;line-height:1.35}"
+        # TEXT-OVERFLOW + READABILITY FIX (2026-07-17, definitive). The tall skinny
+        # "one word per line" columns came from mermaid's wrap:true force-wrapping every
+        # label at its default ~200px wrappingWidth REGARDLESS of CSS max-width (mermaid
+        # bakes that width into the SVG foreignObject at render). The fix is to NOT let
+        # mermaid auto-wrap: nowrap on the label so each box sizes to its CONTENT width,
+        # and honor the .mmd's own <br> line breaks. htmlLabels stays true so <b>/<i>/&lt;
+        # markup renders (SVG-text mode showed them literally). Combined with a large
+        # wrappingWidth in the config below, boxes are now wide-and-short, not columnar.
+        ".mermaid .nodeLabel{white-space:nowrap !important;"
+        "line-height:1.4;padding:2px 6px}"
+        ".mermaid .nodeLabel br{white-space:normal}"
         ".mermaid foreignObject{overflow:visible}"
         "</style></head><body>"
         "<div id='bar'><button id='zout'>−</button>"
@@ -279,13 +280,13 @@ def guidance_html() -> str:
         "</div></div>"
         "<script type='module'>"
         "import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';"
-        # htmlLabels:true + wrap:true (2026-07-16): htmlLabels renders the .mmd's
-        # <b>/<i>/&lt; markup properly (SVG-text mode showed them literally — unreadable),
-        # and wrap:true + the FIXED .nodeLabel max-width (CSS above) makes mermaid measure
-        # each box at the wrapped width, so text can't overflow. This does NOT trigger the
-        # old 1-char collapse — that needed word-break:break-word too, which we do NOT set.
+        # htmlLabels:true so the .mmd's <b>/<i>/&lt; markup renders (SVG-text mode showed
+        # them literally — unreadable). wrap:false (2026-07-17): STOP mermaid force-
+        # wrapping labels at its narrow default width (that made the tall 1-word-per-line
+        # columns) — boxes now size to content and honor the .mmd's own <br> breaks. A
+        # large wrappingWidth is a belt-and-braces cap for any un-broken long line.
         "mermaid.initialize({startOnLoad:true,securityLevel:'loose',"
-        "flowchart:{htmlLabels:true,wrap:true,padding:12}});"
+        "flowchart:{htmlLabels:true,wrap:false,wrappingWidth:520,padding:14,nodeSpacing:60,rankSpacing:70}});"
         "let z=1;const zt=document.getElementById('zoom'),"
         "lbl=document.getElementById('zlbl');"
         "function apply(){zt.style.transform='scale('+z+')';"
@@ -319,7 +320,7 @@ def guidance_html() -> str:
     )
     srcdoc = _html.escape(inner_doc, quote=True)
     iframe = (f"<iframe srcdoc=\"{srcdoc}\" "
-              "style='width:100%;height:1600px;border:1px solid #e2e8f0;"
+              "style='width:100%;height:1800px;border:1px solid #e2e8f0;"
               "border-radius:8px;background:#fff' "
               "sandbox='allow-scripts'></iframe>")
 
@@ -522,7 +523,7 @@ def guidance_html() -> str:
             "</section>")
 
     return f"""
-<div style="max-width:1100px;line-height:1.5">
+<div style="max-width:1600px;line-height:1.5">
   <p style="color:#475569;font-size:15px">
     This app inspects the <b>VObs-tool-SFT pipeline</b> — how a VLM is taught
     <b>when to consult a visual-observation tool</b> while grading physiotherapy videos.
@@ -1627,7 +1628,7 @@ def overview():
             + "".join(rraw) + "</table></div>"))
     else:
         htm.append("<div style='color:#b91c1c;font-weight:700'>🔴 No rows with "
-                   "step_metrics in this run (pre-2026-07-15 output) — the aggregate "
+                   "step_metrics in this run — the aggregate "
                    "needs a regenerated run.</div>")
 
     # Generic disposition tallies per flavor (from the loaded rows — works even
