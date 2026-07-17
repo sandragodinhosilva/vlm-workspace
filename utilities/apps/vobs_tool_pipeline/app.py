@@ -152,7 +152,10 @@ def _is_superseded_run(path: Path) -> bool:
 
 
 import re as _re_mod
-_K_FLAG_RE = _re_mod.compile(r"--(?:k|best-of-k)[= ]\s*(\d+)")
+# Anchored (2026-07-17): `(?:=|\s)` right after the flag + `(?![\w-])` word-boundary so
+# `--k` doesn't match a longer `--k…`-prefixed flag, and we only read the flag off the
+# persisted `cmd:` line (not some other invocation elsewhere in the log — see below).
+_K_FLAG_RE = _re_mod.compile(r"--(?:k|best-of-k)(?:=|\s+)(\d+)(?![\w-])")
 _K_LOG_ROOT = "/mnt/data/sgsilva/logs/dataset"
 
 
@@ -175,6 +178,15 @@ def _configured_k(run_jsonl_path: Optional[str]) -> Optional[int]:
                       key=lambda q: q.stat().st_mtime, reverse=True)
         for lg in logs[:4]:
             txt = lg.read_text(errors="ignore")
+            # Read the flag ONLY from the persisted `cmd:` line of THIS run (clog writes
+            # one per invocation), so a stale --k from a different command in the same
+            # log file can't be picked up. Fall back to a whole-file scan only if no
+            # cmd: line carries it (older log formats).
+            cmd_lines = [ln for ln in txt.splitlines() if "cmd:" in ln.lower()]
+            for ln in cmd_lines:
+                m = _K_FLAG_RE.search(ln)
+                if m:
+                    return int(m.group(1))
             m = _K_FLAG_RE.search(txt)
             if m:
                 return int(m.group(1))
@@ -198,6 +210,19 @@ def discover_runs() -> List[str]:
     return [str(q) for q in hits[:_MAX_VISIBLE_RUNS]]
 
 
+def _default_jsonl() -> str:
+    """Startup default path: an explicit DEFAULT_JSONL env override wins; otherwise the
+    newest clean run (self-healing — a renamed/removed run can't leave a stale pin that
+    500s the auto-load). "" if nothing resolves (the load then says 'load a run first')."""
+    if DEFAULT_JSONL:
+        return DEFAULT_JSONL
+    try:
+        runs = discover_runs()
+        return runs[0] if runs else ""
+    except Exception:
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # Cross-tab GLOSSARY LINKS (Sandra 2026-07-17): a term shown in a panel can link
 # to its definition in the App Guidance tab. `_gloss_slug` maps a term to a stable
@@ -215,6 +240,7 @@ _GLOSS_SLUGS = {
     "drop_reason": "drop_reason",
     "step_metrics": "step_metrics",
     "changed_ratio": "changed_ratio",
+    "regen_changed_ratio": "changed_ratio",
     "regen": "regen",
     "re-route": "re-route",
     "prompt_origin": "prompt_origin",
@@ -226,6 +252,34 @@ _GLOSS_SLUGS = {
     # links resolve to the same id.
     "all errors identified vs severity-exact vs f1": "all-errors-identified",
     "regen — stage-4 repair": "regen",
+    # Core-terms aliases (2026-07-17): short panel words → their "Core terms" row anchor.
+    # The row titles render as e.g. "GT (ground truth)" → slug "gt-ground-truth"; these
+    # map the bare word a panel uses (gt / clip / teacher / …) onto that same anchor.
+    "gt": "gt-ground-truth",
+    "gt (ground truth)": "gt-ground-truth",
+    "ground truth": "gt-ground-truth",
+    "clip": "clip",
+    "rep": "clip",
+    "sample": "clip",
+    "vobs": "vobs-tool",
+    "vobs tool": "vobs-tool",
+    "tool": "vobs-tool",
+    "teacher": "teacher",
+    "sft": "sft-the-training-this-feeds",
+    "sft (the training this feeds)": "sft-the-training-this-feeds",
+    "distillation": "distillation",
+    "f1": "f1",
+    "severity-l1": "severity-l1",
+    "effectiveness / injury-risk": "effectiveness-injury-risk",
+    "effectiveness": "effectiveness-injury-risk",
+    "injury-risk": "effectiveness-injury-risk",
+    "laundering": "laundering-grounding-check",
+    "laundering (grounding check)": "laundering-grounding-check",
+    "grounding": "laundering-grounding-check",
+    "rft": "rft-rejection-sampling",
+    "rft (rejection sampling)": "rft-rejection-sampling",
+    "judge_tags": "judge-cascade-tags-all-possible-flags-why-a-clip-failed",
+    "judge cascade tags": "judge-cascade-tags-all-possible-flags-why-a-clip-failed",
 }
 
 
@@ -240,13 +294,14 @@ def _gloss_slug(term: str) -> str:
 
 
 def _gloss(label: str, term: str = None) -> str:
-    """Wrap `label` as a clickable link to its App-Guidance definition. `term` (if
-    given) resolves the slug; else `label` does. Renders a plain <a> with a data
-    attribute — the Blocks js handler does the cross-tab navigation on click."""
-    slug = _gloss_slug(term or label)
-    return (f"<a href='#gloss-{slug}' class='gloss' data-gloss='{slug}' "
-            f"style='color:#7c3aed;text-decoration:none;border-bottom:1px dotted #7c3aed;"
-            f"cursor:pointer' title='See the definition in App Guidance'>{label}</a>")
+    """Return `label` as PLAIN TEXT (cross-tab gloss LINKS removed, Sandra 2026-07-17).
+
+    The click-to-definition links relied on a Blocks `js=` load-hook that does not fire
+    reliably under this Gradio/relay setup (and Gradio's gr.HTML DOMPurify strips the
+    hooks the handler needed), so the links rendered dead — worse than none. Kept as a
+    thin pass-through (rather than deleting every call site) so terms still render, just
+    without a link; the App Guidance tab remains the single reference for definitions."""
+    return label
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +326,15 @@ def guidance_html() -> str:
     workflow diagram. Read straight from the .mmd so it can't drift."""
     import html as _html
     mmd = _read_workflow_mmd()
+    # The .mmd goes into the iframe's <pre> ESCAPED ONCE (mmd_esc), never decoded or
+    # raw (2026-07-17, settled headlessly): the .mmd deliberately writes `&lt;think&gt;`
+    # etc. so labels can DISPLAY literal "<think>". Decoding first (`_html.unescape`)
+    # turns those into real tags the browser swallows while parsing the <pre> —
+    # mermaid then sees mangled text + stray auto-closed `</think>` → "Syntax error
+    # in text". Escaped-once → the browser's parse of the <pre> yields exactly the
+    # authored .mmd as textContent, and mermaid 10 renders it (verified: SVG_OK vs
+    # parse error, `~/tmp/_campaign/202607_tabtest/mermaid_variant_test.py`). The
+    # extra srcdoc attribute-escape layer is transparent (encode+decode cancel).
     mmd_esc = _html.escape(mmd)
 
     # Render the diagram inside an <iframe srcdoc> (2026-07-15 fix): Gradio's
@@ -314,12 +378,35 @@ def guidance_html() -> str:
         "</style></head><body>"
         "<div id='bar'><button id='zout'>−</button>"
         "<button id='zin'>+</button><button id='zrst'>reset</button>"
-        "<span id='zlbl'>100%</span></div>"
+        "<span id='zlbl'>100%</span>"
+        "<span style='margin-left:auto'>drag to pan · ⌘/Ctrl+scroll to zoom</span></div>"
+        # Loud failure banner (2026-07-17, [[feedback_no_silent_fail]]): if the mermaid
+        # CDN is blocked (sandboxed iframe on a cluster behind the Nebius gateway),
+        # mermaid.run() never fires and the raw <pre> source shows as text with no
+        # explanation. This banner is hidden by default and REVEALED by the .catch()
+        # / load-timeout below, so egress failure is announced, not silent.
+        "<div id='err' style='display:none;margin:10px;padding:10px 14px;"
+        "background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;"
+        "font-size:13px'>⚠️ The diagram library could not load (the mermaid CDN is "
+        "unreachable from here — likely blocked egress). The raw diagram source is shown "
+        "below and in the collapsible 'Diagram source' section under this frame.</div>"
         "<div id='scroll'><div id='zoom'>"
+        # escaped-once (see the mmd_esc note at the top of this function).
         f"<pre class='mermaid'>{mmd_esc}</pre>"
         "</div></div>"
         "<script type='module'>"
-        "import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';"
+        # Reveal the error banner if mermaid never renders (CDN blocked / import throws).
+        # A 6s watchdog covers a silent hang; the import .catch() covers an outright
+        # failure. Either way the user sees WHY, not just raw text.
+        "const errEl=document.getElementById('err');"
+        "let rendered=false;"
+        "const fail=(why)=>{if(rendered)return;errEl.textContent="
+        "'⚠️ The diagram library could not load ('+why+'). The raw diagram source is "
+        "shown below and in the collapsible \\'Diagram source\\' section under this frame.';"
+        "errEl.style.display='block';};"
+        "const watchdog=setTimeout(()=>fail('render timed out — CDN likely blocked'),6000);"
+        "import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs')"
+        ".then(({default:mermaid})=>{"
         # htmlLabels:true so the .mmd's <b>/<i>/&lt; markup renders (SVG-text mode showed
         # them literally — unreadable). wrap:false (2026-07-17): STOP mermaid force-
         # wrapping labels at its narrow default width (that made the tall 1-word-per-line
@@ -347,20 +434,30 @@ def guidance_html() -> str:
         "const end=e=>{drag=false;sc.classList.remove('dragging');};"
         "sc.addEventListener('pointerup',end);"
         "sc.addEventListener('pointercancel',end);"
-        # PLAIN mouse-wheel zooms (Sandra 2026-07-16) — scroll up = zoom in, down =
-        # zoom out. Drag-to-pan (above) covers navigation, so the wheel is free to
-        # zoom without a modifier. ctrl/cmd+wheel still zooms (same path). preventDefault
-        # stops the iframe from also page-scrolling.
+        # WHEEL ZOOM IS NOW GATED behind ⌘/Ctrl (Sandra 2026-07-17): a fixed-height
+        # iframe that ate PLAIN wheel with preventDefault() was a scroll trap — a
+        # colleague scrolling the guidance tab hit the diagram and the page stopped
+        # dead + started zooming, with no way past it. Plain wheel now passes through
+        # to the page; ⌘/Ctrl+wheel zooms (like embedded maps). Drag-to-pan still
+        # covers navigation at any zoom, so nothing is lost.
         "sc.addEventListener('wheel',e=>{"
+        "if(!(e.ctrlKey||e.metaKey))return;"          # let plain wheel scroll the page
         "e.preventDefault();z=Math.min(4,Math.max(0.5,z+(e.deltaY<0?0.15:-0.15)));apply();},"
         "{passive:false});"
-        "mermaid.run().then(()=>{const s=document.querySelector('svg');"
-        "if(s){s.style.maxWidth='none';}apply();});"
+        # mermaid.run() renders the <pre>; on success clear the watchdog + mark rendered,
+        # on failure raise the loud banner instead of leaving raw source with no reason.
+        "mermaid.run().then(()=>{rendered=true;clearTimeout(watchdog);"
+        "const s=document.querySelector('svg');if(s){s.style.maxWidth='none';}apply();})"
+        ".catch(err=>{clearTimeout(watchdog);fail('render error: '+err);});"
+        "}).catch(err=>{clearTimeout(watchdog);fail('library import failed: '+err);});"
         "</script></body></html>"
     )
     srcdoc = _html.escape(inner_doc, quote=True)
+    # Height dropped 1800 -> 720 (2026-07-17): the diagram is drag-pannable + zoomable,
+    # so it does NOT need to be tall enough to show everything at once — a 700px viewport
+    # you pan is far less of a scroll obstacle than an 1800px wall the page must scroll past.
     iframe = (f"<iframe srcdoc=\"{srcdoc}\" "
-              "style='width:100%;height:1800px;border:1px solid #e2e8f0;"
+              "style='width:100%;height:720px;border:1px solid #e2e8f0;"
               "border-radius:8px;background:#fff' "
               "sandbox='allow-scripts'></iframe>")
 
@@ -371,8 +468,12 @@ def guidance_html() -> str:
         plain = _re.sub(r"<[^>]+>", "", term)
         plain = _re.sub(r"^[A-E]\s*·\s*|^[①②③④⑤]\s*", "", plain)
         slug = _gloss_slug(plain)
+        # Term cell 150px -> 240px (Sandra 2026-07-17): long headers like "judge cascade
+        # tags — ALL possible flags…" wrapped to 5-6 lines in 150px — the exact tall-skinny
+        # column the diagram's nowrap fix was written to kill. 240px lets the long ones sit
+        # in ~2 lines next to their definition instead.
         return (f"<tr id='gloss-{slug}' style='scroll-margin-top:60px'>"
-                f"<td style='padding:6px 12px;width:150px;max-width:150px;"
+                f"<td style='padding:6px 12px;width:240px;max-width:240px;"
                 f"vertical-align:top;font-weight:600;color:#1e1b4b'>{term}</td>"
                 f"<td style='padding:6px 12px;color:#334155'>{meaning}</td></tr>")
 
@@ -400,22 +501,41 @@ def guidance_html() -> str:
         head = f"{intro}" if intro else ""
         return head + render_items(items, 1)
 
+    # Core vocabulary (Sandra 2026-07-17): the terms used EVERYWHERE in the app but
+    # never defined for an outside reader (clinician / manager / new hire) — GT is the
+    # single highest-frequency undefined term (every row header chip). Defined once here;
+    # everything downstream links back to these rows via _gloss.
+    basics = "".join(row(t, m) for t, m in [
+        ("GT (ground truth)", "The CORRECT grade a human expert already gave this video — the errors present and their severities. Everything in the pipeline is measured against GT. (Shown on every row as the <code>GT …</code> chips.)"),
+        ("clip", "ONE exercise repetition being graded — the unit this whole app moves through. (The code also calls it a <i>rep</i>, <i>row</i>, or <i>sample</i>; in this app they all mean the same thing.)"),
+        ("VObs tool", "The <b>v</b>isual-<b>obs</b>ervation tool: a helper the model can call to ask a targeted question about the video (e.g. 'how bent is the left knee?'). This whole pipeline teaches the model <b>when</b> to consult it — and when NOT to."),
+        ("teacher", "The big <b>397B</b> model that writes the reasoning we want to teach. It is the expert whose thinking we copy into the smaller model."),
+        ("SFT (the training this feeds)", "<b>S</b>upervised <b>f</b>ine-<b>t</b>uning — the training step this dataset is built FOR. Each kept clip becomes one training example: the video + the teacher's reasoning + the correct grade."),
+        ("distillation", "Copying a big model's reasoning into a smaller one. Here: the 397B teacher's traces become training data so a smaller model learns to reason the same way."),
+        ("F1", "A single 0–1 score for how well the flagged error SET matches GT (balances catching real errors vs. inventing ones). <b>0.0 is normal on a clip that has NO graded errors</b> — nothing to catch — so a low F1 there is not a failure."),
+        ("severity-L1", "How far off the severity NUMBERS are, summed (lower = closer to GT). Used only as a tiebreak between otherwise-equal attempts."),
+        ("effectiveness / injury-risk", "Two extra grades besides the per-error severities: is the exercise <b>effective</b>, and is there <b>injury risk</b>. 'Fully-correct' requires these to match GT too, not just the error list."),
+        ("laundering (grounding check)", "The app's word for the failure the J1 judge guards against: writing reasoning that was <b>reverse-engineered from the known answer</b> instead of genuinely read from the video. 'Grounded' = each grade is earned from a named video cue; 'laundered' = it just works backwards from GT. It's a quality flag on the reasoning, not an accusation about anyone."),
+        ("RFT (rejection sampling)", "<b>R</b>ejection-sampling <b>f</b>ine-<b>t</b>uning: keep only the teacher's attempts that are ALREADY correct, no editing. 'RFT-lean' means a flavor tends to hit GT on its own, so it rarely needs the rewrite pass."),
+    ])
+
     flavors = "".join(row(t, m) for t, m in [
-        ("A · zero-call", "The model grades from the video ALONE and never calls the tool. Harvested from a free-choice pool — kept only when the teacher <i>naturally</i> chose not to call. The most common 'normal' behaviour."),
+        ("A · zero-call", "The model grades from the video ALONE and never calls the tool. Harvested from a free-choice pool — kept only when the teacher <i>naturally</i> chose not to call. The most common 'normal' behavior."),
         ("B · one call, many Q", "One tool call that batches several questions at once. The everyday tool-use shape."),
         ("C · spot wrong answer", "The tool is deliberately fed a plausible-but-WRONG answer; a good C trace NOTICES it, distrusts it, and grades correctly anyway. Teaches skepticism of the tool."),
         ("D · one call, one Q", "A single call asking the single most useful question. The minimal tool use."),
-        ("E · several calls", "Ask, read the answer, then ask again in light of it — genuine iterative querying. <b>RARE by design (~5% of the mix)</b>: multi-call is a situational, 'the model is genuinely confused' behaviour, not a habit. If the final model never multi-calls, that's fine."),
+        ("E · several calls", "Ask, read the answer, then ask again in light of it — genuine iterative querying. <b>RARE by design (~5% of the mix)</b>: multi-call is a situational, 'the model is genuinely confused' behavior, not a habit. If the final model never multi-calls, that's fine."),
     ])
 
     stages = "".join(row(t, m) for t, m in [
         ("① Generation", "The 397B teacher writes the reasoning trace, best-of-K tries (K=16), stopping early when it exactly matches the correct grade (severity-exact, not just presence)."),
         ("② Rewrite — stage-2 GT-align", "If the trace's grade isn't already correct, the teacher <b>EDITS the existing &lt;think&gt; reasoning</b> (minimally) so it honestly leads to the correct grade — with the rep's video attached. <b>Reasoning-only contract (2026-07-16):</b> the teacher NEVER writes the final answer; the pipeline <b>composes the GT-correct final</b> (errors + scores from GT, the model's own movement-analysis &amp; feedback prose kept) and <b>appends it verbatim</b>, so the grade CANNOT drift. A clip can OPT OUT instead of laundering — A emits <code>[CANNOT_GROUND_GT]</code>, B/C/D/E emit <code>[CANNOT_RECONCILE_GT]</code> → dropped with a distinct sentinel rather than fabricating cues. Also condenses a rambling &lt;think&gt; (final kept byte-identical by construction). (Distinct from the STAGE-4 repair that runs after the judge — see regen.)"),
         ("③ Judging (inline) — 3-judge cascade", bullets(
-            "The Gate-3 judge is a CASCADE of three specialists (2026-07-16), each its own axis:", [
+            "After the trace is written it faces a <b>3-judge cascade</b> — three "
+            "specialist judges (2026-07-16), each checking its own axis:", [
             "<b>J2 format/coherence</b> runs first (cheapest) — a malformed clip is dropped before the rest.",
             "<b>J1 grounding/laundering</b> — is every grade EARNED from a named video cue, or reverse-engineered from the target?",
-            "<b>J3 flavour-purpose</b> — does the tool-use match this flavour?",
+            "<b>J3 flavor-purpose</b> — does the tool-use match this flavor?",
             "A clip is kept only if ALL THREE pass. On any fail → one STAGE-4 repair keyed to the failing class → the whole cascade RE-runs; still failing → EXCLUDED. All in the SAME run.",
             "(The cascade is the ONLY judge topology since 2026-07-16 — the legacy single 15-tag judge was removed.)",
         ])),
@@ -429,8 +549,8 @@ def guidance_html() -> str:
     ])
 
     fields = "".join(row(t, m) for t, m in [
-        ("flavor", "Which of A–E behaviours this clip teaches."),
-        ("prompt_origin", "<code>forced</code> = generated on this flavour's own prompt. <code>free_choice</code> = an A-pool clip that DID call the tool, re-routed to its observed flavour (B/D/E) — the behaviour is the signal, so the compute isn't wasted."),
+        ("flavor", "Which of A–E behaviors this clip teaches."),
+        ("prompt_origin", "<code>forced</code> = generated on this flavor's own prompt. <code>free_choice</code> = an A-pool clip that DID call the tool, re-routed to its observed flavor (B/D/E) — the behavior is the signal, so the compute isn't wasted."),
         ("drop_reason", bullets(
             "Why a clip was set aside (never silently thrown away — kept for inspection). "
             "These fall in two mutually-exclusive buckets the tab-1 filter + tab-2 table use:", [
@@ -472,7 +592,7 @@ def guidance_html() -> str:
                 "<code>target_restated</code> — cue just paraphrases the target",
                 "<code>source_leak</code> — implies it was handed the answer",
             ]),
-            ("<b>J3 flavour-purpose</b> (per flavour)", [
+            ("<b>J3 flavor-purpose</b> (per flavor)", [
                 ("<b>A</b> confident non-use", [
                     "<code>unexpected_tool_call</code> — called the tool (A is zero-call)",
                     "<code>fabricated_tool_narration</code> — narrated a phantom consult",
@@ -527,7 +647,7 @@ def guidance_html() -> str:
             "<b>F1</b> can read 0.0 on a clip with NO graded errors while all-errors-identified is still true — NOT a failure.",
             "➜ Trust <b>severity-exact</b> for correctness; all-errors-identified overstates it (~1.5× on the 0715 smoke).",
         ])),
-        ("natural_severity_exact", "Whether the BEST natural (pre-rewrite) attempt already matched GT magnitudes — the RFT-vs-repair signal. High = the flavour earns GT without rewriting (RFT-lean); low = it needs the repair pass."),
+        ("natural_severity_exact", "Whether the BEST natural (pre-rewrite) attempt already matched GT magnitudes — the RFT-vs-repair signal. High = the flavor earns GT without rewriting (RFT-lean); low = it needs the repair pass."),
         ("step_metrics", "Per-stage panel on every clip: prompt/output size (chars + tokens), the grade-score AT each stage (should stay perfect after generation), how much the REWRITE and the JUDGE-regen changed the answer (changed_ratio 0→1), wall-time, and #model-calls."),
         ("changed_ratio", "How much a step rewrote the answer: 0.0 = identical, 1.0 = fully replaced. High rewrite changed_ratio = the teacher's first draft needed heavy repair."),
         ("re-route", "An A-pool clip that called the tool becomes a B/D/E clip (not dropped) — see prompt_origin=free_choice."),
@@ -569,17 +689,34 @@ def guidance_html() -> str:
     <b>when to consult a visual-observation tool</b> while grading physiotherapy videos.
     Below: what every term in this app means, then the live workflow diagram.
   </p>
-  {section("The five flavours (tool-use behaviours)", flavors,
-           "A–E: the five tool-use behaviours a clip can teach.")}
-  {section("The three stages (one run, up to 5 teacher calls)", stages,
-           "How one clip flows: generate → rewrite → judge cascade → stage-4 repair.")}
+  <div style="background:#f0f9ff;border:1px solid #bae6fd;border-left:4px solid #0284c7;
+       border-radius:10px;padding:14px 18px;margin:0 0 18px;color:#0c4a6e;font-size:14.5px">
+    <div style="font-weight:700;font-size:15px;margin-bottom:6px">In plain words</div>
+    <div style="line-height:1.65">
+      We take physiotherapy videos that a human expert has already graded (that grade is
+      the <b>ground truth</b>, GT). A large <b>teacher</b> model watches each
+      <b>clip</b> and writes out its reasoning for the grade — sometimes calling a
+      <b>tool</b> to look closer at the video. We keep the good reasoning as training
+      data (<b>SFT</b>) so a smaller model learns to grade — and to use the tool wisely —
+      the same way.<br>
+      A clip is <b>set aside</b> for one of two reasons: <b>a judge rejected it</b>
+      (the reasoning didn't hold up), or <b>it never finished cleanly</b> (the teacher
+      opted out, or a step errored). 
+    </div>
+  </div>
+  {section("Core terms (start here)", basics,
+           "The words used all over this app — defined once. Every term links back here.")}
+  {section("The five flavors (tool-use behaviors)", flavors,
+           "A–E: the five tool-use behaviors a clip can teach.")}
+  {section("The 4 stages", stages,
+           "How one clip flows: generate → rewrite → judge cascade → stage-4 repair → judge → final sample.")}
   {section("Fields &amp; metrics you'll see on each clip", fields,
            "Every column, flag, and score the row inspector shows.")}
   {section("The full workflow",
            "<tr><td style='padding:6px 12px'>"
            "<p style='color:#64748b;font-size:13px;margin:0 0 8px'>"
-           "Source of truth: <code>visual_obs/workflow_tool_use.mmd</code> — rendered live, "
-           "so it stays current as the pipeline changes.</p>"
+           "Source of truth: <code>visual_obs/workflow_tool_use.mmd</code> — rendered "
+           "live, so it stays current as the pipeline changes.</p>"
            f"{iframe}"
            "<details style='margin-top:8px'>"
            "<summary style='cursor:pointer;color:#64748b;font-size:13px'>Diagram source (mermaid)</summary>"
@@ -603,7 +740,7 @@ def _choices(field: str, rows: List[Dict]) -> List[str]:
 def disposition_choices() -> List[str]:
     # MUTUALLY EXCLUSIVE dispositions (Sandra 2026-07-17): 'dropped' = dropped for a
     # NON-judge reason (timeout, opt-out, exception, rewrite failure); 'judge-excluded'
-    # = dropped by the Gate-3 judge (drop_reason `judge:<verdict_kind>`). They partition
+    # = dropped by the 3-judge cascade (drop_reason `judge:<verdict_kind>`). They partition
     # the dropped set, so 'dropped' + 'judge-excluded' never double-count a row.
     return [ALL, "kept", "dropped", "judge-excluded"]
 
@@ -660,7 +797,7 @@ def _matches(row: Dict, disposition: str, flavor: str, origin: str, verdict: str
         return False
     # 'dropped' and 'judge-excluded' are MUTUALLY EXCLUSIVE (Sandra 2026-07-17):
     # 'dropped' now means dropped for a NON-judge reason (timeout, opt-out, exception,
-    # rewrite failure), 'judge-excluded' means dropped by the Gate-3 judge (drop_reason
+    # rewrite failure), 'judge-excluded' means dropped by the 3-judge cascade (drop_reason
     # starts 'judge:'). Together they partition the dropped set — no row matches both.
     if disposition == "dropped" and (row["_disposition"] != "dropped" or _is_judge_excluded):
         return False
@@ -729,11 +866,67 @@ def _pre(text, empty="<not present on row>") -> str:
             f"{body}</pre>")
 
 
+def _looks_truncated_head(text) -> bool:
+    """Heuristic: a captured <think> that begins MID-SENTENCE (stray leading backtick,
+    a lowercase word, or a mid-list number/punctuation) lost its opening. On the 397B
+    judge this is a known upstream streaming-capture issue — the reasoning arrives with
+    its first chunk dropped (~57% of the 0717 demo run's judge reasonings). We can't
+    recover the head from the row, but we CAN flag it instead of showing a baffling
+    fragment as if it were the whole reasoning ([[feedback_no_silent_fail]])."""
+    if not text:
+        return False
+    s = str(text).lstrip()
+    if not s:
+        return False
+    # Clean openings: a capital letter, '<think>', '**', a top-of-list '1.'/'#'.
+    if s.startswith(("<think>", "**", "#", "1.", "- ", "The ", "Let")):
+        return False
+    first = s[0]
+    return first in "`)]},;:" or (first.isalpha() and first.islower())
+
+
+def _reasoning_pre(text, empty="<no separate reasoning captured>") -> str:
+    """_pre for a teacher/judge <think>, with a loud amber banner when the capture looks
+    truncated at the head — so a mid-sentence start reads as a KNOWN capture issue, not a
+    silent bug or a confusing app render. The verdict/RAW block is unaffected (it parses
+    fine); only the reasoning display carries the caveat."""
+    pre = _pre(text, empty=empty)
+    if not _looks_truncated_head(text):
+        return pre
+    banner = (
+        "<div style='margin:0 0 6px;padding:6px 10px;border-radius:6px;"
+        "background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:12px'>"
+        "⚠️ This reasoning appears to start mid-sentence — its opening was lost during "
+        "capture (a known 397B judge streaming-capture issue upstream). The verdict below "
+        "is unaffected; only this trace's beginning is missing.</div>")
+    return banner + pre
+
+
+def _step_banner(n, title: str, color: str, icon: str = None) -> str:
+    """A section banner (Sandra 2026-07-17): a filled circular badge (a step NUMBER, or
+    an ICON when n is None for unnumbered setup) + title on a tinted bar with a colored
+    left border, so the workflow sections read as DISTINCT blocks instead of plain bold
+    text lost in the flow. Each section gets its own accent color."""
+    badge = icon if n is None else str(n)
+    return (
+        f"<div style='display:flex;align-items:center;gap:11px;margin:20px 0 6px;"
+        f"padding:9px 14px;border:1px solid {color}33;border-left:5px solid {color};"
+        f"border-radius:10px;background:{color}0f'>"
+        f"<span style='flex:none;width:28px;height:28px;border-radius:50%;"
+        f"background:{color};color:#fff;font-weight:700;font-size:15px;"
+        f"display:flex;align-items:center;justify-content:center'>{badge}</span>"
+        f"<span style='font-size:17px;font-weight:700;color:{color}'>{title}</span></div>")
+
+
 def _details(summary: str, body: str, open_: bool = False) -> str:
+    # Purple accent on the collapsible-section summary (Sandra 2026-07-17): a left
+    # accent bar + purple summary text so these expandable sections read as clickable
+    # section headers, matching the purple used for the guidance/definition areas.
     return (f"<details{' open' if open_ else ''} style='margin:6px 0;border:1px solid "
-            f"var(--border-color-primary);border-radius:8px;padding:6px 10px'>"
-            f"<summary style='cursor:pointer;font-weight:600'>{summary}</summary>"
-            f"{body}</details>")
+            f"var(--border-color-primary);border-left:4px solid #7c3aed;"
+            f"border-radius:8px;padding:6px 10px'>"
+            f"<summary style='cursor:pointer;font-weight:700;color:#6d28d9'>"
+            f"{summary}</summary>{body}</details>")
 
 
 def _chip(label: str, value, color: str = "var(--background-fill-secondary)",
@@ -801,10 +994,12 @@ def render_header(r: Dict) -> str:
 
 
 def _fmt_cell(v) -> str:
-    """One step_metrics leaf → display. Score dicts get the is_perfect-first
-    treatment: is_perfect is THE signal; f1 is secondary (f1=0.0 WITH
-    is_perfect=true is a zero-GT-error rep, NOT a failure — _score_row's F1
-    formula returns 0.0 when there is nothing to detect)."""
+    """One step_metrics leaf → display. Score dicts show the is_perfect field under its
+    HONEST name — 'all errors identified' (Sandra 2026-07-17): calling it '✅ perfect'
+    contradicted the attempt-selection panel + the glossary, which both say this field
+    OVERSTATES correctness (~1.5×) because it only checks error PRESENCE, not severity
+    magnitude. f1=0.0 WITH all-errors-identified=true is a zero-GT-error rep, NOT a
+    failure — _score_row's F1 returns 0.0 when there is nothing to detect."""
     if isinstance(v, dict) and "is_perfect" in v:
         ok = v.get("is_perfect")
         f1 = v.get("f1")
@@ -816,11 +1011,19 @@ def _fmt_cell(v) -> str:
         if ok:
             note = " <small>(no GT errors)</small>" if f1 == 0.0 else ""
             if sev is False:
-                return (f"⚠️ <b>presence-ok, severity WRONG</b> "
-                        f"<small>f1={f1s} (magnitude ≠ GT)</small>{note}")
-            sev_tag = " <small>· severity_exact ✓</small>" if sev else ""
-            return f"✅ perfect <small>f1={f1s}</small>{sev_tag}{note}"
-        return f"<span style='color:#b91c1c;font-weight:700'>✗ not perfect</span> <small>f1={f1s}</small>"
+                # NOTE deliberately NOT appended here (2026-07-17): "(no GT errors)" +
+                # "severity WRONG" is a contradiction — a magnitude mismatch means there
+                # WERE graded errors. The note belongs only on the all-identified cases.
+                return (f"⚠️ <b>errors identified, but severity WRONG</b> "
+                        f"<small>f1={f1s} (magnitude ≠ GT)</small>")
+            # 'all errors identified' alone (severity unchecked) is amber, not green —
+            # green (✅) is reserved for the stronger severity_exact match below.
+            if sev:
+                return f"✅ severity-exact <small>f1={f1s} · all errors identified</small>{note}"
+            return (f"🟡 all errors identified <small>f1={f1s} "
+                    f"(presence only — severity unchecked)</small>{note}")
+        return (f"<span style='color:#b91c1c;font-weight:700'>✗ errors NOT all "
+                f"identified</span> <small>f1={f1s}</small>")
     if isinstance(v, dict):
         return _esc(json.dumps(v, default=str))
     if isinstance(v, bool):
@@ -840,16 +1043,23 @@ def render_step_metrics(r: Dict) -> str:
                 "(a partial timeout/exception stub that never finished the pipeline), or a "
                 "pre-2026-07-15 run. Expected for a workflow-dropped row; regenerate at the "
                 "producer only if you hit it on a kept or judge-excluded row.</div>")
-    # Schema-driven split: dict-valued keys = stages (table rows, insertion
-    # order); everything else = row-level scalars shown as chips.
-    stages = {k: v for k, v in sm.items() if isinstance(v, dict)}
-    # #7a (2026-07-17): a null 'judge' block (value None) is NOT a dict, so it fell
-    # into scalars AND got its own "not run" row below — rendered twice. Exclude the
-    # null-stage keys from scalars; the dedicated row is the single source.
-    _null_stage_keys = {k for k, v in sm.items()
-                        if v is None and k in ("gen", "rewrite", "judge", "final")}
+    # Schema-driven split. The producer's `step_metrics` has exactly four top-level
+    # STAGE blocks (step_metrics.py: gen/rewrite/judge/final) — each a sub-dict, or
+    # None when that stage didn't run. Everything else at the top level is a row-level
+    # SCALAR shown as a chip. So a key is a "stage" iff it's a canonical stage name,
+    # dict OR null — NOT "is it a dict?" (2026-07-17 fix): the old test made a null
+    # stage a scalar, and the #7a follow-up then dropped gen/rewrite/final:None from
+    # BOTH the chips and the rows → they vanished silently ([[feedback_no_silent_fail]]).
+    # Now every present-but-null stage gets its own explicit "not run" row below.
+    _STAGE_NAMES = ("gen", "rewrite", "judge", "final")
+    stages = {k: v for k, v in sm.items()
+              if isinstance(v, dict) and k in _STAGE_NAMES}
+    # Present-but-null canonical stages → an explicit "not run" row (never a blank).
+    _null_stages = [k for k in _STAGE_NAMES if k in sm and sm[k] is None]
+    # Scalars = everything that isn't a stage block (dict or null-stage), incl. a
+    # non-canonical dict (surfaced as JSON in a chip rather than silently dropped).
     scalars = {k: v for k, v in sm.items()
-               if not isinstance(v, dict) and k not in _null_stage_keys}
+               if k not in _STAGE_NAMES}
 
     chips = "".join(_chip(k, "—" if v is None else v,
                           "#fde8e8" if (k == "ae_contradiction" and v is True) else
@@ -864,9 +1074,13 @@ def render_step_metrics(r: Dict) -> str:
                 cols.append(k)
     # Change-ratio fields are the headline "how much repair" signal — flag them.
     hot = {"changed_ratio", "regen_changed_ratio", "delta_chars", "regen_delta_chars"}
+    # Header links to its glossary row when the column name is a known term (Sandra
+    # 2026-07-17) — changed_ratio was a bare, unexplained, highlighted-as-hot header.
+    def _col_head(c):
+        return (_gloss(_esc(c), c) if c.strip().lower() in _GLOSS_SLUGS else _esc(c))
     head = "".join(
         f"<th style='padding:4px 8px;text-align:left;"
-        f"{'background:#fff7ed' if c in hot else ''}'>{_esc(c)}</th>" for c in cols)
+        f"{'background:#fff7ed' if c in hot else ''}'>{_col_head(c)}</th>" for c in cols)
     body_rows = []
     for name, st in stages.items():
         tds = "".join(
@@ -874,9 +1088,12 @@ def render_step_metrics(r: Dict) -> str:
             f"{_fmt_cell(st.get(c)) if c in st else '<span style=\"opacity:.45\">·</span>'}</td>"
             for c in cols)
         body_rows.append(f"<tr><td style='padding:4px 8px;font-weight:700'>{_esc(name)}</td>{tds}</tr>")
-    if stages.get("judge") is None and "judge" in sm:
-        body_rows.append("<tr><td style='padding:4px 8px;font-weight:700'>judge</td>"
-                         f"<td colspan='{len(cols)}' style='padding:4px 8px;opacity:.6'>"
+    # One explicit "not run" row per present-but-null stage (gen/rewrite/judge/final) —
+    # so a null stage is announced, never a silent blank (2026-07-17). colspan spans the
+    # data columns; guard against 0 columns (a row with only null stages).
+    for name in _null_stages:
+        body_rows.append(f"<tr><td style='padding:4px 8px;font-weight:700'>{_esc(name)}</td>"
+                         f"<td colspan='{max(1, len(cols))}' style='padding:4px 8px;opacity:.6'>"
                          "not run (— null block)</td></tr>")
     table = (f"<div style='overflow-x:auto'><table style='border-collapse:collapse;"
              f"font-size:12.5px'><tr><th style='padding:4px 8px'></th>{head}</tr>"
@@ -931,10 +1148,12 @@ def _attempt_selection_metrics(a: Dict) -> str:
         # first (all errors identified), tightening to the truly-perfect grade. This
         # is presentation only — the SELECTION cascade in _select_best still ranks
         # fully-correct HIGHEST (see _win_reason for what actually decided the pick).
-        f"All errors identified {_tick(pres)}",  # right present/absent set (was 'is_perfect')
-        f"Severity-exact {_tick(sev)}",     # + every magnitude matches
-        f"Fully-correct {_tick(fc)}",       # + eff/injury match → the truly-perfect grade
-        f"F1={f1}",                          # presence F1
+        # Each metric label LINKS to its App-Guidance definition (Sandra 2026-07-17) —
+        # these are the exact terms an outside reader stalls on.
+        f"{_gloss('All errors identified', 'all errors identified')} {_tick(pres)}",
+        f"{_gloss('Severity-exact', 'severity-exact')} {_tick(sev)}",
+        f"{_gloss('Fully-correct', 'fully-correct')} {_tick(fc)}",
+        f"{_gloss('F1', 'f1')}={f1}",        # presence F1
     ]
     tail = []
     if fp is not None:
@@ -1054,7 +1273,7 @@ def render_trail(r: Dict) -> str:
     #                   back to the flat fields (which are absent → "not present").
     jatt = r.get("judge_attempts") or []
     _JKEY_LABEL = {"format": "J2 FORMAT/COHERENCE", "grounding": "J1 GROUNDING/LAUNDERING",
-                   "flavor_purpose": "J3 FLAVOUR-PURPOSE"}
+                   "flavor_purpose": "J3 FLAVOR-PURPOSE"}
     if jatt:
         # 'mode' removed (Sandra 2026-07-17): always 'complementary' now — the
         # legacy single 15-tag judge is gone, so it carried no information. Top-level
@@ -1082,8 +1301,7 @@ def render_trail(r: Dict) -> str:
                 if "regen_reasoning" in a:
                     parts.append(_details(
                         f"③ attempt {n} — REGEN teacher &lt;think&gt; (natural reasoning)",
-                        _pre(a.get("regen_reasoning"),
-                             empty="<no separate reasoning captured>"), open_=False))
+                        _reasoning_pre(a.get("regen_reasoning")), open_=False))
                 parts.append(_details(f"③ attempt {n} — REGEN RAW RESPONSE (post-think)",
                                       _pre(a.get("regen_raw_response"))))
                 continue
@@ -1122,8 +1340,7 @@ def render_trail(r: Dict) -> str:
                     if "judge_reasoning" in p:
                         inner.append(_details(
                             f"{lbl} teacher &lt;think&gt;",
-                            _pre(p.get("judge_reasoning"),
-                                 empty="<no separate reasoning captured>"), open_=False))
+                            _reasoning_pre(p.get("judge_reasoning")), open_=False))
                     raw_body = _pre(p.get("judge_raw_response"))
                     # The parsed `notes` is ALREADY inside the raw JSON above (as
                     # "notes": "..."), so a separate caption duplicated it (Sandra
@@ -1163,14 +1380,13 @@ def render_trail(r: Dict) -> str:
             if "judge_reasoning" in a:
                 parts.append(_details(
                     f"③ attempt {n} — JUDGE teacher &lt;think&gt; (natural reasoning)",
-                    _pre(a.get("judge_reasoning"),
-                         empty="<no separate reasoning captured>"), open_=False))
+                    _reasoning_pre(a.get("judge_reasoning")), open_=False))
             parts.append(_details(f"③ attempt {n} — JUDGE RAW RESPONSE (verdict — post-think)",
                                   _pre(a.get("judge_raw_response"))))
-        _title = "③ Gate-3 judge — 3-specialist cascade (+ stage-4 repair)"
+        _title = "③ 3-judge cascade (+ stage-4 repair)"
         out.append(f"<h4>{_title}</h4>" + "".join(parts))
     else:
-        out.append("<h4>③ Gate-3 judge</h4><div style='opacity:.7'>Not run for this row "
+        out.append("<h4>③ 3-judge cascade</h4><div style='opacity:.7'>Not run for this row "
                    "(--no-judge run, or dropped before the judge)</div>")
 
     if not out:
@@ -1243,7 +1459,11 @@ _RENDERED_KEYS = {
     "_disposition", "flavor", "session_id", "rep_index", "exercise_id",
     "prompt_origin", "status", "drop_reason", "severity_scores", "effectiveness",
     "injury_risk", "judge_verdict_kind", "judge_tags", "judge_accepted_after_regen",
-    "judge_notes", "judge_attempts", "step_metrics", "messages", "all_attempts",
+    # judge_notes REMOVED from the excluded set (2026-07-17): a 2026-07-17 edit dropped
+    # it from the trail header, so it was rendered NOWHERE yet still excluded from the
+    # "other fields" accordion → silently invisible. Letting it fall through means it
+    # shows in the accordion instead of vanishing ([[feedback_no_silent_fail]]).
+    "judge_attempts", "step_metrics", "messages", "all_attempts",
     "generation_prompt", "raw_model_output", "rewrite_prompt", "rewrite_raw_response",
     "rewrite_reasoning", "rewrite_applied", "rewrite_kind", "rewrite_failed_reason",
     "video_frames", "images_path", "fps", "video_fps", "need_to_flip",
@@ -1303,12 +1523,15 @@ def download_sample_txt(session: Dict, abs_idx: int, disposition, flavor, origin
     previewer's render_sample — the single source of truth — so the download and
     the terminal preview never drift. Falls back to a pretty JSON dump if that
     module couldn't import."""
+    # Return a gr.update so the File component reveals ONLY on a successful download
+    # (Sandra 2026-07-17) — it starts visible=False, so there's no permanent empty
+    # upload drop-zone users can drag files into to no effect.
     rows = (session or {}).get("rows") or []
     if not rows:
-        return None
+        return gr.update(visible=False)
     sel = filtered(rows, disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
     if not sel:
-        return None
+        return gr.update(visible=False)
     if abs_idx not in sel:
         abs_idx = sel[0]
     abs_idx = max(0, min(abs_idx, len(rows) - 1))
@@ -1336,7 +1559,7 @@ def download_sample_txt(session: Dict, abs_idx: int, disposition, flavor, origin
     stem = "".join(c if (c.isalnum() or c in "_-") else "_" for c in str(stem))
     out = Path(VIDEO_CACHE_DIR) / f"sample_{stem}.txt"
     out.write_text(head + "\n".join(lines), encoding="utf-8")
-    return str(out)
+    return gr.update(value=str(out), visible=True)
 
 
 def nav(session: Dict, delta: Optional[int], abs_idx: int, disposition, flavor, origin,
@@ -1830,50 +2053,42 @@ def overview(session: Dict):
 # on its actual tab button (documented Gradio hook) — targeted here, not a
 # fragile text/position selector that breaks if a label changes.
 _TAB_CSS = """
-#tab-row-inspector-button { color: #4f46e5 !important; }
-#tab-row-inspector-button.selected { border-color: #4f46e5 !important; }
-#tab-overview-button { color: #059669 !important; }
-#tab-overview-button.selected { border-color: #059669 !important; }
-#tab-guidance-button { color: #7c3aed !important; }
-#tab-guidance-button.selected { border-color: #7c3aed !important; }
-.gloss-flash { animation: glossflash 1.6s ease-out; }
-@keyframes glossflash {
-  0%,20% { background: #ede9fe; box-shadow: 0 0 0 3px #c4b5fd inset; }
-  100%   { background: transparent; box-shadow: none; }
+/* FORCE LIGHT (Sandra 2026-07-17). Half the app's CSS is theme-aware (var(--…)) but
+   the stage cards / KPI cards / chips / mermaid diagram hardcode light colors, so a
+   system-dark viewer got light boxes with near-white theme text on them — genuinely
+   unreadable. Decision: pin the app LIGHT for a coherent team demo rather than a
+   40-site theme-var refactor. color-scheme:light stops the UA dark form controls;
+   the token overrides stop Gradio's Soft() dark palette from leaking into the
+   var(--…) sites, so theme-aware and hardcoded CSS now agree (both light). */
+:root, .dark {
+  color-scheme: light !important;
+  --body-background-fill: #ffffff !important;
+  --background-fill-primary: #ffffff !important;
+  --background-fill-secondary: #f8fafc !important;
+  --body-text-color: #0f172a !important;
+  --body-text-color-subdued: #475569 !important;
+  --border-color-primary: #e2e8f0 !important;
+  --block-background-fill: #ffffff !important;
+  --block-label-background-fill: #f8fafc !important;
+  --input-background-fill: #ffffff !important;
+  --neutral-950: #0f172a !important;
 }
-"""
+body, .gradio-container { background: #ffffff !important; color: #0f172a !important; }
 
-# Cross-tab glossary navigation (Sandra 2026-07-17). Gradio's gr.HTML strips
-# <script>, so the click handler is installed via the Blocks `js=` hook, which runs
-# once at app load and is NOT sanitized. A single delegated listener on document
-# catches any `.gloss` link click: it switches to the App Guidance tab (clicking its
-# tab button), then scrolls the matching `#gloss-<slug>` row into view and flashes
-# it. A short retry loop covers the tab's content mounting lazily after the switch.
-_GLOSS_JS = """
-() => {
-  document.addEventListener('click', (e) => {
-    const a = e.target.closest && e.target.closest('a.gloss');
-    if (!a) return;
-    e.preventDefault();
-    const slug = a.getAttribute('data-gloss');
-    if (!slug) return;
-    const btn = document.getElementById('tab-guidance-button');
-    if (btn) btn.click();
-    let tries = 0;
-    const go = () => {
-      const el = document.getElementById('gloss-' + slug);
-      if (el) {
-        el.scrollIntoView({behavior: 'smooth', block: 'center'});
-        el.classList.remove('gloss-flash');
-        void el.offsetWidth;            // reflow so the animation re-fires
-        el.classList.add('gloss-flash');
-      } else if (tries++ < 20) {
-        setTimeout(go, 60);            // guidance tab content still mounting
-      }
-    };
-    setTimeout(go, 80);
-  }, true);
-}
+/* TABS — REVERTED to the known-good minimal styling (Sandra 2026-07-17). The
+   "prominent pill" version (boxed .tab-nav bar, forced flex/overflow/height) FROZE the
+   page on tab click — forcing layout on Gradio's own tab container triggered a
+   ResizeObserver loop → "Page Unresponsive". This version styles ONLY the tab BUTTON's
+   own text color + a slightly bolder weight (safe, cosmetic-only properties Gradio's
+   layout doesn't fight), so the tabs are still colour-coded + a touch more prominent
+   than the bare default, but nothing that can loop. Each tab keeps its accent colour. */
+button[role="tab"] { font-weight: 600 !important; font-size: 15px !important; }
+#tab-row-inspector-button { color: #4f46e5 !important; }
+#tab-row-inspector-button.selected { color: #4f46e5 !important; border-color: #4f46e5 !important; }
+#tab-overview-button { color: #059669 !important; }
+#tab-overview-button.selected { color: #059669 !important; border-color: #059669 !important; }
+#tab-guidance-button { color: #7c3aed !important; }
+#tab-guidance-button.selected { color: #7c3aed !important; border-color: #7c3aed !important; }
 """
 
 
@@ -1881,38 +2096,71 @@ def build_ui() -> gr.Blocks:
     # theme/css/js moved to launch() — Gradio 6.0 relocated them off the Blocks
     # constructor (a constructor-arg js= is IGNORED, so the gloss handler wouldn't
     # install). They're applied in main()'s demo.launch(...) instead.
-    with gr.Blocks(title="pipeline-inspector — VObs-tool-SFT") as demo:
-        gr.Markdown("## 🔬 pipeline-inspector — VObs-tool-SFT pipeline quality "
-                    "(gen → rewrite → judge → regen · row video · step_metrics)")
+    with gr.Blocks(title="VObs-tool Pipeline Inspector") as demo:
+        gr.Markdown(
+            "<div style='padding:4px 2px 2px'>"
+            "<div style='font-size:26px;font-weight:700;color:#1e1b4b;"
+            "letter-spacing:-0.3px'>🔬 VObs-tool Pipeline Inspector</div>"
+            "<div style='font-size:14.5px;color:#475569;margin-top:3px'>"
+            "Inspect how each physiotherapy clip was graded and taught — the video, "
+            "the reasoning, the judges, and why it was kept or dropped."
+            "<span style='color:#94a3b8'> · New here? Open the "
+            "<b>App&nbsp;Guidance</b> tab.</span></div></div>")
 
-        # Section ① — load a run. Visually separated from the filter/nav/display
-        # controls below (Sandra 2026-07-16: the toolbar read as one flat stack
-        # of same-styled widgets — group by PURPOSE instead).
-        gr.Markdown("#### 1 · Load a run")
+        # "Load a run" is SHARED setup (it feeds every tab), so it's an UNNUMBERED
+        # banner — NOT step 1 of the inspect flow. The numbered steps (Filter →
+        # Navigate → Display) live INSIDE the "Inspect one clip" tab, so the tab bar
+        # no longer looks like it interrupts a 1-2-3-4 sequence (Sandra 2026-07-17).
+        gr.Markdown(_step_banner(None, "Load a run", "#4f46e5", icon="📂"))
         with gr.Row():
             run_dd = gr.Dropdown(choices=discover_runs(), value=None,
-                                 label=f"Runs under {DATASET_ROOT} (newest first)",
-                                 scale=3, allow_custom_value=True)
+                                 label=f"Pick a run (the {_MAX_VISIBLE_RUNS} newest clean "
+                                 f"runs)",
+                                 scale=4, allow_custom_value=True)
             # Re-scan the dataset root for NEW runs produced after the app started
             # (e.g. a fresh smoke) — without this the dropdown is frozen at launch
             # time, so a just-produced run wouldn't be selectable until restart.
             rescan_btn = gr.Button("↻ Runs", scale=1)
-            path_tb = gr.Textbox(value=DEFAULT_JSONL, label="…or kept-rows JSONL path "
-                                 "(sibling .dropped.jsonl auto-loads)", scale=3)
             load_btn = gr.Button("Load / Reload", variant="primary", scale=1)
-        load_status = gr.Markdown()
+        # The free-text JSONL-path box is a POWER-USER / debug escape hatch (load a run
+        # NOT in the 3-newest dropdown — an older/superseded run, or a different folder).
+        # Tucked in a collapsed accordion (Sandra 2026-07-17) so the team-facing UI is
+        # just dropdown + Load; it still holds the startup default so auto-load works.
+        with gr.Accordion("Advanced: load a run by path", open=False):
+            path_tb = gr.Textbox(value=_default_jsonl(),
+                                 label="Kept-rows JSONL path (its sibling .dropped.jsonl "
+                                 "auto-loads). Overrides the dropdown when set.")
+        load_status = gr.Markdown("👋 Pick a run above and press **Load / Reload** to "
+                                  "start. (Auto-load on open is disabled — it froze "
+                                  "the page.)")
 
+        # A loud signpost so a newcomer knows the three VIEWS below are tabs to click.
+        # Rendered as its OWN padded callout box (Sandra 2026-07-17) — the previous bare
+        # one-line div was clipped/overlapped by the tab bar above it. block=True gives
+        # the Markdown its own container so nothing crowds it.
+        gr.Markdown(
+            "<div style='margin:22px 0 8px;padding:12px 16px;border:1px solid #e2e8f0;"
+            "border-radius:10px;background:#f8fafc;font-size:14px;color:#334155;"
+            "line-height:1.6'>"
+            "<b style='font-size:15px'>👇 3 views — click a tab below:</b><br>"
+            "<b style='color:#4f46e5'>Inspect one clip</b> — browse clip-by-clip · "
+            "<b style='color:#059669'>Run overview</b> — whole-run stats · "
+            "<b style='color:#7c3aed'>App Guidance</b> — what every term means "
+            "<i>(start here)</i>"
+            "</div>")
         with gr.Tabs():
-            with gr.Tab("Row inspector", elem_id="tab-row-inspector"):
+            with gr.Tab("🔍 Inspect one clip", elem_id="tab-row-inspector"):
                 # Section ② — filter which rows are in scope.
-                gr.Markdown("#### 2 · Filter")
+                gr.Markdown(_step_banner(1, "Filter which clips to browse", "#0891b2"))
                 with gr.Row():
                     disp_dd = gr.Dropdown(choices=disposition_choices(), value=ALL,
-                                          label="kept / dropped / judge-excluded")
-                    flavor_dd = gr.Dropdown(choices=[ALL], value=ALL, label="flavor")
-                    origin_dd = gr.Dropdown(choices=[ALL], value=ALL, label="prompt_origin")
+                                          label="Outcome (kept / dropped / judge-excluded)")
+                    flavor_dd = gr.Dropdown(choices=[ALL], value=ALL,
+                                            label="Flavor (A–E tool-use behavior)")
+                    origin_dd = gr.Dropdown(choices=[ALL], value=ALL,
+                                            label="How it was generated (prompt_origin)")
                     verdict_dd = gr.Dropdown(choices=[ALL], value=ALL,
-                                             label="judge_verdict_kind")
+                                             label="Judge outcome (judge_verdict_kind)")
                 with gr.Row():
                     rewrite_dd = gr.Dropdown(choices=YES_NO, value=ALL,
                                              label="Stage-2 GT-align rewrite applied?")
@@ -1924,20 +2172,30 @@ def build_ui() -> gr.Blocks:
                                         label="J2 format — ever failed?")
                     j3_dd = gr.Dropdown(choices=YES_NO, value=ALL,
                                         label="J3 flavor-purpose — ever failed?")
+                with gr.Row():
+                    # The J-numbers are STABLE NAMES, not run order (Sandra 2026-07-17):
+                    # a newcomer reads "J1, J2, J3" as the sequence, but the cascade runs
+                    # J2 (cheapest) → J1 → J3. Say so once, right under the filters.
+                    gr.Markdown(
+                        "<span style='font-size:12px;color:#64748b'>ℹ️ <b>J1/J2/J3 are "
+                        "fixed names, not the run order.</b> The cascade actually runs "
+                        "<b>J2 → J1 → J3</b> (cheapest judge first). · Nine filters — hit "
+                        "<b>Clear filters</b> to reset.</span>")
+                    clear_btn = gr.Button("Clear filters", size="sm", scale=0)
 
                 # Section ③ — move through the filtered rows (step / random /
                 # jump-to-index all live together, one visual group).
-                gr.Markdown("#### 3 · Navigate")
+                gr.Markdown(_step_banner(2, "Navigate", "#059669"))
                 prev_btn, next_btn, random_btn, refresh_btn, counter_md = \
                     nav_widgets.make_nav_row()
                 jump_input, jump_btn = nav_widgets.make_jump_row("Jump to row index (0-based)")
 
                 # Section ④ — display + export the CURRENTLY shown row.
-                gr.Markdown("#### 4 · Display & export this row")
+                gr.Markdown(_step_banner(3, "Display &amp; export this clip", "#d97706"))
                 with gr.Row():
                     pre_fs = gr.Slider(8, 28, value=12, step=1,
                                        label="Prompt text size (px)", scale=3)
-                    dl_btn = gr.Button("⬇ Download this sample (.txt)", scale=1)
+                    dl_btn = gr.Button("⬇ Download this clip (.txt)", scale=1)
                 # Prompt text size sets the --pre-fs CSS var live (client-side, no
                 # server round-trip) so every prompt/output <pre> scales.
                 pre_fs.change(
@@ -1948,33 +2206,36 @@ def build_ui() -> gr.Blocks:
                 # /preview-output). Appears when the button is clicked. height
                 # caps the empty-state drop-zone (was a tall blank box before
                 # any download — Sandra 2026-07-16).
-                dl_file = gr.File(label="sample .txt (all data for this one sample)",
-                                  visible=True, height=80)
+                dl_file = gr.File(label="clip .txt (all data for this one clip)",
+                                  visible=False, height=80)
 
                 header_html = gr.HTML()
                 with gr.Row():
                     with gr.Column(scale=2):
-                        video = gr.Video(label="the rep video, from the row's OWN "
-                                         "video_frames (fps + mirror per row)", height=420)
+                        video = gr.Video(label="the clip video, from this clip's OWN "
+                                         "video_frames (fps + mirror per clip)", height=420)
                         video_status = gr.Markdown()
                     with gr.Column(scale=3):
-                        gr.Markdown("**step_metrics** — schema-driven (stages/fields "
-                                    "iterated from the row; source of truth = producer's "
-                                    "`step_metrics.py`)")
+                        gr.Markdown("**Per-stage metrics** — size, grade, wall-time and "
+                                    "how much each stage changed the answer, one row per "
+                                    "pipeline stage.")
                         metrics_html = gr.HTML()
-                trail_html = gr.HTML(label="pipeline trail")
+                gr.Markdown("**Pipeline trail** — every stage this clip went through, "
+                            "in order, with the prompts and the model's replies.")
+                trail_html = gr.HTML()
                 final_html = gr.HTML()
-                with gr.Accordion("All row fields not rendered above",
+                with gr.Accordion("Everything else on this clip (raw fields)",
                                   open=False):
                     other_html = gr.HTML()
 
-            with gr.Tab("Run overview", elem_id="tab-overview"):
-                overview_btn = gr.Button("Compute overview",
+            with gr.Tab("📊 Run overview", elem_id="tab-overview"):
+                overview_btn = gr.Button("Compute overview for the loaded run",
                                          variant="primary")
                 overview_html = gr.HTML()
-                overview_plot = gr.Plot(label="change-ratio distributions per flavor")
+                overview_plot = gr.Plot(label="How much each stage rewrote the answer, "
+                                        "per flavor (0 = untouched, 1 = fully replaced)")
 
-            with gr.Tab("App Guidance", elem_id="tab-guidance"):
+            with gr.Tab("📖 App Guidance", elem_id="tab-guidance"):
                 # Plain-language glossary of every idea in this app + the live
                 # workflow diagram (read from the canonical .mmd, so it can't drift).
                 gr.HTML(guidance_html())
@@ -2013,8 +2274,13 @@ def build_ui() -> gr.Blocks:
 
         # every data callback takes session_state as its FIRST input.
         _si = [session_state, idx_state] + filter_inputs
+        # .input (USER-only), NOT .change (2026-07-17): .change also fires on PROGRAMMATIC
+        # updates, so do_load / do_clear returning gr.update(value=ALL) for all nine
+        # dropdowns would each re-trigger show_row → nine extra full re-renders (video
+        # re-encode included) racing last-write-wins against the caller's own row_outputs.
+        # .input fires only on a real user change, so a programmatic reset is silent.
         for dd in filter_inputs:
-            dd.change(show_row, _si, row_outputs)
+            dd.input(show_row, _si, row_outputs)
         prev_btn.click(lambda s, i, d, f, o, v, rw, s4, j1, j2, j3: nav(s, -1, i, d, f, o, v, rw, s4, j1, j2, j3),
                        _si, row_outputs)
         next_btn.click(lambda s, i, d, f, o, v, rw, s4, j1, j2, j3: nav(s, +1, i, d, f, o, v, rw, s4, j1, j2, j3),
@@ -2022,6 +2288,14 @@ def build_ui() -> gr.Blocks:
         random_btn.click(lambda s, i, d, f, o, v, rw, s4, j1, j2, j3: nav(s, None, i, d, f, o, v, rw, s4, j1, j2, j3),
                          _si, row_outputs)
         refresh_btn.click(show_row, _si, row_outputs)
+        # Clear filters (Sandra 2026-07-17): reset all 9 filter dropdowns to ALL and
+        # re-render from row 0, so a colleague who filtered into a 0-match corner has a
+        # one-click way out instead of resetting nine dropdowns by hand.
+        def do_clear(session):
+            resets = [gr.update(value=ALL) for _ in filter_inputs]
+            first = show_row(session, 0, *([ALL] * len(filter_inputs)))
+            return resets + list(first)
+        clear_btn.click(do_clear, [session_state], filter_inputs + row_outputs)
         # #7: guard int() on an empty/garbage jump box — fall back to the current idx.
         def _jump(s, j, i, d, f, o, v, rw, s4, j1, j2, j3):
             try:
@@ -2036,10 +2310,14 @@ def build_ui() -> gr.Blocks:
 
         overview_btn.click(overview, [session_state], [overview_html, overview_plot])
 
-        # Startup auto-load uses the SAME do_load, so it must also write session_state
-        # (its first output) — otherwise the auto-loaded rows would live nowhere.
-        demo.load(do_load, [run_dd, path_tb],
-                  [session_state, load_status] + filter_inputs + row_outputs)
+        # NO startup auto-load (2026-07-17, ROOT-CAUSE FIX). `demo.load(do_load, …)`
+        # (added 07-15, cd9f5eb) fired the full run render — 9 dropdown updates + MB-scale
+        # HTML + video — while the page was still MOUNTING, which drives Gradio 6.14's
+        # Svelte runtime into an infinite `effect_update_depth_exceeded` loop → main
+        # thread pegged → the "Page Unresponsive" tab-click freeze the team hit. The
+        # IDENTICAL render triggered by the Load button after mount is healthy (verified
+        # headless: 1042 loop errors with auto-load, 0 without; tabs 60-90ms). So the run
+        # loads on an explicit Load click only; load_status's initial text says so.
     return demo
 
 
@@ -2047,14 +2325,51 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=7880)
     ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument("--share", action="store_true")
+    ap.add_argument("--share", action="store_true",
+                    help="Expose a share link via the self-hosted SWORD relay "
+                         "(VPN-only). Plain launch stays local-only.")
+    # VPN-only sharing over Sword's self-hosted Gradio relay (NOT gradio.live —
+    # that public tunnel would expose the app outside the VPN). --share routes the
+    # tunnel through this internal relay, so the link only resolves on the VPN.
+    ap.add_argument("--share-server-address",
+                    default="gradio-share.swordhealth.tech:7000",
+                    help="Self-hosted Gradio share-server address (host:port). "
+                         "VPN-only. Default: the Sword internal relay.")
+    ap.add_argument("--share-server-protocol", default="https",
+                    choices=["http", "https"],
+                    help="Protocol for the self-hosted share server. Default: https.")
+    ap.add_argument("--no-ssr", action="store_true",
+                    help="Disable Gradio server-side rendering (escape hatch for "
+                         "relay-side hydration issues; normally unnecessary).")
     args = ap.parse_args()
     os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
     demo = build_ui()
-    # Gradio 6.0: theme/css/js belong on launch(), not the Blocks constructor.
+    # Gradio 6.0: theme/css belong on launch(), not the Blocks constructor. The gloss
+    # `js=` load-hook is GONE (2026-07-17) — cross-tab links were unreliable under this
+    # Gradio/relay setup, so they were removed; App Guidance is the reference tab.
+    # ssr_mode=False (Sandra 2026-07-17): with Gradio 6's server-side rendering ON, the
+    # page served THROUGH the self-hosted relay renders but never hydrates the client
+    # event layer — everything looks right but CLICKS DO NOTHING. Disabling SSR makes
+    # the client a plain SPA that wires its own events over the tunnel, which the relay
+    # proxies correctly. (Local-only launches work either way; this only matters over
+    # the share relay.)
+    # 'public' → the standard PUBLIC gradio.live tunnel (diagnostic only; note the
+    # cluster egress gateway blocks its traffic, so it 504s — kept as an escape hatch).
+    relay_kwargs = {}
+    if args.share_server_address.lower() not in ("public", "none", ""):
+        relay_kwargs = dict(share_server_address=args.share_server_address,
+                            share_server_protocol=args.share_server_protocol)
+    # ssr_mode stays at Gradio's DEFAULT (2026-07-17): the tab-click freeze was the
+    # startup auto-load (see build_ui), NOT SSR — the earlier "SSR on → clicks do
+    # nothing over the relay" observation was almost certainly the same freeze
+    # misread, and the one app click-verified over this relay (the minimal tabs
+    # probe) ran with default SSR. --no-ssr is the escape hatch if a relay-side
+    # hydration issue ever does show up.
+    if args.no_ssr:
+        relay_kwargs["ssr_mode"] = False
     demo.launch(server_name=args.host, server_port=args.port, share=args.share,
                 allowed_paths=[VIDEO_CACHE_DIR],
-                theme=gr.themes.Soft(), css=_TAB_CSS, js=_GLOSS_JS)
+                theme=gr.themes.Soft(), css=_TAB_CSS, **relay_kwargs)
 
 
 if __name__ == "__main__":
