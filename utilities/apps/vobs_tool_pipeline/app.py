@@ -128,16 +128,85 @@ def load_run(jsonl_path: str) -> str:
             f"(`{dropped_path.name}`) from `{p.parent}`")
 
 
+# Substrings that mark a run dir as SUPERSEDED / pre-fix / contaminated — hidden
+# from the dropdown so a team-shared app only ever offers clean, current runs
+# (Sandra 2026-07-17). The free-text path box still loads ANY path for debugging.
+_SUPERSEDED_MARKERS = ("_pre_", "_pre.", "_prefix", "preaudit", "contaminated",
+                       "superseded", "_buggy", "_archive", "_old")
+# How many clean runs the dropdown offers (newest first).
+_MAX_VISIBLE_RUNS = 3
+
+
+def _is_superseded_run(path: Path) -> bool:
+    """True if the run dir name carries a pre-fix / contaminated / archived marker."""
+    name = path.parent.name.lower()
+    return any(m in name for m in _SUPERSEDED_MARKERS)
+
+
 def discover_runs() -> List[str]:
-    """Every kept-rows JSONL under DATASET_ROOT (newest first). ckpt/dropped
-    sidecars excluded. Free-text path box covers anything outside the root."""
+    """The newest CLEAN kept-rows JSONLs under DATASET_ROOT (newest first, capped at
+    _MAX_VISIBLE_RUNS). ckpt/dropped sidecars AND superseded/pre-fix runs are excluded
+    so a team-shared dropdown never offers a stale run. The free-text path box still
+    loads anything outside this list for debugging."""
     root = Path(DATASET_ROOT)
     if not root.is_dir():
         return []
     hits = [q for q in root.glob("*/*.jsonl")
-            if not q.name.endswith((".ckpt.jsonl", ".dropped.jsonl"))]
+            if not q.name.endswith((".ckpt.jsonl", ".dropped.jsonl"))
+            and not _is_superseded_run(q)]
     hits.sort(key=lambda q: q.stat().st_mtime, reverse=True)
-    return [str(q) for q in hits]
+    return [str(q) for q in hits[:_MAX_VISIBLE_RUNS]]
+
+
+# ---------------------------------------------------------------------------
+# Cross-tab GLOSSARY LINKS (Sandra 2026-07-17): a term shown in a panel can link
+# to its definition in the App Guidance tab. `_gloss_slug` maps a term to a stable
+# anchor id; guidance rows carry `id="gloss-<slug>"`; `_gloss(label, term)` wraps a
+# term in a panel as a clickable link. A tiny JS handler (installed via the Blocks
+# `js=` hook, which survives Gradio's <script> stripping) intercepts the click,
+# switches to the guidance tab, scrolls to the anchor, and flashes it.
+_GLOSS_SLUGS = {
+    # canonical term -> slug (used for BOTH the guidance anchor and panel links)
+    "all errors identified": "all-errors-identified",
+    "severity-exact": "all-errors-identified",   # same guidance row
+    "fully-correct": "all-errors-identified",
+    "judge-excluded": "drop_reason",
+    "workflow": "drop_reason",
+    "drop_reason": "drop_reason",
+    "step_metrics": "step_metrics",
+    "changed_ratio": "changed_ratio",
+    "regen": "regen",
+    "re-route": "re-route",
+    "prompt_origin": "prompt_origin",
+    "flavor": "flavor",
+    "natural_severity_exact": "natural_severity_exact",
+    "judge_failed_pass": "judge_failed_pass",
+    "best-of-k": "how-best-of-k-picks-the-winner",
+    # full guidance-row titles → short slugs, so both the row anchor and the panel
+    # links resolve to the same id.
+    "all errors identified vs severity-exact vs f1": "all-errors-identified",
+    "regen — stage-4 repair": "regen",
+}
+
+
+def _gloss_slug(term: str) -> str:
+    """Stable anchor slug for a guidance term (lowercased, non-alnum → hyphen). The
+    result is ALWAYS hyphen-only (no underscores) so both the anchor id and the link
+    target agree — a mapped alias is itself re-normalized."""
+    import re as _re
+    key = term.strip().lower()
+    raw = _GLOSS_SLUGS.get(key, key)
+    return _re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+
+
+def _gloss(label: str, term: str = None) -> str:
+    """Wrap `label` as a clickable link to its App-Guidance definition. `term` (if
+    given) resolves the slug; else `label` does. Renders a plain <a> with a data
+    attribute — the Blocks js handler does the cross-tab navigation on click."""
+    slug = _gloss_slug(term or label)
+    return (f"<a href='#gloss-{slug}' class='gloss' data-gloss='{slug}' "
+            f"style='color:#7c3aed;text-decoration:none;border-bottom:1px dotted #7c3aed;"
+            f"cursor:pointer' title='See the definition in App Guidance'>{label}</a>")
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +324,14 @@ def guidance_html() -> str:
               "sandbox='allow-scripts'></iframe>")
 
     def row(term, meaning):
-        return (f"<tr><td style='padding:6px 12px;width:150px;max-width:150px;"
+        # Anchor id so a panel link (_gloss) can scroll here. Slug from the term text
+        # with HTML tags + leading markers (e.g. 'A · ', '① ') stripped.
+        import re as _re
+        plain = _re.sub(r"<[^>]+>", "", term)
+        plain = _re.sub(r"^[A-E]\s*·\s*|^[①②③④⑤]\s*", "", plain)
+        slug = _gloss_slug(plain)
+        return (f"<tr id='gloss-{slug}' style='scroll-margin-top:60px'>"
+                f"<td style='padding:6px 12px;width:150px;max-width:150px;"
                 f"vertical-align:top;font-weight:600;color:#1e1b4b'>{term}</td>"
                 f"<td style='padding:6px 12px;color:#334155'>{meaning}</td></tr>")
 
@@ -393,8 +469,9 @@ def guidance_html() -> str:
         ])),
         ("How best-of-K picks the winner", bullets(
             "The attempt label shows the REAL selection key (not just all-errors-identified, "
-            "which ties on every clean rep). The driver keeps the attempt that is "
-            "MAX on this cascade, in order — earlier tiers dominate:", [
+            "which ties on every clean rep). The driver keeps the attempt that is MAX on this "
+            "cascade — <b>strictest tier dominates</b>. (The label lists them loosest→strictest "
+            "for reading; the RANKING below is strictest-first.)", [
             "1. <b>Fully-correct</b> — error set + every severity magnitude + Effectiveness + Injury all == GT. The truly-perfect grade; a K-set with one of these skips the rewrite entirely.",
             "2. <b>Severity-exact</b> — every severity MAGNITUDE matches (eff/injury may be unchecked).",
             "3. <b>All errors identified</b> — the right errors flagged present/absent (the <code>is_perfect</code> field). Ties constantly — this is why all-errors-identified alone can't explain a pick.",
@@ -464,7 +541,7 @@ def guidance_html() -> str:
            "so it stays current as the pipeline changes.</p>"
            f"{iframe}"
            "<details style='margin-top:8px'>"
-           "<summary style='cursor:pointer;color:#64748b;font-size:13px'>diagram source (mermaid)</summary>"
+           "<summary style='cursor:pointer;color:#64748b;font-size:13px'>Diagram source (mermaid)</summary>"
            "<pre style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;"
            f"font-size:12px;overflow:auto'>{mmd_esc}</pre></details>"
            "</td></tr>",
@@ -606,10 +683,18 @@ def _details(summary: str, body: str, open_: bool = False) -> str:
             f"{body}</details>")
 
 
-def _chip(label: str, value, color: str = "var(--background-fill-secondary)") -> str:
+def _chip(label: str, value, color: str = "var(--background-fill-secondary)",
+          gloss: str = None) -> str:
+    # Link the LABEL to its App-Guidance definition when it names a KNOWN glossary
+    # term (Sandra 2026-07-17). Auto-links only labels present in _GLOSS_SLUGS so
+    # chips like 'session|rep' don't get dead links; pass gloss="term" to force one.
+    term = gloss if gloss is not None else label
+    lbl = (_gloss(f"<b>{_esc(label)}</b>", term)
+           if term and term.strip().lower() in _GLOSS_SLUGS
+           else f"<b>{_esc(label)}</b>")
     return (f"<span style='display:inline-block;background:{color};border-radius:12px;"
             f"padding:2px 10px;margin:2px 4px 2px 0;font-size:12px'>"
-            f"<b>{_esc(label)}</b>: {_esc(value)}</span>")
+            f"{lbl}: {_esc(value)}</span>")
 
 
 def _text_of(content) -> str:
@@ -697,9 +782,11 @@ def _fmt_cell(v) -> str:
 def render_step_metrics(r: Dict) -> str:
     sm = r.get("step_metrics")
     if not sm:
-        return ("<div style='color:#b91c1c;font-weight:700'>🔴 step_metrics not present "
-                "on this row — pre-2026-07-15 run or a partial (timeout/exception) stub. "
-                "Regenerate at the producer if this is unexpected.</div>")
+        return ("<div style='color:#b91c1c;font-weight:700'>🔴 " + _gloss("step_metrics")
+                + " not present on this row — most often a <b>workflow drop</b> "
+                "(a partial timeout/exception stub that never finished the pipeline), or a "
+                "pre-2026-07-15 run. Expected for a workflow-dropped row; regenerate at the "
+                "producer only if you hit it on a kept or judge-excluded row.</div>")
     # Schema-driven split: dict-valued keys = stages (table rows, insertion
     # order); everything else = row-level scalars shown as chips.
     stages = {k: v for k, v in sm.items() if isinstance(v, dict)}
@@ -781,10 +868,14 @@ def _attempt_selection_metrics(a: Dict) -> str:
     tp, fp, fn = a.get("tp"), a.get("fp"), a.get("fn")
     nmm = a.get("n_sev_mismatch")
     bits = [
-        f"Fully-correct {_tick(fc)}",       # tier 1 — the truly-perfect grade
-        f"Severity-exact {_tick(sev)}",     # tier 2 — magnitudes all match
-        f"All errors identified {_tick(pres)}",  # tier 3 — right present/absent set (was 'is_perfect')
-        f"F1={f1}",                          # tier 4 — presence F1
+        # DISPLAY order = loosest → strictest (Sandra 2026-07-17): most-probable
+        # first (all errors identified), tightening to the truly-perfect grade. This
+        # is presentation only — the SELECTION cascade in _select_best still ranks
+        # fully-correct HIGHEST (see _win_reason for what actually decided the pick).
+        f"All errors identified {_tick(pres)}",  # right present/absent set (was 'is_perfect')
+        f"Severity-exact {_tick(sev)}",     # + every magnitude matches
+        f"Fully-correct {_tick(fc)}",       # + eff/injury match → the truly-perfect grade
+        f"F1={f1}",                          # presence F1
     ]
     tail = []
     if fp is not None:
@@ -1018,11 +1109,11 @@ def render_trail(r: Dict) -> str:
         _title = "③ Gate-3 judge — 3-specialist cascade (+ stage-4 repair)"
         out.append(f"<h4>{_title}</h4>" + "".join(parts))
     else:
-        out.append("<h4>③ Gate-3 judge</h4><div style='opacity:.7'>not run for this row "
+        out.append("<h4>③ Gate-3 judge</h4><div style='opacity:.7'>Not run for this row "
                    "(--no-judge run, or dropped before the judge)</div>")
 
     if not out:
-        return "<div style='opacity:.7'>no pipeline-trail fields on this row</div>"
+        return "<div style='opacity:.7'>No pipeline-trail fields on this row</div>"
     # Wrap each stage (each `out` entry begins with its own <h4>) in a spaced,
     # bordered card so the three stages read as distinct blocks instead of running
     # together (Sandra 2026-07-16). A left accent bar colour-codes the stage.
@@ -1114,7 +1205,7 @@ def show_row(abs_idx: int, disposition: str, flavor: str, origin: str, verdict: 
     rows = STATE["rows"]
     sel = filtered(disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
     if not rows:
-        empty = "<div style='opacity:.6'>no rows loaded</div>"
+        empty = "<div style='opacity:.6'>No rows loaded</div>"
         return (None, "load a run first", empty, empty, empty, empty, empty,
                 "No samples loaded", abs_idx)
     if abs_idx not in sel and sel:
@@ -1277,7 +1368,7 @@ def _run_insights_html(rows: List[Dict]) -> str:
             f"<td style='padding:3px 8px'>{gap_str}</td></tr>")
     flavor_tbl = (
         "<h4 style='margin:14px 0 4px'>Per-flavor: keep-rate &amp; mix balance</h4>"
-        "<div style='font-size:11px;opacity:.65;margin-bottom:4px'>dropped = ALL drops "
+        "<div style='font-size:11px;opacity:.65;margin-bottom:4px'>Dropped = ALL drops "
         "(judge-excluded + workflow) · share = this flavor's % of KEPT rows · target = its "
         "% of the 4k quota · Δ near 0pp = on-balance</div>"
         "<div style='overflow-x:auto'><table style='border-collapse:collapse;font-size:12.5px'>"
@@ -1307,18 +1398,20 @@ def _run_insights_html(rows: List[Dict]) -> str:
         def _dr_rows(d):
             return "".join(
                 f"<tr><td style='padding:3px 8px'><code>{_esc(rsn)}</code></td>"
-                f"<td style='padding:3px 8px'>{n}</td>"
+                f"<td style='padding:3px 8px;white-space:nowrap'>{n}</td>"
                 f"<td style='padding:3px 8px'>{_bar(n/mx, '#b91c1c', 120)}</td>"
-                f"<td style='padding:3px 8px'>{_pct(n, nd):.0f}% of drops</td></tr>"
+                f"<td style='padding:3px 8px;white-space:nowrap'>{_pct(n, nd):.0f}% of drops</td></tr>"
                 for rsn, n in sorted(d.items(), key=lambda kv: -kv[1]))
 
         def _subhead(label, sub, n, color):
-            return (f"<tr><td colspan='4' style='padding:7px 8px 3px;"
-                    f"border-top:2px solid {color}33'>"
+            # 3-cell subhead (label+sub span the text cols, subtotal aligned to the
+            # share column) so it reads with the rows rather than floating.
+            return (f"<tr style='border-top:2px solid {color}33'>"
+                    f"<td colspan='3' style='padding:7px 8px 3px'>"
                     f"<span style='color:{color};font-weight:700'>{label}</span> "
-                    f"<span style='opacity:.6;font-size:11.5px'>— {sub}</span> "
-                    f"<span style='float:right;font-weight:700'>{n} "
-                    f"({_pct(n, nd):.0f}% of drops)</span></td></tr>")
+                    f"<span style='opacity:.6;font-size:11.5px'>— {sub}</span></td>"
+                    f"<td style='padding:7px 8px 3px;white-space:nowrap;"
+                    f"font-weight:700;color:{color}'>{n} ({_pct(n, nd):.0f}%)</td></tr>")
 
         body = ""
         if judge_dr:
@@ -1337,13 +1430,13 @@ def _run_insights_html(rows: List[Dict]) -> str:
                     "(opt-out / rewrite / shape / exception). The tab-1 filter treats these as "
                     "mutually exclusive.</div>"
                     "<div style='overflow-x:auto'><table style='border-collapse:collapse;"
-                    "font-size:12.5px;width:100%'><tr><th style='padding:3px 8px;text-align:left'>drop_reason</th>"
+                    "font-size:12.5px'><tr><th style='padding:3px 8px;text-align:left'>drop_reason</th>"
                     "<th style='padding:3px 8px;text-align:left'>n</th><th></th>"
                     "<th style='padding:3px 8px;text-align:left'>share</th></tr>"
                     + body + "</table></div>")
     else:
         drop_tbl = ("<h4 style='margin:14px 0 4px'>What's dropping rows</h4>"
-                    "<div style='opacity:.7;font-size:12.5px'>no dropped rows loaded — "
+                    "<div style='opacity:.7;font-size:12.5px'>No dropped rows loaded — "
                     "0 drops, or the <code>.dropped.jsonl</code> sidecar isn't present.</div>")
 
     # rewrite / repair funnel — how much teacher work each row cost + opt-out rate.
@@ -1504,7 +1597,7 @@ def overview():
         htm.append(
             "<h4 style='margin:4px 0'>Cost &amp; timing per flavor "
             "<span style='font-weight:400;font-size:12px;opacity:.65'>(median per row)</span></h4>"
-            "<div style='font-size:11px;opacity:.65;margin-bottom:4px'>how long each "
+            "<div style='font-size:11px;opacity:.65;margin-bottom:4px'>How long each "
             "flavor spends in each teacher stage, and how big its final trace is — "
             "C is the slowest (always two-pass: generate→rewrite→judge).</div>"
             "<div style='overflow-x:auto'><table style='border-collapse:collapse;font-size:12.5px'>"
@@ -1525,7 +1618,7 @@ def overview():
             rraw.append(f"<tr><td style='padding:4px 8px;font-weight:700'>{_esc(fl)}</td>{tds}</tr>")
         htm.append(_details(
             "full step_metrics aggregate (all producer keys)",
-            "<div style='font-size:11px;opacity:.7;margin:4px 0'>from the producer's own "
+            "<div style='font-size:11px;opacity:.7;margin:4px 0'>From the producer's own "
             "<code>summarize_step_metrics()</code>; kept+dropped rows. "
             "<code>final_not_perfect_count</code> should be ~0 (the grade invariant); "
             "rates are 0–1.</div>"
@@ -1533,7 +1626,7 @@ def overview():
             f"font-size:12px'><tr><th style='padding:4px 8px'>flavor</th>{rhead}</tr>"
             + "".join(rraw) + "</table></div>"))
     else:
-        htm.append("<div style='color:#b91c1c;font-weight:700'>🔴 no rows with "
+        htm.append("<div style='color:#b91c1c;font-weight:700'>🔴 No rows with "
                    "step_metrics in this run (pre-2026-07-15 output) — the aggregate "
                    "needs a regenerated run.</div>")
 
@@ -1562,7 +1655,7 @@ def overview():
     # keep-rate + ranked drops in plain language; this is the full per-flavor ×
     # judge-verdict × drop-reason cross-tab for anyone who wants the raw counts.
     htm.append(_details(
-        "per-flavor × judge-verdict × drop-reason cross-tab (raw counts)",
+        "Per-flavor × judge-verdict × drop-reason cross-tab (raw counts)",
         f"<div style='overflow-x:auto'><table style='border-collapse:collapse;"
         f"font-size:12.5px'><tr><th style='padding:4px 8px'>flavor</th>{head}</tr>"
         + "".join(rows_h) + "</table></div>"))
@@ -1601,7 +1694,7 @@ def overview():
                 ax.legend(fontsize=8)
             fig.tight_layout()
     except Exception as e:
-        htm.append(f"<div style='opacity:.7'>histogram unavailable: {_esc(e)}</div>")
+        htm.append(f"<div style='opacity:.7'>Histogram unavailable: {_esc(e)}</div>")
 
     return "".join(htm), fig
 
@@ -1622,12 +1715,52 @@ _TAB_CSS = """
 #tab-overview-button.selected { border-color: #059669 !important; }
 #tab-guidance-button { color: #7c3aed !important; }
 #tab-guidance-button.selected { border-color: #7c3aed !important; }
+.gloss-flash { animation: glossflash 1.6s ease-out; }
+@keyframes glossflash {
+  0%,20% { background: #ede9fe; box-shadow: 0 0 0 3px #c4b5fd inset; }
+  100%   { background: transparent; box-shadow: none; }
+}
+"""
+
+# Cross-tab glossary navigation (Sandra 2026-07-17). Gradio's gr.HTML strips
+# <script>, so the click handler is installed via the Blocks `js=` hook, which runs
+# once at app load and is NOT sanitized. A single delegated listener on document
+# catches any `.gloss` link click: it switches to the App Guidance tab (clicking its
+# tab button), then scrolls the matching `#gloss-<slug>` row into view and flashes
+# it. A short retry loop covers the tab's content mounting lazily after the switch.
+_GLOSS_JS = """
+() => {
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('a.gloss');
+    if (!a) return;
+    e.preventDefault();
+    const slug = a.getAttribute('data-gloss');
+    if (!slug) return;
+    const btn = document.getElementById('tab-guidance-button');
+    if (btn) btn.click();
+    let tries = 0;
+    const go = () => {
+      const el = document.getElementById('gloss-' + slug);
+      if (el) {
+        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+        el.classList.remove('gloss-flash');
+        void el.offsetWidth;            // reflow so the animation re-fires
+        el.classList.add('gloss-flash');
+      } else if (tries++ < 20) {
+        setTimeout(go, 60);            // guidance tab content still mounting
+      }
+    };
+    setTimeout(go, 80);
+  }, true);
+}
 """
 
 
 def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="pipeline-inspector — VObs-tool-SFT",
-                   theme=gr.themes.Soft(), css=_TAB_CSS) as demo:
+    # theme/css/js moved to launch() — Gradio 6.0 relocated them off the Blocks
+    # constructor (a constructor-arg js= is IGNORED, so the gloss handler wouldn't
+    # install). They're applied in main()'s demo.launch(...) instead.
+    with gr.Blocks(title="pipeline-inspector — VObs-tool-SFT") as demo:
         gr.Markdown("## 🔬 pipeline-inspector — VObs-tool-SFT pipeline quality "
                     "(gen → rewrite → judge → regen · row video · step_metrics)")
 
@@ -1714,8 +1847,8 @@ def build_ui() -> gr.Blocks:
                                   open=False):
                     other_html = gr.HTML()
 
-            with gr.Tab("Run overview — how good is the pipeline?", elem_id="tab-overview"):
-                overview_btn = gr.Button("Compute overview (kept + dropped)",
+            with gr.Tab("Run overview", elem_id="tab-overview"):
+                overview_btn = gr.Button("Compute overview",
                                          variant="primary")
                 overview_html = gr.HTML()
                 overview_plot = gr.Plot(label="change-ratio distributions per flavor")
@@ -1784,8 +1917,10 @@ def main():
     args = ap.parse_args()
     os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
     demo = build_ui()
+    # Gradio 6.0: theme/css/js belong on launch(), not the Blocks constructor.
     demo.launch(server_name=args.host, server_port=args.port, share=args.share,
-                allowed_paths=[VIDEO_CACHE_DIR])
+                allowed_paths=[VIDEO_CACHE_DIR],
+                theme=gr.themes.Soft(), css=_TAB_CSS, js=_GLOSS_JS)
 
 
 if __name__ == "__main__":
