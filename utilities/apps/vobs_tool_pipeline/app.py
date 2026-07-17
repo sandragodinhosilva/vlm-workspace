@@ -76,12 +76,15 @@ DATASET_ROOT = os.environ.get(
     "DATASET_ROOT", "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k")
 DEFAULT_JSONL = os.environ.get(
     "DEFAULT_JSONL",
-    # smoke_team_demo_0717 = the latest team demo run (3-specialist
-    # J2/J1/J3 + stage-4 repair). This run name moves as new smokes supersede it
-    # (0716b was renamed _pre_efix mid-session) — the ↻ Runs button + dropdown
-    # always let you pick the actual newest run under DATASET_ROOT if this
-    # default has gone stale.
-    "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_team_demo_0717/smoke.jsonl")
+    # smoke_review_mix_0717 = the CURATED colleague-review mix (2026-07-17): a
+    # balanced, all-flavor showcase of the fixed pipeline — 59 clean kept + 41
+    # honest-gate drops = 100, sourced from the 0717 (post-fix) runs, buggy drops
+    # EXCLUDED (only regen_still_failing / gt_unreconcilable / sample_excluded /
+    # C_no_corrupted_served). Deliberately kept-leaning (59%) so reviewers see good
+    # output first; the drops shown are the DESIGNED quality gate, not failures.
+    # See that dir's README.md. The ↻ Runs button + dropdown still expose every raw
+    # smoke under DATASET_ROOT (e.g. smoke_allflavors_fixed_0717 = the full run).
+    "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k/smoke_review_mix_0717/smoke.jsonl")
 VIDEO_CACHE_DIR = os.environ.get(
     "VIDEO_CACHE_DIR", "/mnt/data/sgsilva/tmp/vobs_tool_pipeline_videos")
 
@@ -196,10 +199,21 @@ def _configured_k(run_jsonl_path: Optional[str]) -> Optional[int]:
 
 
 def discover_runs() -> List[str]:
-    """The newest CLEAN kept-rows JSONLs under DATASET_ROOT (newest first, capped at
-    _MAX_VISIBLE_RUNS). ckpt/dropped sidecars AND superseded/pre-fix runs are excluded
-    so a team-shared dropdown never offers a stale run. The free-text path box still
-    loads anything outside this list for debugging."""
+    """The runs offered in the team-facing dropdown.
+
+    COLLEAGUE-REVIEW MODE (2026-07-17): the dropdown exposes ONLY the curated review mix
+    (DEFAULT_JSONL) — colleagues should open exactly the run we vetted, not browse raw
+    validation smokes (which include buggy/over-dropping runs that misrepresent the
+    pipeline). The free-text path box (collapsed 'Advanced: load a run by path') is still
+    the power-user escape hatch for loading any other run for debugging.
+
+    To restore full run-browsing, revert to the mtime-ranked scan below (kept for
+    reference): glob '*/*.jsonl', drop ckpt/dropped sidecars + superseded/pre-fix runs,
+    sort by mtime desc, take _MAX_VISIBLE_RUNS."""
+    if DEFAULT_JSONL and os.path.exists(DEFAULT_JSONL):
+        return [DEFAULT_JSONL]
+    # fallback (only if the pinned mix is missing): newest clean run, so the app never
+    # comes up with an empty dropdown.
     root = Path(DATASET_ROOT)
     if not root.is_dir():
         return []
@@ -207,7 +221,7 @@ def discover_runs() -> List[str]:
             if not q.name.endswith((".ckpt.jsonl", ".dropped.jsonl"))
             and not _is_superseded_run(q)]
     hits.sort(key=lambda q: q.stat().st_mtime, reverse=True)
-    return [str(q) for q in hits[:_MAX_VISIBLE_RUNS]]
+    return [str(q) for q in hits[:1]]
 
 
 def _default_jsonl() -> str:
@@ -2113,9 +2127,8 @@ def build_ui() -> gr.Blocks:
         # no longer looks like it interrupts a 1-2-3-4 sequence (Sandra 2026-07-17).
         gr.Markdown(_step_banner(None, "Load a run", "#4f46e5", icon="📂"))
         with gr.Row():
-            run_dd = gr.Dropdown(choices=discover_runs(), value=None,
-                                 label=f"Pick a run (the {_MAX_VISIBLE_RUNS} newest clean "
-                                 f"runs)",
+            run_dd = gr.Dropdown(choices=discover_runs(), value=_default_jsonl() or None,
+                                 label="Run to review (curated mix — click Load)",
                                  scale=4, allow_custom_value=True)
             # Re-scan the dataset root for NEW runs produced after the app started
             # (e.g. a fresh smoke) — without this the dropdown is frozen at launch
