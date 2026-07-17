@@ -76,7 +76,7 @@ DATASET_ROOT = os.environ.get(
     "DATASET_ROOT", "/mnt/data/sgsilva/datasets/1806/vobs_tool_sft_4k")
 DEFAULT_JSONL = os.environ.get(
     "DEFAULT_JSONL",
-    # smoke_stage4_0716c = the latest fixed-code cascade-judge run (3-specialist
+    # smoke_team_demo_0717 = the latest team demo run (3-specialist
     # J2/J1/J3 + stage-4 repair). This run name moves as new smokes supersede it
     # (0716b was renamed _pre_efix mid-session) — the ↻ Runs button + dropdown
     # always let you pick the actual newest run under DATASET_ROOT if this
@@ -91,7 +91,14 @@ ALL = "(all)"
 # Data loading — kept rows + sibling .dropped.jsonl, tagged with _disposition
 # ---------------------------------------------------------------------------
 
-STATE: Dict = {"rows": [], "path": None}
+# PER-SESSION data (Sandra 2026-07-17, team-shared fix). Rows/path live in a
+# gr.State (one dict per browser session), NOT a module global — otherwise a
+# colleague hitting Load on a different run would silently replace the dataset
+# every OTHER session's next filter/nav callback reads. `_empty_session()` is the
+# initial value; `load_run` RETURNS a fresh session dict; every data-reading
+# callback takes it as its first argument. The old module-global STATE is gone.
+def _empty_session() -> Dict:
+    return {"rows": [], "path": None}
 
 
 def _read_jsonl(path: Path) -> List[Dict]:
@@ -110,8 +117,10 @@ def _read_jsonl(path: Path) -> List[Dict]:
     return rows
 
 
-def load_run(jsonl_path: str) -> str:
-    """Load kept rows + the sibling .dropped.jsonl. Returns a status line."""
+def load_run(jsonl_path: str) -> Tuple[Dict, str]:
+    """Load kept rows + the sibling .dropped.jsonl into a FRESH per-session dict.
+    Returns (session, status_line) — the session goes into this browser's gr.State,
+    so one colleague's Load never touches another's data."""
     p = Path(jsonl_path).expanduser()
     kept = _read_jsonl(p)
     for r in kept:
@@ -120,12 +129,11 @@ def load_run(jsonl_path: str) -> str:
     dropped = _read_jsonl(dropped_path)
     for r in dropped:
         r["_disposition"] = "dropped"
-    STATE["rows"] = kept + dropped
-    STATE["path"] = str(p)
+    session = {"rows": kept + dropped, "path": str(p)}
     if not p.exists():
-        return f"🔴 file not found: `{p}`"
-    return (f"Loaded **{len(kept)} kept** (`{p.name}`) + **{len(dropped)} dropped** "
-            f"(`{dropped_path.name}`) from `{p.parent}`")
+        return session, f"🔴 file not found: `{p}`"
+    return session, (f"Loaded **{len(kept)} kept** (`{p.name}`) + "
+                     f"**{len(dropped)} dropped** (`{dropped_path.name}`) from `{p.parent}`")
 
 
 # Substrings that mark a run dir as SUPERSEDED / pre-fix / contaminated — hidden
@@ -141,6 +149,38 @@ def _is_superseded_run(path: Path) -> bool:
     """True if the run dir name carries a pre-fix / contaminated / archived marker."""
     name = path.parent.name.lower()
     return any(m in name for m in _SUPERSEDED_MARKERS)
+
+
+import re as _re_mod
+_K_FLAG_RE = _re_mod.compile(r"--(?:k|best-of-k)[= ]\s*(\d+)")
+_K_LOG_ROOT = "/mnt/data/sgsilva/logs/dataset"
+
+
+def _configured_k(run_jsonl_path: Optional[str]) -> Optional[int]:
+    """Best-effort read of the run's CONFIGURED best-of-K (the --k / --best-of-k flag)
+    from its clog invocation, so the K-strategy panel can flag real K-starvation
+    instead of the tautological observed-max ceiling (#4, 2026-07-17). Returns None if
+    no log records it — the caller then suppresses the ceiling markers rather than
+    inventing a K. Scans the dataset-log tree for a log naming this run dir and greps
+    the persisted `cmd:` line. Cheap + read-only; any failure → None (never crashes)."""
+    if not run_jsonl_path:
+        return None
+    try:
+        run_name = Path(run_jsonl_path).parent.name
+        root = Path(_K_LOG_ROOT)
+        if not root.is_dir():
+            return None
+        # newest logs first; match the run dir name in the log filename.
+        logs = sorted(root.glob(f"*/*{run_name}*.log"),
+                      key=lambda q: q.stat().st_mtime, reverse=True)
+        for lg in logs[:4]:
+            txt = lg.read_text(errors="ignore")
+            m = _K_FLAG_RE.search(txt)
+            if m:
+                return int(m.group(1))
+    except Exception:
+        return None
+    return None
 
 
 def discover_runs() -> List[str]:
@@ -555,8 +595,8 @@ def guidance_html() -> str:
 # Filters — choices derived from the data, never hardcoded
 # ---------------------------------------------------------------------------
 
-def _choices(field: str) -> List[str]:
-    vals = sorted({str(r.get(field)) for r in STATE["rows"] if r.get(field) is not None})
+def _choices(field: str, rows: List[Dict]) -> List[str]:
+    vals = sorted({str(r.get(field)) for r in rows if r.get(field) is not None})
     return [ALL] + vals
 
 
@@ -585,6 +625,19 @@ def _specialist_ever_failed(row: Dict, judge_key: str) -> bool:
     return False
 
 
+# SHARED PREDICATES (#5, Sandra 2026-07-17): the tab-1 filter and the tab-2 overview
+# MUST agree on "did this row get a rewrite / a stage-4 regen?" — they used to disagree
+# (filter: rewrite_applied succeeded; overview: rewrite_kind truthiness attempted · filter:
+# judge_attempts regen_prompt; overview: step_metrics.judge.n_regen_calls, which is None on
+# every workflow-drop stub → undercounting exactly the rows the filter surfaced). One
+# predicate each, used by BOTH tabs, so the same word never shows two numbers.
+def _rewrite_applied(row: Dict) -> bool:
+    """True iff the stage-2 GT-align rewrite was actually APPLIED (succeeded). A row with
+    only rewrite_failed_reason (attempted-but-failed) is NOT counted — 'applied' means the
+    edited reasoning shipped, matching what the filter's 'rewrite=yes' surfaces."""
+    return bool(row.get("rewrite_applied"))
+
+
 def _stage4_regen_fired(row: Dict) -> bool:
     """True if the JUDGE-triggered stage-4 repair ran at least once on this row.
     DISTINCT from rewrite_applied (the pre-judge stage-2 GT-align rewrite) —
@@ -592,8 +645,8 @@ def _stage4_regen_fired(row: Dict) -> bool:
     =False (natural gen already on GT) but still get a stage-4 regen because the
     judge caught something, or rewrite_applied=True with a clean judge pass and
     no stage-4 regen at all). Detected via judge_attempts[*].regen_prompt /
-    regen_union_tags — the same fields REGEN entries carry regardless of
-    judge_mode (single vs complementary cascade)."""
+    regen_union_tags — present on a REGEN entry regardless of the step_metrics stub
+    state, so it counts workflow-dropped rows the n_regen_calls path missed."""
     for a in (row.get("judge_attempts") or []):
         if a.get("regen_prompt") or a.get("regen_union_tags") is not None:
             return True
@@ -621,11 +674,11 @@ def _matches(row: Dict, disposition: str, flavor: str, origin: str, verdict: str
         return False
     if rewrite != ALL:
         want = (rewrite == "yes")
-        if bool(row.get("rewrite_applied")) != want:
+        if _rewrite_applied(row) != want:      # shared predicate (#5)
             return False
     if stage4 != ALL:
         want = (stage4 == "yes")
-        if _stage4_regen_fired(row) != want:
+        if _stage4_regen_fired(row) != want:   # shared predicate (#5)
             return False
     for filt, jkey in ((j1, "grounding"), (j2, "format"), (j3, "flavor_purpose")):
         if filt == ALL:
@@ -636,9 +689,8 @@ def _matches(row: Dict, disposition: str, flavor: str, origin: str, verdict: str
     return True
 
 
-def filtered(disposition: str, flavor: str, origin: str, verdict: str,
+def filtered(rows: List[Dict], disposition: str, flavor: str, origin: str, verdict: str,
             rewrite: str, stage4: str, j1: str, j2: str, j3: str) -> List[int]:
-    rows = STATE["rows"]
     return nav_widgets.filtered_indices(
         len(rows), lambda i: _matches(rows[i], disposition, flavor, origin, verdict,
                                       rewrite, stage4, j1, j2, j3))
@@ -791,7 +843,13 @@ def render_step_metrics(r: Dict) -> str:
     # Schema-driven split: dict-valued keys = stages (table rows, insertion
     # order); everything else = row-level scalars shown as chips.
     stages = {k: v for k, v in sm.items() if isinstance(v, dict)}
-    scalars = {k: v for k, v in sm.items() if not isinstance(v, dict)}
+    # #7a (2026-07-17): a null 'judge' block (value None) is NOT a dict, so it fell
+    # into scalars AND got its own "not run" row below — rendered twice. Exclude the
+    # null-stage keys from scalars; the dedicated row is the single source.
+    _null_stage_keys = {k for k, v in sm.items()
+                        if v is None and k in ("gen", "rewrite", "judge", "final")}
+    scalars = {k: v for k, v in sm.items()
+               if not isinstance(v, dict) and k not in _null_stage_keys}
 
     chips = "".join(_chip(k, "—" if v is None else v,
                           "#fde8e8" if (k == "ae_contradiction" and v is True) else
@@ -1081,18 +1139,20 @@ def render_trail(r: Dict) -> str:
                                      f"{_esc(_notes)}</div>")
                     inner.append(_details(
                         f"{lbl} RAW RESPONSE (verdict — post-think)", raw_body))
-                    header = (f"<div style='font-weight:700;font-size:13px;color:{chip};"
-                              f"margin:0 0 4px;display:flex;align-items:center;gap:8px'>"
-                              f"<span>{_esc(lbl)}</span>"
-                              f"<span style='background:{badge_bg};color:{badge_fg};"
-                              f"border-radius:10px;padding:1px 8px;font-size:11px'>"
-                              f"{badge}</span>"
-                              f"<span style='font-weight:400;opacity:.7;font-size:11px'>"
-                              f"{_esc(tagline)}</span></div>")
+                    # pass_header (not 'header') — #7b: don't shadow the verdict header
+                    # bound ~90 lines up (harmless, but the reuse read as a bug).
+                    pass_header = (f"<div style='font-weight:700;font-size:13px;color:{chip};"
+                                   f"margin:0 0 4px;display:flex;align-items:center;gap:8px'>"
+                                   f"<span>{_esc(lbl)}</span>"
+                                   f"<span style='background:{badge_bg};color:{badge_fg};"
+                                   f"border-radius:10px;padding:1px 8px;font-size:11px'>"
+                                   f"{badge}</span>"
+                                   f"<span style='font-weight:400;opacity:.7;font-size:11px'>"
+                                   f"{_esc(tagline)}</span></div>")
                     parts.append(
                         f"<div style='border:1px solid {acc}33;border-left:3px solid {acc};"
                         f"background:{bg};border-radius:8px;padding:8px 10px;margin:0 0 8px'>"
-                        f"{header}{''.join(inner)}</div>")
+                        f"{pass_header}{''.join(inner)}</div>")
                 continue
             # --- FLAT single-judge entry (legacy mode) ---
             v = a.get("judge_verdict") or {}
@@ -1201,15 +1261,23 @@ def render_other_fields(r: Dict) -> str:
 # Row display driver
 # ---------------------------------------------------------------------------
 
-def show_row(abs_idx: int, disposition: str, flavor: str, origin: str, verdict: str,
-            rewrite: str, stage4: str, j1: str, j2: str, j3: str):
-    rows = STATE["rows"]
-    sel = filtered(disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
+def show_row(session: Dict, abs_idx: int, disposition: str, flavor: str, origin: str,
+            verdict: str, rewrite: str, stage4: str, j1: str, j2: str, j3: str):
+    rows = (session or {}).get("rows") or []
+    sel = filtered(rows, disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
     if not rows:
         empty = "<div style='opacity:.6'>No rows loaded</div>"
         return (None, "load a run first", empty, empty, empty, empty, empty,
                 "No samples loaded", abs_idx)
-    if abs_idx not in sel and sel:
+    # #6 (2026-07-17): a filter that matches NOTHING must be its own state, not a
+    # non-matching row shown at pos 0. Rows exist but sel is empty → say so, clearly.
+    if not sel:
+        scope = _scope_label(disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
+        msg = (f"<div style='opacity:.7;padding:8px 0'>🔍 <b>0 rows match</b> the active "
+               f"filter{f' ({_esc(scope)})' if scope else ''} — widen or reset a filter.</div>")
+        return (None, "0 rows match the active filter", msg, msg, msg, msg, msg,
+                "0 / 0 matching · reset a filter", abs_idx)
+    if abs_idx not in sel:
         abs_idx = sel[0]
     abs_idx = max(0, min(abs_idx, len(rows) - 1))
     r = rows[abs_idx]
@@ -1228,18 +1296,20 @@ def show_row(abs_idx: int, disposition: str, flavor: str, origin: str, verdict: 
             counter, abs_idx)
 
 
-def download_sample_txt(abs_idx: int, disposition, flavor, origin, verdict,
+def download_sample_txt(session: Dict, abs_idx: int, disposition, flavor, origin, verdict,
                         rewrite, stage4, j1, j2, j3):
     """Write the CURRENTLY-DISPLAYED row to a well-formatted .txt (same layout as
     /preview-output) and return the path for gr.File to serve. Reuses the CLI
     previewer's render_sample — the single source of truth — so the download and
     the terminal preview never drift. Falls back to a pretty JSON dump if that
     module couldn't import."""
-    rows = STATE["rows"]
+    rows = (session or {}).get("rows") or []
     if not rows:
         return None
-    sel = filtered(disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
-    if abs_idx not in sel and sel:
+    sel = filtered(rows, disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
+    if not sel:
+        return None
+    if abs_idx not in sel:
         abs_idx = sel[0]
     abs_idx = max(0, min(abs_idx, len(rows) - 1))
     r = rows[abs_idx]
@@ -1269,14 +1339,15 @@ def download_sample_txt(abs_idx: int, disposition, flavor, origin, verdict,
     return str(out)
 
 
-def nav(delta: Optional[int], abs_idx: int, disposition, flavor, origin, verdict,
-       rewrite, stage4, j1, j2, j3):
-    sel = filtered(disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
+def nav(session: Dict, delta: Optional[int], abs_idx: int, disposition, flavor, origin,
+       verdict, rewrite, stage4, j1, j2, j3):
+    rows = (session or {}).get("rows") or []
+    sel = filtered(rows, disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
     if delta is None:
-        new = nav_widgets.random_filtered(sel, len(STATE["rows"]))
+        new = nav_widgets.random_filtered(sel, len(rows))
     else:
         new = nav_widgets.step_filtered(abs_idx, delta, sel)
-    return show_row(new, disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
+    return show_row(session, new, disposition, flavor, origin, verdict, rewrite, stage4, j1, j2, j3)
 
 
 # ---------------------------------------------------------------------------
@@ -1318,7 +1389,7 @@ def _kpi(label, value, sub="", color="#1e1b4b"):
             f"<div style='font-size:11px;opacity:.65'>{sub}</div></div>")
 
 
-def _run_insights_html(rows: List[Dict]) -> str:
+def _run_insights_html(rows: List[Dict], run_path: Optional[str] = None) -> str:
     """AT-A-GLANCE run health (2026-07-16, Sandra) — the story the dense tables
     below make you dig for: keep-rate, the grade invariant, per-flavor balance vs
     the target mix, what's killing yield, and the rewrite/repair funnel. Computed
@@ -1332,18 +1403,36 @@ def _run_insights_html(rows: List[Dict]) -> str:
     # grade invariant: every kept row should be full-exact under the reasoning-only
     # contract (the whole point — the final is GT-composed + appended). Count the
     # exceptions LOUDLY (a non-zero here means a real regression).
+    # #3 (2026-07-17): a MISSING invariant field must be a loud GAP, not a passing
+    # green. Old code did `n_fe_bad = count(False)`, so an all-None column (old run
+    # or a renamed producer field) gave n_fe_bad==0 → green 0/N "regression-free" —
+    # a false pass. Now None is counted as UNKNOWN explicitly: all-unknown → amber
+    # "field absent" state; any explicit False → red regression; only genuine all-True
+    # is green.
     fe = [r.get("final_full_exact") for r in kept]
     n_fe_true = sum(1 for v in fe if v is True)
-    n_fe_bad = sum(1 for v in fe if v is False)   # explicit False (None = unknown/old)
-    inv_color = "#059669" if n_fe_bad == 0 else "#b91c1c"
+    n_fe_bad = sum(1 for v in fe if v is False)
+    n_fe_unknown = sum(1 for v in fe if v is None)
+    if nk == 0:
+        inv_color, inv_val, inv_sub = "#64748b", "—", "no kept rows"
+    elif n_fe_bad > 0:
+        inv_color, inv_val = "#b91c1c", f"{n_fe_true}/{nk}"
+        inv_sub = f"⚠️ {n_fe_bad} NOT full-exact — regression!"
+    elif n_fe_unknown == nk:
+        # every kept row lacks the field — can't verify the invariant at all.
+        inv_color, inv_val = "#d97706", "?/?"
+        inv_sub = "⚠️ final_full_exact ABSENT on all kept — invariant unverifiable"
+    elif n_fe_unknown > 0:
+        inv_color, inv_val = "#d97706", f"{n_fe_true}/{nk - n_fe_unknown}"
+        inv_sub = f"{n_fe_unknown} unknown (field absent) · {n_fe_true} verified full-exact"
+    else:
+        inv_color, inv_val, inv_sub = "#059669", f"{n_fe_true}/{nk}", "final_full_exact on kept"
 
     keep_color = "#059669" if _pct(nk, nt) >= 80 else ("#d97706" if _pct(nk, nt) >= 60 else "#b91c1c")
     kpis = "".join([
         _kpi("Rows", f"{nt}", f"{nk} kept · {nd} dropped"),
         _kpi("Keep-rate", f"{_pct(nk, nt):.0f}%", "Kept ÷ (kept+dropped)", keep_color),
-        _kpi("Grade invariant", f"{n_fe_true}/{nk}", (
-            "final_full_exact on kept" if n_fe_bad == 0
-            else f"⚠️ {n_fe_bad} NOT full-exact — regression!"), inv_color),
+        _kpi("Grade invariant", inv_val, inv_sub, inv_color),
     ])
 
     # per-flavor keep-rate + share-vs-target. actual share = kept_f / total_kept;
@@ -1354,16 +1443,22 @@ def _run_insights_html(rows: List[Dict]) -> str:
     fl_rows = []
     for fl in sorted(set(kept_by_fl) | set(drop_by_fl) | set(_FLAVOR_QUOTAS)):
         k, d = kept_by_fl.get(fl, 0), drop_by_fl.get(fl, 0)
-        kr = _pct(k, k + d)
         actual_share = _pct(k, nk)
         tgt_share = _pct(_FLAVOR_QUOTAS.get(fl, 0), tot_quota)
         gap = actual_share - tgt_share
         gap_str = (f"<span style='color:{'#059669' if abs(gap) <= 5 else '#d97706'}'>"
                    f"{'+' if gap >= 0 else ''}{gap:.0f}pp</span>")
+        # #7c: a flavor with NO rows (k+d==0) is "no data" (—), not a 0% keep-rate —
+        # otherwise a flavor this run didn't touch reads as a total failure.
+        if k + d == 0:
+            kr_cell = "<span style='opacity:.45'>—</span>"
+        else:
+            kr = _pct(k, k + d)
+            kr_cell = f"{_bar(kr/100)} {kr:.0f}%"
         fl_rows.append(
             f"<tr><td style='padding:3px 8px;font-weight:700'>{_esc(fl)}</td>"
             f"<td style='padding:3px 8px'>{k}</td><td style='padding:3px 8px'>{d}</td>"
-            f"<td style='padding:3px 8px'>{_bar(kr/100)} {kr:.0f}%</td>"
+            f"<td style='padding:3px 8px'>{kr_cell}</td>"
             f"<td style='padding:3px 8px'>{actual_share:.0f}%</td>"
             f"<td style='padding:3px 8px'>{tgt_share:.0f}%</td>"
             f"<td style='padding:3px 8px'>{gap_str}</td></tr>")
@@ -1441,10 +1536,13 @@ def _run_insights_html(rows: List[Dict]) -> str:
                     "0 drops, or the <code>.dropped.jsonl</code> sidecar isn't present.</div>")
 
     # rewrite / repair funnel — how much teacher work each row cost + opt-out rate.
-    n_rewritten = sum(1 for r in rows if r.get("rewrite_kind"))
+    # #5: use the SAME predicates the tab-1 filter uses, so a filter count and this
+    # count never disagree. (Was: rewrite_kind truthiness = attempted, over-counting
+    # failed rewrites; and step_metrics.judge.n_regen_calls, None on workflow stubs,
+    # under-counting exactly the rows the filter's stage4=yes surfaces.)
+    n_rewritten = sum(1 for r in rows if _rewrite_applied(r))
     n_optout = sum(1 for r in dropped if str(r.get("drop_reason", "")).startswith("sample_excluded_gt_"))
-    n_regen = sum(1 for r in rows
-                  if ((r.get("step_metrics") or {}).get("judge") or {}).get("n_regen_calls"))
+    n_regen = sum(1 for r in rows if _stage4_regen_fired(r))
     calls = [((r.get("step_metrics") or {}).get("n_model_calls")) for r in rows]
     calls = [c for c in calls if isinstance(c, (int, float))]
     med_calls = sorted(calls)[len(calls) // 2] if calls else "—"
@@ -1471,14 +1569,25 @@ def _run_insights_html(rows: List[Dict]) -> str:
         if not xs:
             return None
         return (min(xs), max(xs), sum(xs) / len(xs), len(xs))
-    k_ceiling = max((r.get("n_attempts") or 0) for r in rows) if rows else 0
+    # #4 (2026-07-17): the CONFIGURED K is not persisted on the rows, so the old
+    # `k_ceiling = max(observed n_attempts)` was tautological — n_hit_ceiling was ≥1
+    # by construction and the "⟵ at ceiling" marker fired on whichever flavor merely
+    # happened to be the observed max, even if K=16 and nothing ever spent >3. Real
+    # K-starvation ("bump K") can only be judged against the ACTUAL K. We try to read
+    # it from the run's clog invocation (--k / --best-of-k); if unavailable we present
+    # the observed max HONESTLY as an observation and SUPPRESS the ceiling markers
+    # rather than invent a ceiling the data can't support.
+    k_cfg = _configured_k(run_path) if run_path else None
+    obs_max = max((r.get("n_attempts") or 0) for r in rows) if rows else 0
     all_att = _stats([r.get("n_attempts") for r in rows])
     krow_all = ""
     if all_att:
         mn, mx, mean, n = all_att
         krow_all = _kpi("Attempts / row (best-of-K)", f"{mean:.1f} avg",
                         f"min {mn} · max {mx} · over {n} rows")
-    n_hit_ceiling = sum(1 for r in rows if (r.get("n_attempts") or 0) >= k_ceiling and k_ceiling > 1)
+    # A row is "at the ceiling" ONLY against a known configured K (>1).
+    at_ceiling = (lambda v: k_cfg and k_cfg > 1 and v >= k_cfg)
+    n_hit_ceiling = sum(1 for r in rows if at_ceiling(r.get("n_attempts") or 0))
     k_by_fl_rows = []
     for fl in sorted(set(str(r.get("flavor")) for r in rows)):
         frows = [r for r in rows if str(r.get("flavor")) == fl]
@@ -1488,10 +1597,11 @@ def _run_insights_html(rows: List[Dict]) -> str:
             continue
         mn, mx, mean, n = st
         deg_mean = dg[2] if dg else 0.0
-        # bar shows mean attempts as a fraction of the max observed ceiling
-        frac = (mean / k_ceiling) if k_ceiling else 0.0
-        ceil_note = ("<span style='color:#d97706'> ⟵ at ceiling</span>"
-                     if mx >= k_ceiling and k_ceiling > 1 else "")
+        # bar = mean vs the KNOWN K (fallback to observed max only for a rough scale).
+        denom = k_cfg if (k_cfg and k_cfg > 1) else (obs_max or 1)
+        frac = mean / denom
+        ceil_note = ("<span style='color:#d97706'> ⟵ at K</span>"
+                     if at_ceiling(mx) else "")
         k_by_fl_rows.append(
             f"<tr><td style='padding:3px 8px;font-weight:700'>{_esc(fl)}</td>"
             f"<td style='padding:3px 8px'>{n}</td>"
@@ -1499,18 +1609,26 @@ def _run_insights_html(rows: List[Dict]) -> str:
             f"<td style='padding:3px 8px'>{mx}{ceil_note}</td>"
             f"<td style='padding:3px 8px'>{_bar(frac, '#0891b2')} {mean:.1f}</td>"
             f"<td style='padding:3px 8px'>{deg_mean:.1f}</td></tr>")
+    # K KPIs: only claim a ceiling when K is actually known.
+    if k_cfg and k_cfg > 1:
+        k_kpis = (_kpi("Configured K", f"{k_cfg}", "best-of-K (from the run command)")
+                  + _kpi("Rows at K", f"{n_hit_ceiling}",
+                         "spent every try — candidates for a bigger K"))
+    else:
+        k_kpis = _kpi("Max attempts observed", f"{obs_max}",
+                      "configured K not recorded — can't flag K-starvation", "#64748b")
     kstrat = (
         "<h4 style='margin:14px 0 4px'>K-strategy — best-of-K attempts per flavor</h4>"
         "<div style='font-size:11px;opacity:.65;margin-bottom:4px'>"
-        "Attempts = generation tries spent before stop-on-perfect (ceiling = K). "
-        "Avg near 1 ⇒ K barely used for that flavor · avg climbing / max at ceiling ⇒ "
+        "Attempts = generation tries spent before stop-on-perfect. "
+        "Avg near 1 ⇒ K barely used for that flavor · max reaching the configured K ⇒ "
         "K is being used (maybe K-starved — bump K). Degen = wasted empty tries "
-        "(don't count against K).</div>"
+        "(don't count against K)."
+        + ("" if (k_cfg and k_cfg > 1) else
+           " <b>Configured K not recorded for this run</b> — the ceiling markers are "
+           "suppressed; only observed attempts are shown.") + "</div>"
         "<div style='display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px'>"
-        + krow_all
-        + _kpi("Observed K ceiling", f"{k_ceiling}", "max attempts any row spent")
-        + _kpi("Rows at the ceiling", f"{n_hit_ceiling}",
-               "used every try — candidates for a bigger K")
+        + krow_all + k_kpis
         + "</div>"
         "<div style='overflow-x:auto'><table style='border-collapse:collapse;font-size:12.5px'>"
         "<tr><th style='padding:3px 8px;text-align:left'>flavor</th>"
@@ -1544,13 +1662,15 @@ def _run_insights_html(rows: List[Dict]) -> str:
         + _card(flavor_tbl) + _card(drop_tbl) + _card(funnel) + _card(kstrat))
 
 
-def overview():
-    path = STATE["path"]
+def overview(session: Dict):
+    session = session or {}
+    path = session.get("path")
+    rows = session.get("rows") or []
     if not path:
         return "<div>load a run first</div>", None
     # AT-A-GLANCE insight panel FIRST (independent of the producer import — it reads
     # the loaded rows, so it works even if step_metrics.py failed to import).
-    htm: List[str] = [_run_insights_html(STATE["rows"])]
+    htm: List[str] = [_run_insights_html(rows, run_path=path)]
 
     if summarize_step_metrics is None:
         htm.append(f"<div style='color:#b91c1c'>🔴 could not import the producer's "
@@ -1634,7 +1754,7 @@ def overview():
     # Generic disposition tallies per flavor (from the loaded rows — works even
     # without step_metrics): kept / judge verdicts / drop reasons.
     per_flavor: Dict[str, Counter] = defaultdict(Counter)
-    for r in STATE["rows"]:
+    for r in rows:
         fl = str(r.get("flavor"))
         per_flavor[fl][r["_disposition"]] += 1
         if r.get("judge_verdict_kind"):
@@ -1671,7 +1791,7 @@ def overview():
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         series: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
-        for r in STATE["rows"]:
+        for r in rows:
             sm = r.get("step_metrics") or {}
             fl = str(r.get("flavor"))
             rw = (sm.get("rewrite") or {}).get("changed_ratio")
@@ -1860,6 +1980,9 @@ def build_ui() -> gr.Blocks:
                 gr.HTML(guidance_html())
 
         idx_state = gr.State(0)
+        # PER-SESSION data (#1 fix): each browser gets its own {rows, path} — no
+        # module global, so a colleague's Load can't overwrite your dataset mid-run.
+        session_state = gr.State(_empty_session())
 
         row_outputs = [video, video_status, header_html, metrics_html, trail_html,
                        final_html, other_html, counter_md, idx_state]
@@ -1868,16 +1991,18 @@ def build_ui() -> gr.Blocks:
 
         def do_load(dd_path, tb_path):
             path = dd_path or tb_path
-            status = load_run(path)
-            upd = [gr.update(choices=_choices(f), value=ALL)
+            session, status = load_run(path)
+            rows = session["rows"]
+            upd = [gr.update(choices=_choices(f, rows), value=ALL)
                    for f in ("flavor", "prompt_origin", "judge_verdict_kind")]
             # rewrite/stage4/J1/J2/J3 use static YES_NO choices — just reset the value.
             reset_yn = [gr.update(value=ALL) for _ in range(5)]
-            first = show_row(0, ALL, ALL, ALL, ALL, ALL, ALL, ALL, ALL, ALL)
-            return [status, gr.update(value=ALL)] + upd + reset_yn + list(first)
+            first = show_row(session, 0, ALL, ALL, ALL, ALL, ALL, ALL, ALL, ALL, ALL)
+            return [session, status, gr.update(value=ALL)] + upd + reset_yn + list(first)
 
+        # session_state is FIRST output so this browser's gr.State is updated.
         load_btn.click(do_load, [run_dd, path_tb],
-                       [load_status] + filter_inputs + row_outputs)
+                       [session_state, load_status] + filter_inputs + row_outputs)
 
         # Re-discover runs (newest first) and repopulate the dropdown, selecting the
         # newest so a fresh smoke is one click away. Does NOT load — user hits Load.
@@ -1886,27 +2011,35 @@ def build_ui() -> gr.Blocks:
             return gr.update(choices=runs, value=(runs[0] if runs else None))
         rescan_btn.click(do_rescan, [], [run_dd])
 
+        # every data callback takes session_state as its FIRST input.
+        _si = [session_state, idx_state] + filter_inputs
         for dd in filter_inputs:
-            dd.change(lambda i, d, f, o, v, rw, s4, j1, j2, j3: show_row(i, d, f, o, v, rw, s4, j1, j2, j3),
-                      [idx_state] + filter_inputs, row_outputs)
-        prev_btn.click(lambda i, d, f, o, v, rw, s4, j1, j2, j3: nav(-1, i, d, f, o, v, rw, s4, j1, j2, j3),
-                       [idx_state] + filter_inputs, row_outputs)
-        next_btn.click(lambda i, d, f, o, v, rw, s4, j1, j2, j3: nav(+1, i, d, f, o, v, rw, s4, j1, j2, j3),
-                       [idx_state] + filter_inputs, row_outputs)
-        random_btn.click(lambda i, d, f, o, v, rw, s4, j1, j2, j3: nav(None, i, d, f, o, v, rw, s4, j1, j2, j3),
-                         [idx_state] + filter_inputs, row_outputs)
-        refresh_btn.click(lambda i, d, f, o, v, rw, s4, j1, j2, j3: show_row(i, d, f, o, v, rw, s4, j1, j2, j3),
-                          [idx_state] + filter_inputs, row_outputs)
-        jump_btn.click(lambda j, d, f, o, v, rw, s4, j1, j2, j3: show_row(int(j), d, f, o, v, rw, s4, j1, j2, j3),
-                       [jump_input] + filter_inputs, row_outputs)
+            dd.change(show_row, _si, row_outputs)
+        prev_btn.click(lambda s, i, d, f, o, v, rw, s4, j1, j2, j3: nav(s, -1, i, d, f, o, v, rw, s4, j1, j2, j3),
+                       _si, row_outputs)
+        next_btn.click(lambda s, i, d, f, o, v, rw, s4, j1, j2, j3: nav(s, +1, i, d, f, o, v, rw, s4, j1, j2, j3),
+                       _si, row_outputs)
+        random_btn.click(lambda s, i, d, f, o, v, rw, s4, j1, j2, j3: nav(s, None, i, d, f, o, v, rw, s4, j1, j2, j3),
+                         _si, row_outputs)
+        refresh_btn.click(show_row, _si, row_outputs)
+        # #7: guard int() on an empty/garbage jump box — fall back to the current idx.
+        def _jump(s, j, i, d, f, o, v, rw, s4, j1, j2, j3):
+            try:
+                tgt = int(str(j).strip())
+            except (TypeError, ValueError):
+                tgt = i
+            return show_row(s, tgt, d, f, o, v, rw, s4, j1, j2, j3)
+        jump_btn.click(_jump, [session_state, jump_input, idx_state] + filter_inputs, row_outputs)
 
         dl_btn.click(download_sample_txt,
-                     [idx_state] + filter_inputs, [dl_file])
+                     _si, [dl_file])
 
-        overview_btn.click(overview, [], [overview_html, overview_plot])
+        overview_btn.click(overview, [session_state], [overview_html, overview_plot])
 
+        # Startup auto-load uses the SAME do_load, so it must also write session_state
+        # (its first output) — otherwise the auto-loaded rows would live nowhere.
         demo.load(do_load, [run_dd, path_tb],
-                  [load_status] + filter_inputs + row_outputs)
+                  [session_state, load_status] + filter_inputs + row_outputs)
     return demo
 
 
