@@ -14,7 +14,7 @@ set -uo pipefail
 
 CLAUDE_DIR="/home/sgsilva/.claude"
 REPORTS="$CLAUDE_DIR/reports"
-DOC_INDEX="$CLAUDE_DIR/DOC_INDEX.md"
+VLM_DOC_INDEX="$CLAUDE_DIR/VLM_DOC_INDEX.md"
 PLANS="$CLAUDE_DIR/plans"
 ACTIVE_PIPELINES="/home/sgsilva/utilities/ACTIVE_PIPELINES.md"
 NUDGE_FILE="$CLAUDE_DIR/.vault-freshness-nudge"        # next session reads this; deleted once acted on
@@ -24,15 +24,15 @@ now=$(date +%s)
 today=$(date +%F)
 issues=""
 
-# 1) DOC_INDEX coverage — reports on disk not in the index (excl living *_LIVE twins)
-if [[ -f "$DOC_INDEX" ]]; then
+# 1) VLM_DOC_INDEX coverage — reports on disk not in the index (excl living *_LIVE twins)
+if [[ -f "$VLM_DOC_INDEX" ]]; then
   unindexed=0
   while IFS= read -r f; do
     b="$(basename "$f")"
     case "$b" in *_LIVE.md) continue;; esac
-    grep -q "$b" "$DOC_INDEX" 2>/dev/null || unindexed=$((unindexed+1))
+    grep -q "$b" "$VLM_DOC_INDEX" 2>/dev/null || unindexed=$((unindexed+1))
   done < <(find "$REPORTS" -maxdepth 1 -name '*.md' 2>/dev/null)
-  [[ "$unindexed" -gt 0 ]] && issues+="  • $unindexed report(s) not in DOC_INDEX → run /report-status"$'\n'
+  [[ "$unindexed" -gt 0 ]] && issues+="  • $unindexed report(s) not in VLM_DOC_INDEX → run /report-status"$'\n'
 fi
 
 # 2) plans without a STATUS banner in their first 3 lines (unstamped by /plan-status)
