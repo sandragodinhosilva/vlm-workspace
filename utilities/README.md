@@ -1,5 +1,15 @@
 # `~/utilities` — personal helper scripts
 
+> ⚠️ **SCOPE (2026-07-27): this entire tree is VLM/3D-pose-workstream-specific.** Every subdir
+> (`apps/`, `eval/`, `serve/`, `sam3d/`, `chains/`, `slurm/`, `cleanup/`, `conversion/`,
+> `inspect/`, `logs-utils/`) is glue for the VLM pipeline; nothing here is used by the **3WC /
+> dawn-research** work (`/home/sgsilva/dawn-research`, which has its own `AGENTS.md` + `.knowledge/`
+> + skills). The parallel VLM data tree is `/mnt/data/sgsilva/` (checkpoints/models/datasets/
+> results/logs); 3WC data goes under `/mnt/data/sgsilva/3wc/` (kept separate from the VLM dirs —
+> see that mount's README). Kept as-is (not
+> renamed to `vlm-*`) because ~80 config files + shell history hardcode these paths; a future
+> `vlm/`-subdir restructure is deferred — see `~/.claude/plans/2026-07-27_conciliate_claude_config_vlm_vs_3wc.md`.
+
 Standalone helper scripts kept on the small **/home** volume. These are the
 day-to-day glue around training / eval / cleanup. The big sibling utilities (the
 exporter, checkpoint-cleanup Python, model-naming doc) live in

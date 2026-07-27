@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dlog — register a created dataset in ~/.claude/DATASETS.md
+# dlog — register a created dataset in ~/.claude/VLM_DATASETS.md
 #
 # Every dataset we materialize gets one entry: full path, how it was built
 # (builder + args), source inputs, a one-line purpose, row count, and date.
@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-REG="$HOME/.claude/DATASETS.md"
+REG="$HOME/.claude/VLM_DATASETS.md"
 PATH_ARG="" PURPOSE="" BUILDER="" SOURCES="" ROWS="" STATUS="canonical" SUPERSEDED_BY=""
 
 while [ $# -gt 0 ]; do

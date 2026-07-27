@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate ~/.claude/datasets_index.json from ~/.claude/DATASETS.md.
+"""Regenerate ~/.claude/datasets_index.json from ~/.claude/VLM_DATASETS.md.
 
 Run after any dlog.sh registration:
     python3 ~/utilities/logs-utils/rebuild_datasets_index.py
@@ -8,7 +8,7 @@ import json, re
 from datetime import date
 from pathlib import Path
 
-DATASETS_MD = Path.home() / '.claude' / 'DATASETS.md'
+DATASETS_MD = Path.home() / '.claude' / 'VLM_DATASETS.md'
 INDEX_JSON   = Path.home() / '.claude' / 'datasets_index.json'
 
 content = DATASETS_MD.read_text()

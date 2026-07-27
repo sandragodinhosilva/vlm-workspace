@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Query the dataset registry by status. Backs the /datasets skill.
 
-Reads ~/.claude/datasets_index.json (rebuilt from DATASETS.md by
+Reads ~/.claude/datasets_index.json (rebuilt from VLM_DATASETS.md by
 rebuild_datasets_index.py) — the machine-readable registry. Each record has a
 `status` field: canonical | component | superseded (+ optional superseded_by).
 
@@ -70,7 +70,7 @@ def cmd_guard(target):
             break
 
     if match is None:
-        print(f"⚠️  UNREGISTERED: '{target}' is NOT in DATASETS.md.")
+        print(f"⚠️  UNREGISTERED: '{target}' is NOT in VLM_DATASETS.md.")
         print("    Either it's scratch/unregistered, or it should be dlog'd first.")
         print("    Verify this is the dataset you mean before launching.")
         sys.exit(3)
@@ -96,7 +96,7 @@ def cmd_guard(target):
         print("    Confirm explicitly if you really intend the superseded one.")
         sys.exit(2)
     else:
-        print(f"❓ Unknown status '{st}' for {match['name']} — inspect DATASETS.md.")
+        print(f"❓ Unknown status '{st}' for {match['name']} — inspect VLM_DATASETS.md.")
         sys.exit(3)
 
 
