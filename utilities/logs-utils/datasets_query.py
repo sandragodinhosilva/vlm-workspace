@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Query the dataset registry by status. Backs the /datasets skill.
+"""Query the dataset registry by status. Backs the /vlm-datasets skill.
 
 Reads ~/.claude/datasets_index.json (rebuilt from VLM_DATASETS.md by
 rebuild_datasets_index.py) — the machine-readable registry. Each record has a

@@ -17,7 +17,7 @@ Registry now carries a `workstream:` field (General · Visual Observations · Au
 per-app original detail, stale-entry fixes, port reallocation, speedup proposals) are
 kept as a historical record and are NOT re-verified line-by-line; §1 and §7–9 are the
 refreshed current-state sections. For task routing ("which app do I want"), see the
-`/apps` skill — it is now the canonical routing table, kept in sync going forward.
+`/vlm-apps` skill — it is now the canonical routing table, kept in sync going forward.
 
 ---
 
@@ -556,13 +556,13 @@ All app tooling consolidated under `~/utilities/apps/`:
 | monitoring | Results CSVs + experiments CSV | Written by results pipeline (`build_results_csv.py`) |
 | sft-data | HF text MCQA datasets | `aux_tasks/text_tasks/generation/generate_text_sft_datasets.py` |
 | browser | HF aux datasets (image/video/text) | Various dataset-builder scripts in `vlm-post-training/aux_tasks/` |
-| vo-severity / vo-compare | Eval JSONs (or `--raw-cohort` for vo-compare) | `evaluate.py` — see Skill `/eval-vlm` |
-| reasoning-prompt | HF annotation datasets + live VLM | Static datasets; server started via `/serve-vllm` |
+| vo-severity / vo-compare | Eval JSONs (or `--raw-cohort` for vo-compare) | `evaluate.py` — see Skill `/vlm-eval` |
+| reasoning-prompt | HF annotation datasets + live VLM | Static datasets; server started via `/vlm-serve` |
 | image-viewer | HF image+text dataset | Various SFT dataset builders |
 | multimodal-compare | Eval run directories | `evaluate.py` multimodal eval runs |
 | reas-inspector | HF merged reas2 mix | Reas2-mix generation pipeline |
 | prejudge-viewer | Prejudge smoke verdicts JSON | Prejudge pipeline |
-| mesh-viewer / sword-viewer | SAM-3D pipeline outputs | `/run-3d` skill batch inference pipeline |
+| mesh-viewer / sword-viewer | SAM-3D pipeline outputs | `/vlm-run-3d` skill batch inference pipeline |
 | grpo-dashboard | GRPO training logs (`/mnt/data/sgsilva/logs/grpo_logs/`) | Written automatically by GRPO training loop |
 | sft-dashboard | Tensorboard event files (`nemo-rl-vlm/logs/<run>/exp_NNN/tensorboard`) | Written automatically by SFT training loop |
 | vobs-schema | `visual_observations_{angle,categorical}_<version>.json` | VObs schema authoring pipeline; `--version` selects |

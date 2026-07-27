@@ -37,7 +37,7 @@
 #
 # ⚠ THIS SCRIPT IS ENV-DRIVEN, NOT FLAG-DRIVEN. Pass config as ENV VARS (STAGES=..., not --stages).
 #   A missing required var fails in <10s at the :? guard below (no GPU wasted) — but DON'T guess the
-#   command: the canonical, copy-paste form lives in the /eval-vlm skill. Use it.
+#   command: the canonical, copy-paste form lives in the /vlm-eval skill. Use it.
 #
 # OPTIONAL vo_s2 chain (the two-stage board value, which eval_all.sh does NOT produce on its own):
 #   set WITH_VO_S2=1 ONLY_STEM=<unique obs-stem substring, e.g. aux12k-union-reasoning-sft-step4125>

@@ -10,7 +10,7 @@ Home of Sandra's vLLM serving launcher + query client (moved here 2026-06-23 fro
   ENABLE_THINKING=<0|1> QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv \
     /home/sgsilva/utilities/serve/start_vllm_server.sh <MODEL_PATH> <TP_SIZE> <MAX_MODEL_LEN> <PORT>
   ```
-  Recipe + thinking-mode-match rule: `~/.claude/skills/serve-vllm/SKILL.md` (`/serve-vllm`).
+  Recipe + thinking-mode-match rule: `~/.claude/skills/vlm-serve/SKILL.md` (`/vlm-serve`).
 - **`query_server.py`** — the serving/eval query client (litellm + Gemini/Vertex AI + direct-vLLM).
   The `MODELS` dict `"model"` alias must equal the exact served path (which is the full path string
   `start_vllm_server.sh` passes, since it does not set `--served-model-name`).

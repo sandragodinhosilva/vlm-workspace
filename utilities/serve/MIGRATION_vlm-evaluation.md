@@ -34,7 +34,7 @@ vlm-evaluation script).
   `utilities/eval/eval_all.sh` (preflight + invocation), `eval_grpo_stage2.sh`, `eval_grpo_steps.sh`,
   `serve_only.sbatch`, `reasoner_sweep.sh` (comment), `benchmarks/scripts/run_full_eval.sh`.
 - ✅ Repointed RUNTIME CONFIG + SKILL: `~/.claude/settings.json`, `settings.local.json`,
-  `~/.claude/skills/serve-vllm/SKILL.md`.
+  `~/.claude/skills/vlm-serve/SKILL.md`.
 - ✅ Repointed UTILITIES DOCS: `utilities/slurm_vllm_workflow.md`, `utilities/commands.txt`.
 - ✅ Created a forwarding shim at `/home/sgsilva/vlm-evaluation-shim/start_vllm_server.sh`
   (prints a deprecation notice, `exec`s the new path). Destined to occupy the old path slot when the
@@ -73,7 +73,7 @@ The copy is self-contained (no relative imports / `__file__` assumptions) — sa
   monitoring-app already corrected to 56.6%). No STALE banner (3 sibling docs already carry one).
 
 ## Authoritative serving docs (keep — these are correct)
-- `~/.claude/skills/serve-vllm/SKILL.md` — the serving recipe (now points here).
+- `~/.claude/skills/vlm-serve/SKILL.md` — the serving recipe (now points here).
 - `/home/sgsilva/benchmarks/README.md` — accurate benchmark run recipes (correctly distinguishes
   SIBench-VSR from the NYU VSI-Bench paper).
 - `~/utilities/eval/EVAL_README.md` + `EVAL_MASTER_METRICS.md` — the eval board + metric dictionary.

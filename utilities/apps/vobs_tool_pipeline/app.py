@@ -61,7 +61,7 @@ except Exception as _e:  # loud, not fatal — per-row rendering still works
     _SUMMARIZE_IMPORT_ERROR = repr(_e)
 
 # The CLI previewer's per-sample text renderer — REUSED for the app's "download
-# this sample as .txt" so the download is byte-for-byte the /preview-output view
+# this sample as .txt" so the download is byte-for-byte the /vlm-preview-output view
 # (single source of truth; the reasoning fields we added live in that module).
 try:
     from preview_tool_sft_pipeline import render_sample as _render_sample_txt  # noqa: E402
@@ -1533,7 +1533,7 @@ def show_row(session: Dict, abs_idx: int, disposition: str, flavor: str, origin:
 def download_sample_txt(session: Dict, abs_idx: int, disposition, flavor, origin, verdict,
                         rewrite, stage4, j1, j2, j3):
     """Write the CURRENTLY-DISPLAYED row to a well-formatted .txt (same layout as
-    /preview-output) and return the path for gr.File to serve. Reuses the CLI
+    /vlm-preview-output) and return the path for gr.File to serve. Reuses the CLI
     previewer's render_sample — the single source of truth — so the download and
     the terminal preview never drift. Falls back to a pretty JSON dump if that
     module couldn't import."""
@@ -2216,7 +2216,7 @@ def build_ui() -> gr.Blocks:
                     js="(v)=>{document.documentElement.style.setProperty("
                        "'--pre-fs', v+'px'); return [];}")
                 # Full formatted dump of the displayed sample (same layout as
-                # /preview-output). Appears when the button is clicked. height
+                # /vlm-preview-output). Appears when the button is clicked. height
                 # caps the empty-state drop-zone (was a tall blank box before
                 # any download — Sandra 2026-07-16).
                 dl_file = gr.File(label="clip .txt (all data for this one clip)",

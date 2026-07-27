@@ -1,7 +1,7 @@
 {
   "_doc": [
     "Cohort bundles (stabilization step 5, 2026-07-10) — THE machine-readable version of the",
-    "/eval-vlm cohort table. Consumers: eval_all.sh --cohort/COHORT= (expands to all VO_* env",
+    "/vlm-eval cohort table. Consumers: eval_all.sh --cohort/COHORT= (expands to all VO_* env",
     "vars; explicit VO_* overrides win), run cards (expected_n), and — future — the compiler's",
     "floors. Add a new cohort HERE (all fields) before any eval references it; eval_all",
     "hard-fails on an unknown cohort instead of guessing GT (the reasoner_sweep P2.2 rule).",

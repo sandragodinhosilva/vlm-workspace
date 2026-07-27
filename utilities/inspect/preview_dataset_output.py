@@ -2,7 +2,7 @@
 """Preview a generated dataset's full pipeline as plain text: GENERATION PROMPT ->
 RAW MODEL OUTPUT -> PARSED OUTPUT, for N sample rows per leaf.
 
-The pre-run gate behind /preview-output (Sandra, 2026-06-29): ALWAYS inspect what a
+The pre-run gate behind /vlm-preview-output (Sandra, 2026-06-29): ALWAYS inspect what a
 generator actually produces (prompt + raw + parsed) BEFORE launching a full run, so a
 mismatch between intent and implementation is caught cheaply.
 
@@ -34,7 +34,7 @@ generation_prompt / raw_model_output are absent it says so explicitly (never a
 silent half-preview). The fields shown in section 0 are configurable with
 `--meta-fields a,b,c`; defaults cover the text-reasoning + judge pipeline.
 
-Reusable by BOTH /generate-reas (preview generated traces) and /vlm-judge
+Reusable by BOTH /vlm-generate-reas (preview generated traces) and /vlm-judge
 (preview judged rows: judge decision/tags surfaced in section 0).
 
 Usage:

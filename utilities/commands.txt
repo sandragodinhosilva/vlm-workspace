@@ -2,7 +2,7 @@ commands.txt — reconstructed cheatsheet (2026-06-20)
 ====================================================
 RECONSTRUCTED from ~/.bash_history after the original (untracked, never committed)
 was lost in the reorg. These are real commands you ran — verify node/port/step before reuse.
-Skills cover the canonical recipes: /serve-vllm /eval-vlm /launch-sft /apps.
+Skills cover the canonical recipes: /vlm-serve /vlm-eval /vlm-launch-sft /vlm-apps.
 
 
 SERVE A BASELINE (pre-SFT base model, /mnt/data/shared/models)
@@ -77,7 +77,7 @@ srun --nodes=1 --exclude=worker-30,worker-31 --gres=gpu:2 -c 48 --job-name=sft-v
 srun --nodes=1 --gres=gpu:2 -c 48 --mem=1400G --job-name=sft-vlm --nodelist=worker-2 --pty bash -i
 
 
-APPS (Gradio)  —  see /apps skill + ~/utilities/apps/launch_app.sh
+APPS (Gradio)  —  see /vlm-apps skill + ~/utilities/apps/launch_app.sh
 ------------------------------------------------------------------
 # browser-app (most-used) — point BROWSER_MIXED_ROOT at the dataset, its own venv, port 7870
 BROWSER_MIXED_ROOT=/mnt/data/shared/vlm/data/merged_aux_datasets/reas2_mix_image10k_text5k_video10k_0804_audit \
@@ -145,7 +145,7 @@ bash ~/utilities/chains/export_and_cleanup_nvidia_rl.sh --delete             # e
 bash ~/utilities/chains/watch_export_checkpoints.sh
 
 
-SFT / GRPO LAUNCH  —  see /launch-sft skill
+SFT / GRPO LAUNCH  —  see /vlm-launch-sft skill
 -------------------------------------------
 cd /home/sgsilva/nemo-rl-vlm
 # 27B multinode SFT — the dominant launcher (sbatch a slurm_multinode_worker_*.sh)

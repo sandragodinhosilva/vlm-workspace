@@ -3,7 +3,7 @@ Shared prev/next/random/jump-to-index navigation for Gradio browse apps.
 
 Extracted from browser-app/shared/components.py + image_row_viewer.py's
 filter-scoped nav (2026-07-08 homogenization pass — see GRADIO_APPS_REPORT.md
-and the /apps skill's "common features" section). Two usage shapes:
+and the /vlm-apps skill's "common features" section). Two usage shapes:
 
 1. Precomputed filtered-index tuple (browser-app style): resolve a `pos` in
    [0, len(filtered)) to an absolute dataset index via `resolve_index()`.

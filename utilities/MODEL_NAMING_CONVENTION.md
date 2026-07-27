@@ -91,4 +91,4 @@ reimplements), then checks the shape `qwen35-(4b|27b)-<task>-(sft|grpo|sft_grpo)
 no leaked scaffolding, and reasoning<->thinkon coherence. Run:
   bash /home/sgsilva/utilities/chains/lint_model_name.sh --config <cfg>.yaml
   bash /home/sgsilva/utilities/chains/lint_model_name.sh <checkpoint_dir>
-Exit 1 => fix the checkpoint_dir basename (NOT the exporter). Wired into the /launch-sft preflight.
+Exit 1 => fix the checkpoint_dir basename (NOT the exporter). Wired into the /vlm-launch-sft preflight.
