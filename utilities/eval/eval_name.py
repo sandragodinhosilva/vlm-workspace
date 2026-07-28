@@ -3,7 +3,7 @@
 
 Stabilization step 3 (2026-07-10, plan:
 ~/.claude/reports/infra_tooling/2026-07-10_eval_pipeline_stabilization_proposal.md).
-Grammar registered in /nomenclature. Hand-templated stems in campaign scripts are what
+Grammar registered in /vlm-nomenclature. Hand-templated stems in campaign scripts are what
 caused the flipfix-840 split row, the doubled `_thinkon_thinkon` files, and the
 dash/underscore invisibility class — build names HERE, never by hand.
 
@@ -148,7 +148,7 @@ def main() -> int:
             print(f"✓ {Path(f).name}")
     if bad:
         print(f"[eval_name] {bad}/{len(args.files)} filename(s) violate the grammar — fix "
-              "BEFORE launching (see /nomenclature 'Eval artifact stem grammar').")
+              "BEFORE launching (see /vlm-nomenclature 'Eval artifact stem grammar').")
     return 1 if bad else 0
 
 

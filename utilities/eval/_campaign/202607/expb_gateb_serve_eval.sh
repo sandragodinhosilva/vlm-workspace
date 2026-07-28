@@ -41,7 +41,7 @@
 # scores it on the test BUILD's byte-exact stored prompt (exercise desc + GT obs inlined), no
 # EXP-B-specific logic in that path. To point this at e.g. a 397B apples-to-apples comparison,
 # override the serving shape (27B TP2/131072 defaults, unchanged for all existing callers) —
-# 397B canonical per /serve-vllm skill = TP8/262144 (full node; ~99GB/GPU weights at TP8,
+# 397B canonical per /vlm-serve skill = TP8/262144 (full node; ~99GB/GPU weights at TP8,
 # ~169GB/GPU headroom for KV cache at B300's 275GB/GPU — comfortable, not memory-constrained):
 #   MODEL_TAG=<short id, e.g. 397b> SERVE_GPUS=8 SERVE_MAXLEN=262144 CKPT=<path> \
 #     sbatch --gres=gpu:8 --mem=2400G --cpus-per-task=192 <this>

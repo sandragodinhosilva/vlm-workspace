@@ -2,7 +2,7 @@
 """Routing regression tests for compile_eval_results.resolve_vo().
 
 Every test here encodes a PAST INCIDENT (or the rule that fixed it) from the eval-board
-routing history — see ~/.claude/EVAL_MAP.md and
+routing history — see ~/.claude/VLM_EVAL_MAP.md and
 ~/.claude/reports/infra_tooling/2026-07-10_eval_pipeline_stabilization_proposal.md.
 Run at any time (pure, no filesystem writes, hermetic vo_map fixtures):
 

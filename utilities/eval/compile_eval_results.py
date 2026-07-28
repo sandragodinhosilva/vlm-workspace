@@ -142,7 +142,7 @@ _VO_BLOCK_SUBBANDS = {
 
 
 FIELDS = [
-    # Row-family taxonomy (2026-07-09, see ~/.claude/EVAL_MAP.md) — FIRST column, so the taxonomy is
+    # Row-family taxonomy (2026-07-09, see ~/.claude/VLM_EVAL_MAP.md) — FIRST column, so the taxonomy is
     # the first thing a reader sees. Computed LAST (in _rows()), from which VObs metric blocks are
     # actually populated on this row, never from the (possibly stale) display string. A row can
     # legitimately carry more than one family (e.g. a merged orphan row with both single-stage and
@@ -601,7 +601,7 @@ def resolve_vo(name: str, metadata: dict | None = None,
     cohort = vo_cohort(name)
     rt["cohort"] = cohort
     # Arm/exception flags (all cohort-gated; see the EXP-B + 397B-ceiling + bake-off
-    # comments formerly inline in _rows(), and EVAL_MAP.md for the family taxonomy).
+    # comments formerly inline in _rows(), and VLM_EVAL_MAP.md for the family taxonomy).
     _expb = bool(cohort) and "expb" in name
     rt["is_expb_gtobs"] = _expb and "gtobsbuild" in name
     rt["is_expb_modelobs"] = _expb and "modelobs" in name
@@ -1009,7 +1009,7 @@ def _has(r, *fields) -> bool:
 
 
 def _classify_family(r: dict) -> str:
-    """Row-family taxonomy per ~/.claude/EVAL_MAP.md, derived ONLY from which VObs metric-block
+    """Row-family taxonomy per ~/.claude/VLM_EVAL_MAP.md, derived ONLY from which VObs metric-block
     columns this row actually has populated (+ the `_arm`/`vo_s2_obs_source` markers already written
     by the two-stage/agreement blocks above) — never from `display`, which can be stale (the exact
     ambiguity that caused the 2026-07-09 flipfix step840 incident). Aux/Benchmarks are NOT part of
@@ -1026,11 +1026,11 @@ def _classify_family(r: dict) -> str:
     roles) with FIXED-REASONER-VObs (the checkpoint's own VObs, but a DIFFERENT fixed model reasons):
       - 2-stage-GT-VObs             : human-GT VObs inlined into the trained prompt (ceiling test)
       - 2-stage-OWN-MODEL-VObs      : the checkpoint generates its OWN VObs AND reasons over them
-                                      itself (one model, both roles, closed loop — EVAL_MAP.md's
+                                      itself (one model, both roles, closed loop — VLM_EVAL_MAP.md's
                                       "SELF-LOOP arm"; historically the WORST of the two-stage arms)
       - 2-stage-FIXED-REASONER-VObs : the checkpoint's own VObs, consumed by a DIFFERENT, FIXED
                                       reference reasoner (e.g. sft2812) — the norm/default two-stage
-                                      setup for a plain/baseline checkpoint (EVAL_MAP.md's "MODEL-obs
+                                      setup for a plain/baseline checkpoint (VLM_EVAL_MAP.md's "MODEL-obs
                                       arm (the norm for a plain/baseline checkpoint)")
       - 2-stage-DIF-MODEL-VObs      : a DIFFERENT, already-served model's VObs feeds the reasoner
                                       under test (EXP-B's cross-model drop-in arm)
@@ -1061,7 +1061,7 @@ def _classify_family(r: dict) -> str:
             # missing/unrecorded (never observed in the current 65 rows, but not impossible for a
             # future run with a metadata gap) — is the ordinary/production-realistic mode: the
             # checkpoint's own VObs consumed by a DIFFERENT, FIXED reference reasoner (e.g. sft2812)
-            # — see EVAL_MAP.md's "MODEL-obs arm (the norm for a plain/baseline checkpoint)" row.
+            # — see VLM_EVAL_MAP.md's "MODEL-obs arm (the norm for a plain/baseline checkpoint)" row.
             # This is the DEFAULT two-stage family (Sandra 2026-07-09: no separate "unknown" sentinel
             # — an unresolved obs source is assumed to be this common case, not flagged).
             fams.append("2-stage-FIXED-REASONER-VObs")
@@ -1069,7 +1069,7 @@ def _classify_family(r: dict) -> str:
         fams.append("Single-stage")
     if has_agree:
         # the self-agreement EXP-B arm (checkpoint scored vs GT with no stage-2 call) is the SAME
-        # "VObs agreement" family as every other agreement row — EVAL_MAP.md draws no distinction
+        # "VObs agreement" family as every other agreement row — VLM_EVAL_MAP.md draws no distinction
         # (arm only matters for whose VObs are being scored, carried by vo_s2_obs_source, not by Family).
         fams.append("VObs-agreement")
 
@@ -1779,7 +1779,7 @@ def _rows():
                 and k[0] in tagged_baselines]:
         del rows[key]
 
-    # ---- FAMILY (2026-07-09, see ~/.claude/EVAL_MAP.md) ----
+    # ---- FAMILY (2026-07-09, see ~/.claude/VLM_EVAL_MAP.md) ----
     # Classify each row's taxonomy family from which metric blocks are ACTUALLY populated (never
     # from the display string, which can be stale — that ambiguity is exactly what caused the
     # 2026-07-09 flipfix step840 incident this column exists to prevent). Computed here, last, so

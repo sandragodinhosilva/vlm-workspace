@@ -2,7 +2,7 @@
 
 One place for everything about evaluating a served VLM checkpoint: the three eval pipelines,
 where each saves, how each is collected, the one driver that runs them, and the unified master
-CSV. Recipes/skills: `/eval-vlm` (eval), `/serve-vllm` (serving).
+CSV. Recipes/skills: `/vlm-eval` (eval), `/vlm-serve` (serving).
 
 ## Results tree (unified 2026-06-17 — all under `/mnt/data/sgsilva/results/`)
 ```
@@ -24,7 +24,7 @@ repo `aux_tasks/evals`→`results/aux/evals`. The aux master CSV is no longer in
 
 ## TL;DR — run everything on an already-served model
 ```bash
-# serve first (see /serve-vllm); thinking mode MUST match the SFT target.
+# serve first (see /vlm-serve); thinking mode MUST match the SFT target.
 /home/sgsilva/utilities/eval/eval_all.sh \
   --model /mnt/data/sgsilva/models/<exported-ckpt> \
   --base-model qwen3.5-4b \
@@ -105,7 +105,7 @@ export SERVE_VENV=/home/sgsilva/vlm-post-training-home-venv   # pmartins/27B-mer
   serve+eval, so no script hits the 255-char filename limit (`Errno 36`). Transparent; compiler
   resolves it back. No action needed beyond `--serve`.
 - **pmartins `TokenizersBackend` tokenizer** → `--serve-venv /home/sgsilva/vlm-post-training-home-venv`
-  (the default serving venv's transformers is too old). See `/serve-vllm`.
+  (the default serving venv's transformers is too old). See `/vlm-serve`.
 - **`--bench-max-tokens 16384`** for thinkon-27B: caps ALL 3 benchmarks (VSI config + MMMU/Video-MME)
   so runaway reasoning fails in ~2-4min instead of ~30min/sample (else Video-MME ≈ days, ~27%
   non-responses). Real answers untouched (well under 16384). The compiler scores benchmarks over
@@ -238,7 +238,7 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
 - **Per-run output:** `/mnt/data/sgsilva/results/visual_obs/runs/<stem>_singlestage_think<on|off>.json`
   (metrics: `error_detection_f1`, `sample_error_detection_f1`, `overall_severity_accuracy`).
 - **Full multi-stage recipe** (stage-1 obs → agreement → two-stage → single-stage) +
-  registration: memory `reference_visual_obs_eval_commands` + skill `/eval-vlm`.
+  registration: memory `reference_visual_obs_eval_commands` + skill `/vlm-eval`.
 - **Collectors (MANUAL — numbers never typed):** `data_preparation/build_results_csv.py`
   (→ `visual-obs-sft/visual_obs_sft_results_1105.csv`), `build_single_stage_csv.py`,
   `build_formatted_csv.py`. Field contract: `data_preparation/canonical_csv_columns.py`.
@@ -258,7 +258,7 @@ benchmark symlink. A real run auto-runs the same preflight and ABORTS on any `[F
 - **Filename namer (step 3):** `eval_name.py build --ckpt … --axis … --thinking … [--cohort …
   --arm …]` prints the canonical stem; `eval_name.py check <name>…` validates grammar (doubled
   think tags, buried cohort, unwired arm/cohort). NEVER hand-template stems in campaign scripts.
-  Grammar registered in the /nomenclature skill.
+  Grammar registered in the /vlm-nomenclature skill.
 - **Rebuild is AUTOMATIC** — `eval_all.sh` runs `rebuild_board.sh` at the end of every run (and
   `eval_all.sbatch` inherits it): backup key CSVs → `results/_backups/<ts>/` → regen the COMBINED
   matrix AND each per-base `eval_matrix_{4b,27b}.csv` (a multi-base export writes ONLY the combined
@@ -351,7 +351,7 @@ assumptions (server is yours to start); thinking-mode must match the SFT target.
   re-runs harmlessly.
 - **`thinking=unknown` on the board.** The source file's name lacked `_thinkon/_thinkoff`. Tag the
   `--output-file`/`RUN_ID` with the mode (same ckpt → different numbers per mode).
-- **Run shows no `==== RUN END ====` footer / `/log` can't tell pass from fail.** Was the
+- **Run shows no `==== RUN END ====` footer / `/vlm-log` can't tell pass from fail.** Was the
   `exec > >(tee…)` proc-sub bug (fixed: direct `exec >> $LOG` + EXIT trap). If you re-introduce a
   `tee` in a driver, the footer/trap breaks again — redirect directly, like `clog` does.
 
