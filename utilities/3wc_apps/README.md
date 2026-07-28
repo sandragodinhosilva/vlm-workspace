@@ -34,7 +34,7 @@ copy that rather than reconstructing it. The middle hostname matters: if the app
 | Source | `/home/sgsilva/dawn-research/3wc/app.py` (Gradio; `core/` holds the shared logic) |
 | What it shows | Langfuse production traces: Member ↔ **Phoenix** ↔ Clinical Specialist, plus per-turn tool calls, escalations, task updates |
 | Views | "By patient (merged)" — all of a member's turns unioned into one chronological conversation with a 🧠 card per turn; "By single trace" — one raw turn |
-| Corpus | `/mnt/data/pmartins/3-way-chat-thrive/` — **read-only, never write there** |
+| Corpus | `/mnt/data/shared/3wc/` (raw exports under `raw/`) — **read-only, never write there** |
 
 ## Usage
 

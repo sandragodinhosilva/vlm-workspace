@@ -5,12 +5,12 @@
 # launch_app.sh / apps_registry.yaml assume VLM paths and venvs. Nothing here imports
 # them, so the two stay independent (see CLAUDE.local.md "membrane").
 #
-#   ./run_app.sh                 # full merged corpus (.index_files), port 7860
-#   ./run_app.sh -p 7865         # pick a port
-#   ./run_app.sh --era 0907      # index ONLY the 0907 export (skip 2206/2606)
-#   ./run_app.sh --fg            # run in foreground (Ctrl-C to stop)
-#   ./run_app.sh --status        # is it up? where is it logging?
-#   ./run_app.sh --stop          # stop the instance on this port
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh                 # full merged corpus (.index_files), port 7860
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh -p 7865         # pick a port
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh --era 0907      # index ONLY the 0907 export (skip 2206/2606)
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh --fg            # run in foreground (Ctrl-C to stop)
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh --status        # is it up? where is it logging?
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh --stop          # stop the instance on this port
 #
 # First launch scans the corpus to build byte-offset indexes (~34 GB for the full
 # merged set, a few minutes); every later launch loads them from .trace_index/ and
@@ -20,7 +20,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"            # this launcher (utilities/3wc_apps)
 APP_DIR="${APP_DIR:-/home/sgsilva/dawn-research/3wc}"           # the app itself, in the SWORD repo
-DATA_ROOT="${DATA_DIR:-/mnt/data/pmartins/3-way-chat-thrive}"   # READ-ONLY: never write here
+DATA_ROOT="${DATA_DIR:-/mnt/data/shared/3wc}"                   # READ-ONLY: never write here
+                                                                # (moved from /mnt/data/pmartins/3-way-chat-thrive, 2026-07-28)
 PYTHON="${PYTHON:-/mnt/data/sgsilva/.venvs/uv/bin/python3}"
 LOG_DIR="${LOG_DIR:-/mnt/data/sgsilva/logs/3wc}"
 
@@ -98,8 +99,8 @@ fi
 # restricts to that export, which is what the eval/test sets are built from.
 export DATA_DIR="$DATA_ROOT"
 if [[ -n "$ERA" ]]; then
-  conv="$DATA_ROOT/3_agents_${ERA}.jsonl"
-  poc_candidates=("$DATA_ROOT/precision_of_care_${ERA}.jsonl" "$DATA_ROOT"/precision_of_care_*.jsonl)
+  conv="$DATA_ROOT/raw/3_agents_${ERA}.jsonl"
+  poc_candidates=("$DATA_ROOT/raw/precision_of_care_${ERA}.jsonl" "$DATA_ROOT"/raw/precision_of_care_*.jsonl)
   poc=""
   for c in "${poc_candidates[@]}"; do [[ -f "$c" ]] && { poc="$c"; break; }; done
   [[ -f "$conv" ]] || { echo "FATAL: no conv export for era '$ERA': $conv" >&2; exit 1; }
