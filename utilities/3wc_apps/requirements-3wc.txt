@@ -1,0 +1,31 @@
+# 3WC (dawn-research/3wc) runtime deps — for /home/sgsilva/dawn-research-3wc-home-venv
+#
+# Derived by surveying every third-party import in 3wc's own code (core/, scripts/,
+# exploration/, app.py, poc_rules.py) on 2026-07-30. `3wc/` declares no requirements.txt
+# or pyproject of its own; the monorepo's pyproject lives in ../prime-rl and is for
+# TRAINING (torch/megatron/flash-attn) — not what these analysis/eval/app scripts need.
+#
+# Lives here, not in dawn-research/, for the same reason run_app.sh does: that repo is
+# SWORDHealth's and is never pushed from this box, so no untracked file should sit in it
+# waiting to be swept into a commit.
+#
+# Rebuild:
+#   uv venv /home/sgsilva/dawn-research-3wc-home-venv --python 3.12
+#   uv pip install --python /home/sgsilva/dawn-research-3wc-home-venv/bin/python \
+#       -r /home/sgsilva/utilities/3wc_apps/requirements-3wc.txt
+
+# --- analysis / plotting (scripts/eval/analyze.py, poc_analyze.py, eval_report.py) ---
+numpy
+matplotlib
+
+# --- dataset building (scripts/sft, dpo, grpo, eval/build_eval_sets.py) ---
+datasets
+tqdm
+
+# --- the trace-viewer app (app.py) ---
+gradio
+
+# --- hosted-model judges (lazy imports; only needed for vertex/gemini judge runs) ---
+#   core/backends.py: `from anthropic import AnthropicVertex`  /  `from google import genai`
+anthropic
+google-genai

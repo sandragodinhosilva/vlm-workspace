@@ -1,0 +1,9 @@
+{
+  "heads": {
+    "ai-documentation": "3164f5cf37c9138d99a34b260298b44cfa31b196",
+    "ai-services": "117104d0ab788c4ed9a8173282cf6202a097859f",
+    "dawn-research": "9363606458154d1f5dd7e0e28bb5d2f4cd798361",
+    "phoenix-gym": "9b0736a1666800a133352ddb52e2aa2cd163b0ae"
+  },
+  "last_run": "2026-07-30 14:45 UTC"
+}
