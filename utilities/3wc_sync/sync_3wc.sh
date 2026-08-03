@@ -16,8 +16,13 @@ FORK_URL="git@github.com:sandragodinhosilva/3wc-sgsilva.git"
 FORK_BRANCH="main"
 PREFIX="3wc"
 
-# The 3 read-only reference clones living inside dawn-research/3wc/ (git-ignored).
-REFS="ai-services ai-documentation phoenix-gym"
+# The 5 read-only SWORD clones living inside dawn-research/3wc/.
+#   ai-services / ai-documentation / phoenix-gym  → reference, ignored via the parent .gitignore
+#   ai-common / feature-store (added 2026-07-31)  → BUILD DEPS for ai-services' `make venv`
+#     (editable-installed by relative path, so the names and location are load-bearing);
+#     excluded via .git/info/exclude, which does NOT survive a re-clone of dawn-research.
+# ⚠️ Pulling ai-common/feature-store changes what an already-built venv runs — do it deliberately.
+REFS="ai-services ai-documentation phoenix-gym ai-common feature-store"
 
 c_ok=$'\033[32m'; c_warn=$'\033[33m'; c_err=$'\033[31m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 say()  { printf '%s\n' "$*"; }

@@ -1,5 +1,56 @@
 # Utilities Changelog
 
+## 2026-07-30: 3WC eval-output inspection + daily upstream tracking
+
+> **3WC workstream** (`dawn-research/3wc`) — separate from the VLM tooling below. Both new dirs sit
+> in `~/utilities/` rather than the repo because `dawn-research` is a SWORDHealth repo that is never
+> pushed from this box: no untracked file should sit in it awaiting an accidental commit.
+
+### `3wc_inspect/` (new) — read a finished eval run
+Fronted by the `/3wc-preview-jsonl` skill. Read-only; never writes to `/mnt/data/shared/3wc/`.
+- `preview_eval_jsonl.py` — **WHAT happened**: summary (replay_status mix, judge-score means, a
+  `← FLAT` flag when a metric has zero variance) + per-row decision/scores. `--list` for a run dir;
+  `--status/--agent/--grep/--full-text` filters. Filters apply to SCANNED rows, so `-n 20 --status
+  diverge` means "the first 20 diverge rows".
+- `preview_conversations.py` — **WHY**: the transcript the model saw + the judge's per-metric
+  comments. Reuses the repo's own `core.messages.build_turn_messages(out)` → `(agent, messages)` so
+  the view cannot drift from what the eval actually sent.
+- `preview_by_conversation.py` — **turn → eval → turn → eval** for one member (`account` +
+  `program_uuid` from the turns file), with `PHOENIX did` / `MODEL did` side by side.
+- `build_trace_offsets.py` — one-time `turn_id → byte-offset` sidecar. Exists because
+  `core._load_out()` cold-starts an index over every file in `.index_files` (~138 GB; one is 102 GB).
+- **Gotchas encoded:** `replay_status` is a COMPARISON to Phoenix's recorded call-sequence, not a
+  verdict; `model=phoenix` rows are a reference arm; one turn has 6–9 eval rows; previews land in
+  the **git-ignored** `3wc/exploration/eval_previews/` because rows carry real member data.
+
+### `3wc_sync/track_3wc_changes.py` (new) — daily upstream tracker
+Fronted by `/3wc-daily`; wraps `sync_3wc.sh pull` (does not duplicate it). Appends to
+`~/.claude/reports/3wc/3WC_UPSTREAM_CHANGELOG.md`, newest first.
+- Per repo: sha→sha, shortstat, commits with author/date, an "Active:" ranking of who is committing.
+- **`dawn-research` splits upstream from local** — fetched-but-unmerged commits are listed
+  separately (and **always**, including on a first/no-change run) so "I committed" is never mistaken
+  for "the team pushed".
+- **Langfuse export watch** — 10 artifacts under `/mnt/data/shared/3wc/` by `(mtime, size)`. Nothing
+  announces an export; this is the only signal, and an export is what actually advances the scenario
+  catalogue.
+- **prompt → production sync** — newest upstream prompt-commit date vs newest `last_seen` across
+  `prompts_and_rubrics/*/revisions/INDEX.md`. `prompts_and_rubrics/` is distilled from PRODUCTION
+  TRACES, not copied from `ai-services`, so an upstream merge is a leading indicator, not a trigger.
+- Baselines in `.track_state.json` — the 3 reference clones are `--depth 1` and a shallow fetch may
+  drop the old commit, which would read as "upstream was quiet". `--since-reflog` backfills a missing
+  baseline, keyed on the reflog ACTION (`pull|merge|fetch|clone|reset`), never on "the previous
+  entry" (wrong for any repo carrying local commits).
+
+### `3wc_apps/requirements-3wc.txt` (new) + the 3WC venv
+- `/home/sgsilva/dawn-research-3wc-home-venv` (py3.12.3). `3wc/` declares **no** requirements and
+  `../prime-rl`'s pyproject is for TRAINING, so `uv run` from `3wc/` lacks numpy/matplotlib and
+  `scripts/eval/analyze.py` could not run at all.
+- Deps derived by surveying every third-party import in `core/`, `scripts/`, `exploration/`,
+  `app.py`, `poc_rules.py`: numpy · matplotlib · datasets · tqdm · gradio · anthropic · google-genai.
+- Do **not** use the VLM venv for 3WC (membrane rule), even though it has numpy/matplotlib.
+
+### `3wc_sync/README.md` (new), `3wc_inspect/README.md` (new)
+
 ## 2026-06-24: `md_to_html.py` — Markdown → self-contained HTML
 
 ### `md_to_html.py` (new)

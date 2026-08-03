@@ -35,6 +35,12 @@ MODELS["qwen3-vl-32b-thinking"]="Qwen/Qwen3-VL-32B-Thinking"
 MODELS["glm-4.5v"]="zai-org/GLM-4.5V"
 MODELS["glm-4.6v"]="/mnt/data/shared/models/GLM-4.6V"
 MODELS["glm-4.7"]="/mnt/data/shared/models/GLM-4.7"
+# GLM-5.2 FP8 — the exact variant behind the 3WC monalisa "open source model
+# comparison" baselines. Pinned to the HF-cache snapshot (already on shared
+# storage, 141 shards, complete) rather than the 2.8TB BF16 copy at
+# /mnt/data/shared/models/GLM-5.2, which per the vLLM recipe needs MULTI-NODE.
+MODELS["glm-5.2-fp8"]="/mnt/data/shared/cache/hub/models--zai-org--GLM-5.2-FP8/snapshots/31cba24fb749908a485082bdeed6eb1ac6cffc2f"
+MODELS["glm-5.2-nvfp4"]="/mnt/data/shared/cache/hub/models--nvidia--GLM-5.2-NVFP4/snapshots/aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa"
 MODELS["internvl3.5-241b"]="OpenGVLab/InternVL3_5-241B-A28B-HF"
 MODELS["kimi-k2.5"]="/mnt/data/shared/models/Kimi-K2.5/"
 MODELS["qwen3.5-397b-a17b"]="/mnt/data/shared/models/Qwen3.5-397B-A17B/"
@@ -393,6 +399,64 @@ elif [[ "$MODEL_PATH" == *"Kimi-K2.5"* ]]|| [[ "$MODEL_PATH" == *"kimi"* ]]; the
         --port "$PORT" \
         --no-enable-prefix-caching \
         "${PERF_ARGS[@]}"
+
+elif [[ "$MODEL_PATH" == *"GLM-5.2"* ]]; then
+    # Config from the official vLLM recipe (recipes.vllm.ai/zai-org/GLM-5.2),
+    # B200/Blackwell section — this cluster is B300, same family.
+    #
+    # ⚠️ --tool-call-parser is glm47, NOT the glm45 used by the GLM-4.7 branch
+    # below. The recipe and the GLM-5.2 server already running on the cluster
+    # both use glm47. This matters: the 3WC monalisa suite grades TOOL CALLING,
+    # so a mismatched tool parser would corrupt the very metric being measured.
+    # --reasoning-parser stays glm45 (that pairing is what the recipe specifies).
+    #
+    # NOTE on reasoning_effort: the chat template defaults to "max". The
+    # published GLM-5.2(high) baseline requires the CLIENT to send
+    # chat_template_kwargs={"reasoning_effort": "high"} per request; it is not a
+    # server flag. Serving is identical for the high and max rows — one server
+    # produces both, the client chooses.
+    echo "Detected GLM-5.2 - using vLLM-recipe (B200) configuration"
+    echo ""
+    # max_position_embeddings=1048576; cap the request to that.
+    GLM52_MAX_LEN=$MAX_MODEL_LEN
+    if [ "$GLM52_MAX_LEN" -gt 1048576 ]; then GLM52_MAX_LEN=1048576; fi
+    print_startup_heartbeat_status
+    GLM52_PERF_ARGS=()
+    [ -n "$GPU_MEM_UTIL" ] && { GLM52_PERF_ARGS+=(--gpu-memory-utilization "$GPU_MEM_UTIL"); echo "Perf knob: --gpu-memory-utilization $GPU_MEM_UTIL"; }
+    # Recipe pins --max-num-seqs 32 for FP8 on B200; MAX_NUM_SEQS overrides.
+    GLM52_PERF_ARGS+=(--max-num-seqs "${MAX_NUM_SEQS:-32}")
+    echo "Perf knob: --max-num-seqs ${MAX_NUM_SEQS:-32}"
+    [ -n "$EXTRA_VLLM_ARGS" ] && { read -ra _ex <<< "$EXTRA_VLLM_ARGS"; GLM52_PERF_ARGS+=("${_ex[@]}"); echo "Perf knob: EXTRA_VLLM_ARGS = $EXTRA_VLLM_ARGS"; }
+    # --served-model-name keeps the id short and STABLE ("glm-5.2-fp8"), matching
+    # both the recipe and ai-services/.env LOCAL_VLLM_MODEL_ID. Without it the
+    # served id would be this long snapshot path and the eval client would 404.
+    # NVFP4 is a DIFFERENT quantization with its own recipe stanza: it adds
+    # --enable-expert-parallel and must NOT be served under the fp8 id, or the
+    # eval client would silently attribute NVFP4 numbers to the FP8 baseline.
+    if [[ "$MODEL_PATH" == *"NVFP4"* ]]; then
+        GLM52_SERVED_NAME="${SERVED_MODEL_NAME:-glm-5.2-nvfp4}"
+        GLM52_PERF_ARGS+=(--enable-expert-parallel)
+        echo "Variant: NVFP4 (Blackwell-native) - adding --enable-expert-parallel"
+        echo "⚠️  NVFP4 != the FP8 used for the published baselines - not like-for-like."
+    else
+        GLM52_SERVED_NAME="${SERVED_MODEL_NAME:-glm-5.2-fp8}"
+        echo "Variant: FP8 (matches the published baseline)"
+    fi
+    echo "Served model name: $GLM52_SERVED_NAME"
+    # Speculative decoding (MTP) is in the recipe but deliberately OMITTED here:
+    # it changes throughput, not outputs, and adds a failure mode during a run
+    # whose entire purpose is reproducing published numbers. Add it via
+    # EXTRA_VLLM_ARGS once the baseline is reproduced.
+    run_qwen35_vllm serve "$MODEL_PATH" \
+        --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
+        --max-model-len "$GLM52_MAX_LEN" \
+        --kv-cache-dtype fp8_e4m3 \
+        --tool-call-parser glm47 \
+        --reasoning-parser glm45 \
+        --enable-auto-tool-choice \
+        --served-model-name "$GLM52_SERVED_NAME" \
+        --port "$PORT" \
+        "${GLM52_PERF_ARGS[@]}"
 
 elif [[ "$MODEL_PATH" == *"GLM-4.7"* ]]; then
     echo "Detected GLM-4.7 model - using GLM-4.7-specific configuration"

@@ -29,6 +29,10 @@ REPOS = {
     "ai-services": "/home/sgsilva/dawn-research/3wc/ai-services",
     "ai-documentation": "/home/sgsilva/dawn-research/3wc/ai-documentation",
     "phoenix-gym": "/home/sgsilva/dawn-research/3wc/phoenix-gym",
+    # Build deps for ai-services' `make venv` (added 2026-07-31). Tracked because a
+    # change here alters harness behaviour without touching ai-services itself.
+    "ai-common": "/home/sgsilva/dawn-research/3wc/ai-common",
+    "feature-store": "/home/sgsilva/dawn-research/3wc/feature-store",
 }
 SYNC = "/home/sgsilva/utilities/3wc_sync/sync_3wc.sh"
 STATE = "/home/sgsilva/utilities/3wc_sync/.track_state.json"
@@ -57,30 +61,35 @@ def git(repo, *args, check=False):
     return r.stdout.strip()
 
 
-def reflog_baseline(path, before_today=True):
-    """The sha this repo was at BEFORE the most recent pull, read from the reflog.
+INCOMING = ("pull", "merge", "fetch", "clone", "reset")
 
-    Used to backfill a baseline when the sidecar has none (first run, or a run that
-    recorded baselines only). The reflog is local truth about where HEAD actually
-    was, so this is a real baseline -- not a guess. Returns None when the reflog
-    has no prior entry, and the caller then reports "first run" rather than
-    inventing a diff.
+
+def reflog_baseline(path):
+    """The sha this repo was at BEFORE the most recent INCOMING update.
+
+    Backfills a baseline when the sidecar has none. Keyed on the reflog ACTION,
+    not on position: "the previous reflog entry" is wrong for any repo that
+    carries local commits -- in dawn-research it returns the previous LOCAL
+    commit, which would report Sandra's own work as if it had arrived from
+    upstream. Only pull/merge/fetch/clone/reset move a repo from elsewhere.
+
+    Returns None when the reflog holds no such entry (e.g. dawn-research, whose
+    reflog is all `commit:` -- it has never been merged from upstream on this
+    box). The caller then reports "first run" rather than inventing a diff; the
+    unmerged-commits block in describe() covers upstream movement there anyway.
     """
-    out = git(path, "reflog", "show", "--date=iso", "-40")
+    out = git(path, "reflog", "show", "--format=%h|%gs", "-60")
     if out.startswith("__ERROR__") or not out:
         return None
-    entries = []
-    for line in out.splitlines():
-        parts = line.split(" ", 1)
-        if len(parts) == 2 and parts[0]:
-            entries.append(parts[0])
-    if len(entries) < 2:
-        return None
-    # entries[0] is current HEAD; the next distinct sha is where we were before.
-    head = entries[0]
-    for sha in entries[1:]:
-        if sha != head:
-            return sha
+    rows = [r.split("|", 1) for r in out.splitlines() if "|" in r]
+    for i, (_sha, action) in enumerate(rows):
+        verb = action.split(":", 1)[0].split()[0].lower() if action.strip() else ""
+        if verb in INCOMING:
+            # the entry BELOW an incoming update is where we were before it
+            for sha, _a in rows[i + 1:]:
+                if sha != rows[i][0]:
+                    return sha
+            return None
     return None
 
 
@@ -120,10 +129,28 @@ def describe(repo, path, prev_sha):
     date = git(path, "log", "-1", "--format=%cs")
     branch = git(path, "rev-parse", "--abbrev-ref", "HEAD")
 
+    # Fetched-but-unmerged commits are reported ALWAYS -- they are upstream news
+    # regardless of whether a local baseline exists. Computing them only inside the
+    # diff path silently hid them on a first run, which is exactly when catching up
+    # matters most.
+    pending = []
+    unmerged = git(path, "log", "--format=%h|%an|%cs|%s", "HEAD..@{u}")
+    if unmerged and not unmerged.startswith("__ERROR__"):
+        rows = [r for r in unmerged.splitlines() if r.count("|") >= 3]
+        if rows:
+            pending.append(f"**⬇ {len(rows)} commit(s) fetched from upstream, NOT yet merged** "
+                           f"(`git -C {path} merge --ff-only @{{u}}`):")
+            for row in rows:
+                sha, author, cdate, subject = row.split("|", 3)
+                pending.append(f"- `{sha}` {cdate} **{author}** — {subject}")
+            pending.append("")
+
     if not prev_sha:
-        return head, date, [f"_first run — baseline recorded at `{head[:7]}` ({branch}, {date})._"]
+        return head, date, pending + [
+            f"_no local baseline (this repo's reflog shows no pull/merge — its history here is "
+            f"local commits). Baseline recorded at `{head[:7]}` ({branch}, {date})._"]
     if prev_sha == head:
-        return head, date, ["_no change._"]
+        return head, date, pending + ["_no local change._"]
 
     # Can we still reach the old commit? A shallow clone may have dropped it.
     if git(path, "cat-file", "-t", prev_sha).strip() != "commit":
@@ -136,23 +163,13 @@ def describe(repo, path, prev_sha):
     files = [f for f in git(path, "diff", "--name-only", f"{prev_sha}..HEAD").splitlines() if f]
     stat = git(path, "diff", "--shortstat", f"{prev_sha}..HEAD")
 
-    lines = [f"`{prev_sha[:7]}` → `{head[:7]}` on `{branch}` — {stat or 'no file changes'}", ""]
-
-    # dawn-research carries LOCAL commits, so HEAD movement is not the same thing as
-    # upstream movement. Report what is fetched-but-unmerged separately — conflating
-    # "I committed" with "the team pushed" is the whole question this log answers.
-    unmerged = git(path, "log", "--format=%h|%an|%cs|%s", "HEAD..@{u}")
-    if unmerged and not unmerged.startswith("__ERROR__"):
-        rows = [r for r in unmerged.splitlines() if r.count("|") >= 3]
-        if rows:
-            lines.append(f"**⬇ {len(rows)} commit(s) fetched from upstream, NOT yet merged** "
-                         f"(`git -C {path} merge --ff-only @{{u}}`):")
-            for row in rows:
-                sha, author, cdate, subject = row.split("|", 3)
-                lines.append(f"- `{sha}` {cdate} **{author}** — {subject}")
-            lines.append("")
-            lines.append("Commits below are **local** (mine / this box):")
-            lines.append("")
+    # `pending` (computed above) already lists fetched-but-unmerged commits.
+    lines = list(pending)
+    if pending:
+        lines.append("Commits below are **local** (mine / this box):")
+        lines.append("")
+    lines.append(f"`{prev_sha[:7]}` → `{head[:7]}` on `{branch}` — {stat or 'no file changes'}")
+    lines.append("")
 
     authors = {}
     commits = []
@@ -267,6 +284,92 @@ def prompt_lag(repo_path):
     ]
 
 
+DATA_ROOT = "/mnt/data/shared/3wc"
+# The artifacts a new Langfuse export produces. Nothing announces an export -- it is
+# pmartins-owned shared storage that simply changes underfoot -- so the only signal
+# is (mtime, size) moving. Watching them turns "you find out by noticing" into a
+# dated line in the log.
+EXPORT_WATCH = (
+    ("raw/traces/", "trace export (glob)"),
+    ("recorded_system_prompts.jsonl", "recorded prod prompts — feeds save_prompt_revisions.py"),
+    ("recorded_system_prompts_poc.jsonl", "recorded PoC prompts"),
+    ("turn_prompt_version.json", "per-turn era map"),
+    (".index_files", "corpus manifest — which files define the corpus"),
+)
+
+
+def export_snapshot():
+    """{relpath: [mtime, size]} for every watched export artifact.
+
+    A missing file is recorded as None rather than omitted, so "it disappeared"
+    stays distinguishable from "I never looked at it".
+    """
+    snap = {}
+    for rel, _desc in EXPORT_WATCH:
+        base = os.path.join(DATA_ROOT, rel)
+        if rel.endswith("/"):
+            try:
+                for name in sorted(os.listdir(base)):
+                    if not name.endswith(".jsonl"):
+                        continue
+                    p = os.path.join(base, name)
+                    st = os.stat(p)
+                    snap[rel + name] = [int(st.st_mtime), st.st_size]
+            except Exception:
+                snap[rel] = None
+            continue
+        try:
+            st = os.stat(base)
+            snap[rel] = [int(st.st_mtime), st.st_size]
+        except Exception:
+            snap[rel] = None
+    return snap
+
+
+def fmt_when(ts):
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+
+def export_changes(prev, cur):
+    """Lines describing export artifacts that appeared or changed since last run."""
+    if not prev:
+        newest = max((v[0] for v in cur.values() if v), default=None)
+        return [f"_baseline recorded — {len(cur)} artifact(s) watched; newest "
+                f"{fmt_when(newest) if newest else 'n/a'}._"]
+    lines, moved = [], []
+    for k, v in sorted(cur.items()):
+        old = prev.get(k)
+        if v is None:
+            if old is not None:
+                lines.append(f"- ⚠️ **{k}** is gone (was {fmt_when(old[0])})")
+            continue
+        if k not in prev:
+            lines.append(f"- 🆕 **{k}** — new, {fmt_when(v[0])}, {v[1] / 1e9:.1f} GB")
+            moved.append(k)
+        elif old and (old[0] != v[0] or old[1] != v[1]):
+            delta = (v[1] - old[1]) / 1e9
+            lines.append(f"- 🔄 **{k}** — {fmt_when(old[0])} → {fmt_when(v[0])}, "
+                         f"{v[1] / 1e9:.1f} GB ({delta:+.1f} GB)")
+            moved.append(k)
+    if not lines:
+        newest = max((v[0] for v in cur.values() if v), default=None)
+        return [f"_no export movement — newest artifact still "
+                f"{fmt_when(newest) if newest else 'n/a'}._"]
+    lines.append("")
+    lines.append("**A new export landed.** The prompt revisions can now be regenerated, which is "
+                 "what actually advances the scenario catalogue:")
+    lines.append("")
+    lines.append("```")
+    lines.append("cd /home/sgsilva/dawn-research/3wc")
+    lines.append("python3 scripts/langfuse/save_prompt_revisions.py     # → prompts_and_rubrics/*/revisions/")
+    lines.append("python3 exploration/prompt_inspect/scripts/dump_scenarios.py --out-dir ../scenarios")
+    lines.append("```")
+    lines.append("")
+    lines.append("⚠️ Re-check `2026-07-29_scenario_pipeline_review.md` before relabelling — the "
+                 "labelling rubric is flagged there as unratified.")
+    return lines
+
+
 def local_state():
     """Sandra's own uncommitted work — so the log says what SHE has in flight too."""
     out = []
@@ -343,6 +446,10 @@ def main():
             changed_any = True
         body += [f"### {name}", ""] + lines + [""]
 
+    cur_exports = export_snapshot()
+    exp_lines = export_changes(state.get("exports"), cur_exports)
+    body += ["### Langfuse export watch", ""] + exp_lines + [""]
+
     lag = prompt_lag(REPOS["ai-services"])
     if lag:
         body += ["### prompt → production sync", ""] + lag + [""]
@@ -390,6 +497,7 @@ def main():
         fh.write(cur)
 
     state["heads"] = new_heads
+    state["exports"] = cur_exports
     state["last_run"] = stamp
     save_state(state)
     print(f"appended {today} entry -> {a.log}")

@@ -34,6 +34,10 @@ ENABLE_THINKING=1 GPU_MEM_UTIL=0.92 MAX_NUM_SEQS=384 /home/sgsilva/utilities/ser
 # 122b (thinkON) — serving venv
 QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv bash ./start_vllm_server.sh qwen3.5-122b-a10b 8 262144 8000
 
+# GLM AUGUST 2026
+ENABLE_THINKING=1 QWEN35_VENV=/home/sgsilva/glm52-serving-home-venv \
+  /home/sgsilva/utilities/serve/start_vllm_server.sh glm-5.2-fp8 8 200000 9001
+
 
 SERVE A MODEL (vLLM)  —  start_vllm_server.sh <CKPT> <TP> <MAX_LEN> <PORT>
 -------------------------------------------------------------------------
