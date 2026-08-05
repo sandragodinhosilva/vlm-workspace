@@ -83,6 +83,48 @@ STARTUP_HEARTBEAT_SECS="${STARTUP_HEARTBEAT_SECS:-0}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-}"
 EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS:-}"
+# ⭐ PREFIX CACHING — env-overridable. Was hardcoded OFF in three branches (2026-08-05).
+#
+# ⚠️ COVERAGE, read before assuming this knob applies to your model:
+#   * Qwen3.5-family, Kimi, and the generic ELSE branch  -> honour $PREFIX_CACHING (default OFF).
+#     The generic else-branch is what a `qwen36`/other-family PATH falls through to.
+#   * GLM-5.2 and GLM-4.7 branches -> pass NO prefix-caching flag at all, so they inherit vLLM's
+#     OWN default (ON in current vLLM). This knob does NOT reach them; those branches follow the
+#     official GLM recipe verbatim and were deliberately left alone.
+# ⇒ Setting PREFIX_CACHING=1 for a GLM model is a NO-OP, not a change. Check which branch your
+#   MODEL_PATH matches (the glob list below) before reasoning about what you served.
+#
+# `--no-enable-prefix-caching` was hardcoded in those three branches with no comment. It is a
+# reasonable default for the VIDEO workload this script was written for (each request carries
+# different frames, so there is no prefix to reuse and the cache is overhead) — but it is WRONG,
+# and not merely slow, for a long-shared-prefix TEXT workload.
+#
+# ⛔ MEASURED 2026-08-05 (3WC appliedAI evals, Qwen3.6-27B GRPO ckpt via the ELSE branch,
+# ~45-57K-token shared system prompt): with prefix caching OFF, generations COLLAPSE under
+# concurrency —
+#     concurrency 1-2: clean · concurrency 4: 4/4 degenerate · concurrency 10: 20/20 degenerate
+# "Degenerate" = the character `!` emitted to the completion ceiling. Turning it ON cleared that
+# completely (0/32 at concurrency 32). Cost: a node-day and one published-then-retracted eval row.
+#
+# ⚠️ WHAT IS AND IS NOT ESTABLISHED, since other model families will be tested here:
+#   * ESTABLISHED: on THIS ckpt, prefix caching ON vs OFF is the difference between clean and
+#     degenerate at concurrency >= 4. Reproducible in both directions.
+#   * NOT ESTABLISHED: the mechanism. "KV pressure from re-prefilling the shared prefix" is the
+#     best-supported story, not a proven one.
+#   * NOT A CONTROL: GLM-5.2 looked clean at concurrency 32 on the same harness — but per the
+#     coverage note above it was ALREADY running with vLLM's default prefix caching ON, so it was
+#     never a test of this variable. Do not cite it as "another family is immune".
+# ⇒ For ANY new model family: run `probe_serving_cliff.py` (3wc/exploration/eval_fixtures/) at the
+#   concurrency you intend to use, BEFORE trusting a score. Do not assume this ckpt's result
+#   transfers — and do not assume a family is safe because a different one was.
+#
+# Default stays OFF so the video/VLM behaviour of this shared script is unchanged.
+PREFIX_CACHING="${PREFIX_CACHING:-0}"
+if [ "$PREFIX_CACHING" = "1" ]; then
+    PREFIX_CACHING_ARG="--enable-prefix-caching"
+else
+    PREFIX_CACHING_ARG="--no-enable-prefix-caching"
+fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR"
 QWEN35_VENV="${QWEN35_VENV:-}"
@@ -379,7 +421,7 @@ if [[ "$MODEL_PATH" == *"Qwen3.5"* ]] || [[ "$MODEL_PATH" == *"Qwen/Qwen3.5"* ]]
         --media-io-kwargs '{"video": {"num_frames": 2048}}' \
         --port "$PORT" \
         --enable-chunked-prefill \
-        --no-enable-prefix-caching \
+        "$PREFIX_CACHING_ARG" \
         "${PERF_ARGS[@]}" \
         "${SERVED_NAME_ARGS[@]}" \
         "${THINKING_ARGS[@]}"
@@ -397,7 +439,7 @@ elif [[ "$MODEL_PATH" == *"Kimi-K2.5"* ]]|| [[ "$MODEL_PATH" == *"kimi"* ]]; the
         --reasoning-parser kimi_k2 \
         --mm-encoder-tp-mode data \
         --port "$PORT" \
-        --no-enable-prefix-caching \
+        "$PREFIX_CACHING_ARG" \
         "${PERF_ARGS[@]}"
 
 elif [[ "$MODEL_PATH" == *"GLM-5.2"* ]]; then
@@ -507,7 +549,7 @@ else
         --media-io-kwargs '{"video": {"num_frames": 2048}}' \
         --port "$PORT" \
         --enable-chunked-prefill \
-        --no-enable-prefix-caching \
+        "$PREFIX_CACHING_ARG" \
         "${PERF_ARGS[@]}" \
         "${THINKING_ARGS[@]}"
 fi
