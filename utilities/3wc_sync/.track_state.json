@@ -1,8 +1,8 @@
 {
   "exports": {
     ".index_files": [
-      1785262444,
-      755
+      1785867876,
+      826
     ],
     "raw/traces/3_agents_0907.jsonl": [
       1783608407,
@@ -20,21 +20,29 @@
       1782513555,
       321275174
     ],
+    "raw/traces/traces_monalisa_0804.jsonl": [
+      1785859351,
+      51533399386
+    ],
     "raw/traces/traces_monalisa_2807.jsonl": [
       1785255443,
       102559405352
+    ],
+    "raw/traces/traces_poc_0804.jsonl": [
+      1785850463,
+      983237566
     ],
     "raw/traces/traces_poc_2807.jsonl": [
       1785228233,
       1610609081
     ],
     "recorded_system_prompts.jsonl": [
-      1785268999,
-      21119854031
+      1785870034,
+      35657429409
     ],
     "recorded_system_prompts_poc.jsonl": [
-      1785269045,
-      826195708
+      1785868378,
+      1526825532
     ],
     "turn_prompt_version.json": [
       1785273521,
@@ -42,12 +50,12 @@
     ]
   },
   "heads": {
-    "ai-common": "4a85dc2a8e15e5f126033ed36ad97299df9922b2",
-    "ai-documentation": "3164f5cf37c9138d99a34b260298b44cfa31b196",
-    "ai-services": "a7a3a7d8fa141797d998d3f03ad18bbcc741f4f7",
-    "dawn-research": "49869f2adf1d666d14ec87e167c7fe44f4568a75",
+    "ai-common": "a07d4f9afec9c92b762337716d169d2f95732895",
+    "ai-documentation": "4573e921d874a0d57741372d26ab863d255c8c76",
+    "ai-services": "c6c37d30b814e39c76d3783326d5220574a38c12",
+    "dawn-research": "09b60a7956e54f06b861692abbee4d1d114bcdc7",
     "feature-store": "397b0e3290c34222899e9cd5f528098b15536bb5",
-    "phoenix-gym": "6851151cbfe1ddb527426cabc2b721588d0a3731"
+    "phoenix-gym": "58eb7f8e4bfd8af21b1009a2fda5e6fdc5b538c3"
   },
-  "last_run": "2026-08-03 10:11 UTC"
+  "last_run": "2026-08-07 08:04 UTC"
 }
