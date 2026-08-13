@@ -1,0 +1,88 @@
+[2026-08-12T20:52:12+00:00] node=worker-5  serving '/mnt/data/shared/models/Kimi-K3' as 'hosted_vllm/kimi-k3' on port 9000
+[2026-08-12T20:52:12+00:00] vllm stdout/stderr -> /home/sgsilva/utilities/serve/kimi3/run/vllm.log
+[2026-08-12T20:52:13+00:00] waiting for health at http://worker-5:9000/health (timeout 3600s) ...
+[2026-08-12T20:53:47+00:00] !!! vllm exited during startup. Last 200 lines of /home/sgsilva/utilities/serve/kimi3/run/vllm.log:
+(APIServer pid=3899410) INFO 08-12 20:52:56 [api_utils.py:345] 
+(APIServer pid=3899410) INFO 08-12 20:52:56 [api_utils.py:345]        █     █     █▄   ▄█
+(APIServer pid=3899410) INFO 08-12 20:52:56 [api_utils.py:345]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.27.2rc1.dev2+g34735aced
+(APIServer pid=3899410) INFO 08-12 20:52:56 [api_utils.py:345]   █▄█▀ █     █     █     █  model   /mnt/data/shared/models/Kimi-K3
+(APIServer pid=3899410) INFO 08-12 20:52:56 [api_utils.py:345]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=3899410) INFO 08-12 20:52:56 [api_utils.py:345] 
+(APIServer pid=3899410) INFO 08-12 20:52:56 [api_utils.py:273] non-default args: {'model_tag': '/mnt/data/shared/models/Kimi-K3', 'enable_auto_tool_choice': True, 'tool_call_parser': 'kimi_k3', 'host': '0.0.0.0', 'port': 9000, 'model': '/mnt/data/shared/models/Kimi-K3', 'trust_remote_code': True, 'max_model_len': 1048576, 'served_model_name': ['kimi-k3'], 'load_format': 'fastsafetensors', 'reasoning_parser': 'kimi_k3', 'tensor_parallel_size': 8, 'gpu_memory_utilization': 0.95, 'kv_cache_dtype': 'fp8', 'enable_prefix_caching': True, 'language_model_only': True, 'enable_flashinfer_autotune': False, 'attention_config': AttentionConfig(backend=None, minimax_m3_msa_decode_backend='triton', backend_per_kind={}, flash_attn_version=None, use_prefill_decode_attention=False, flash_attn_max_num_splits_for_cuda_graph=32, tq_max_kv_splits_for_cuda_graph=32, use_trtllm_attention=None, disable_flashinfer_q_quantization=False, mla_prefill_backend=<MLAPrefillBackendEnum.FLASHINFER: 'vllm.v1.attention.backends.mla.prefill.flashinfer.FlashInferPrefillBackend'>, use_prefill_query_quantization=True, use_fp4_indexer_cache=False, indexer_kv_dtype='bf16', use_non_causal=False, sparse_mla_force_mqa=False, flex_attn_block_m=None, flex_attn_block_n=None, flex_attn_q_block_size=None, flex_attn_kv_block_size=None)}
+(APIServer pid=3899410) WARNING 08-12 20:52:56 [envs.py:2187] Unknown vLLM environment variable detected: VLLM_ENABLE_K3_LATENT_MOE_TAIL_FUSION
+(APIServer pid=3899410) INFO 08-12 20:52:56 [kimi_k3.py:116] Overriding vision_config.text_hidden_size from 2304 to 4096 to match text_config.hidden_size
+(APIServer pid=3899410) INFO 08-12 20:53:30 [model.py:679] Resolved architecture: KimiK3ForConditionalGeneration
+(APIServer pid=3899410) INFO 08-12 20:53:30 [model.py:697] Defaulting to tokenizer_mode='kimi_k3' for KimiK3ForConditionalGeneration
+(APIServer pid=3899410) INFO 08-12 20:53:30 [model.py:1972] Using max model len 1048576
+(APIServer pid=3899410) INFO 08-12 20:53:38 [kimi_k3.py:116] Overriding vision_config.text_hidden_size from 2304 to 4096 to match text_config.hidden_size
+(APIServer pid=3899410) WARNING 08-12 20:53:39 [registry.py:259] Using a slow tokenizer. This might cause a significant slowdown. Consider using a fast tokenizer instead.
+(APIServer pid=3899410) INFO 08-12 20:53:39 [kimi_k3.py:116] Overriding vision_config.text_hidden_size from 2304 to 4096 to match text_config.hidden_size
+(APIServer pid=3899410) INFO 08-12 20:53:39 [registry.py:141] All limits of multimodal modalities supported by the model are set to 0, running in text-only mode.
+(APIServer pid=3899410) INFO 08-12 20:53:39 [model.py:882] Disabled mm_prefix attention mode because multimodal inputs are configuration-disabled. Attention backends without mm_prefix support may now be selected.
+(APIServer pid=3899410) INFO 08-12 20:53:39 [cache.py:282] Using fp8 data type to store kv cache. It reduces the GPU memory footprint and boosts the performance. Meanwhile, it may cause accuracy drop without a proper scaling factor
+(APIServer pid=3899410) INFO 08-12 20:53:39 [scheduler.py:242] Chunked prefill is enabled with max_num_batched_tokens=16384.
+(APIServer pid=3899410) INFO 08-12 20:53:39 [config.py:598] Mamba cache mode is set to 'align' for KimiK3ForConditionalGeneration by default when prefix caching is enabled
+(APIServer pid=3899410) INFO 08-12 20:53:39 [vllm.py:1314] Auto-enabling VLLM_USE_BREAKABLE_CUDAGRAPH=1. Set VLLM_USE_BREAKABLE_CUDAGRAPH=0 to opt out.
+(APIServer pid=3899410) INFO 08-12 20:53:39 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+(APIServer pid=3899410) Traceback (most recent call last):
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/bin/vllm", line 10, in <module>
+(APIServer pid=3899410)     sys.exit(main())
+(APIServer pid=3899410)              ^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/entrypoints/cli/main.py", line 97, in main
+(APIServer pid=3899410)     args.dispatch_function(args)
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/entrypoints/cli/serve.py", line 152, in cmd
+(APIServer pid=3899410)     uvloop.run(run_server(args))
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/uvloop/__init__.py", line 92, in run
+(APIServer pid=3899410)     return runner.run(wrapper())
+(APIServer pid=3899410)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/asyncio/runners.py", line 118, in run
+(APIServer pid=3899410)     return self._loop.run_until_complete(task)
+(APIServer pid=3899410)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3899410)   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/uvloop/__init__.py", line 48, in wrapper
+(APIServer pid=3899410)     return await main
+(APIServer pid=3899410)            ^^^^^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/entrypoints/openai/api_server.py", line 764, in run_server
+(APIServer pid=3899410)     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/entrypoints/openai/api_server.py", line 778, in run_server_worker
+(APIServer pid=3899410)     async with build_async_engine_client(
+(APIServer pid=3899410)   File "/home/sgsilva/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/contextlib.py", line 210, in __aenter__
+(APIServer pid=3899410)     return await anext(self.gen)
+(APIServer pid=3899410)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/entrypoints/openai/api_server.py", line 132, in build_async_engine_client
+(APIServer pid=3899410)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=3899410)   File "/home/sgsilva/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/contextlib.py", line 210, in __aenter__
+(APIServer pid=3899410)     return await anext(self.gen)
+(APIServer pid=3899410)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/entrypoints/openai/api_server.py", line 156, in build_async_engine_client_from_engine_args
+(APIServer pid=3899410)     vllm_config = engine_args.create_engine_config(usage_context=usage_context)
+(APIServer pid=3899410)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/engine/arg_utils.py", line 2489, in create_engine_config
+(APIServer pid=3899410)     config = VllmConfig(
+(APIServer pid=3899410)              ^^^^^^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/pydantic/_internal/_dataclasses.py", line 121, in __init__
+(APIServer pid=3899410)     s.__pydantic_validator__.validate_python(ArgsKwargs(args, kwargs), self_instance=s)
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/config/vllm.py", line 1591, in __post_init__
+(APIServer pid=3899410)     self._set_compile_ranges()
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/config/vllm.py", line 2060, in _set_compile_ranges
+(APIServer pid=3899410)     max_size = compilation_config.pass_config.flashinfer_max_size(tp_size)
+(APIServer pid=3899410)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/config/compilation.py", line 200, in flashinfer_max_size
+(APIServer pid=3899410)     max_size_mb = self.default_fi_allreduce_fusion_max_size_mb().get(world_size)
+(APIServer pid=3899410)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/config/compilation.py", line 206, in default_fi_allreduce_fusion_max_size_mb
+(APIServer pid=3899410)     from vllm.compilation.passes.fusion.allreduce_rms_fusion import (
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/vllm/compilation/passes/fusion/allreduce_rms_fusion.py", line 90, in <module>
+(APIServer pid=3899410)     import flashinfer.comm as _flashinfer_comm
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/flashinfer/comm/__init__.py", line 4, in <module>
+(APIServer pid=3899410)     from .trtllm_ar import AllReduceFusionOp as AllReduceFusionOp
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/flashinfer/comm/trtllm_ar.py", line 24, in <module>
+(APIServer pid=3899410)     from flashinfer.comm.mnnvl import CommBackend, SymmDeviceMemory, TorchDistBackend
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/flashinfer/comm/mnnvl.py", line 54, in <module>
+(APIServer pid=3899410)     from .fd_exchange import broadcast_fd, exchange_fds
+(APIServer pid=3899410)   File "/home/sgsilva/utilities/serve/kimi3/.venv/lib/python3.11/site-packages/flashinfer/comm/fd_exchange.py", line 55, in <module>
+(APIServer pid=3899410)     def _fd_ancillary(fd: int) -> tuple[tuple[int, int, array.array[int]]]:
+(APIServer pid=3899410)                                                         ~~~~~~~~~~~^^^^^
+(APIServer pid=3899410) TypeError: type 'array.array' is not subscriptable
+[2026-08-12T20:53:48+00:00] cleanup: stopping vllm (pid 3899410) ...
+[2026-08-12T20:53:48+00:00] cleanup done

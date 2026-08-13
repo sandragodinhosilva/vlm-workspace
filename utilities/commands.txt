@@ -31,12 +31,17 @@ ENABLE_THINKING=1 /home/sgsilva/utilities/serve/start_vllm_server.sh qwen3.5-397
 ENABLE_THINKING=1 GPU_MEM_UTIL=0.92 MAX_NUM_SEQS=384 /home/sgsilva/utilities/serve/start_vllm_server.sh qwen3.5-397b-a17b 8 131072 8000
 
 
-# 122b (thinkON) — serving venv
+# 122b (thinkOFF) — serving venv
 QWEN35_VENV=/home/sgsilva/qwen3.5-serving-home-venv bash ./start_vllm_server.sh qwen3.5-122b-a10b 8 262144 8000
 
 # GLM AUGUST 2026
 ENABLE_THINKING=1 QWEN35_VENV=/home/sgsilva/glm52-serving-home-venv \
   /home/sgsilva/utilities/serve/start_vllm_server.sh glm-5.2-fp8 8 200000 9001
+
+MAX_NUM_SEQS=128 QWEN35_VENV=/home/sgsilva/glm52-serving-home-venv /home/sgsilva/utilities/serve/start_vllm_server.sh glm-5.2-fp8 8 200000 9001
+
+# DeepSeek
+CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:/home/sgsilva/glm52-serving-home-venv/bin:$PATH CUDA_VISIBLE_DEVICES=3,4,5,6 VLLM_USE_V1=1 nohup /home/sgsilva/glm52-serving-home-venv/bin/python -m vllm.entrypoints.cli.main serve /mnt/data/shared/cache/hub/models--deepseek-ai--DeepSeek-V4-Flash/snapshots/60d8d70770c6776ff598c94bb586a859a38244f1 --served-model-name deepseek-v4-flash --tensor-parallel-size 4 --max-model-len 65536 --trust-remote-code --kv-cache-dtype fp8 --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4 --enable-expert-parallel --max-num-seqs 64 --port 9002 --host 0.0.0.0 > /mnt/data/sgsilva/logs/serve_deepseek_v4flash_w30_cuda13.log 2>&1 &
 
 
 SERVE A MODEL (vLLM)  —  start_vllm_server.sh <CKPT> <TP> <MAX_LEN> <PORT>

@@ -1,0 +1,8 @@
+[2026-08-12T20:59:31+00:00] node=worker-5  serving '/mnt/data/shared/models/Kimi-K3' as 'hosted_vllm/kimi-k3' on port 9000
+[2026-08-12T20:59:31+00:00] vllm stdout/stderr -> /home/sgsilva/utilities/serve/kimi3/run/vllm.log
+[2026-08-12T20:59:31+00:00] waiting for health at http://worker-5:9000/health (timeout 3600s) ...
+[2026-08-12T21:42:23+00:00] vllm healthy after 1695s
+[2026-08-12T21:42:24+00:00] endpoint ready: http://worker-5:9000/v1  (model: hosted_vllm/kimi-k3)
+[2026-08-12T21:42:24+00:00] wrote /home/sgsilva/utilities/serve/kimi3/run/endpoint.env
+[2026-08-13T05:52:41+00:00] cleanup: stopping vllm (pid 3904622) ...
+[2026-08-13T05:52:42+00:00] cleanup done

@@ -50,12 +50,12 @@
     ]
   },
   "heads": {
-    "ai-common": "a07d4f9afec9c92b762337716d169d2f95732895",
-    "ai-documentation": "4573e921d874a0d57741372d26ab863d255c8c76",
-    "ai-services": "c6c37d30b814e39c76d3783326d5220574a38c12",
-    "dawn-research": "09b60a7956e54f06b861692abbee4d1d114bcdc7",
+    "ai-common": "c8f26abf79badaea1272e4f66007bcdc36b2fde0",
+    "ai-documentation": "2af53c9a3ac16a2e713455e2c4d91b6ec854c70e",
+    "ai-services": "a533e201e9be02d9ef0a2f3a84be78076c0dbbf4",
+    "dawn-research": "308b0b939f298e8142d065f0e158c4817cc3ed1c",
     "feature-store": "397b0e3290c34222899e9cd5f528098b15536bb5",
-    "phoenix-gym": "58eb7f8e4bfd8af21b1009a2fda5e6fdc5b538c3"
+    "phoenix-gym": "39f061bd981471d968b3492e01a91450837ee36f"
   },
-  "last_run": "2026-08-07 08:04 UTC"
+  "last_run": "2026-08-13 11:31 UTC"
 }
