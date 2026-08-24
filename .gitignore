@@ -8,3 +8,7 @@ utilities/apps/__pycache__/*
 utilities/eval/__pycache__/compile_eval_results.cpython-312.pyc
 # Gradio runtime artifacts (TLS certs etc. from --share launches)
 utilities/apps/.gradio/
+
+# vLLM/SLURM serve logs — runtime artifacts, not source.
+# Logs belong in /mnt/data/sgsilva/logs/ (see feedback_logging).
+utilities/serve/*/run/*.log

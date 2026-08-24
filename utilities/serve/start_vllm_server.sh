@@ -393,7 +393,101 @@ check_port_preflight
 check_gpu_preflight
 
 # Check model type and apply specific configuration
-if [[ "$MODEL_PATH" == *"Qwen3.5"* ]] || [[ "$MODEL_PATH" == *"Qwen/Qwen3.5"* ]] || [[ "$MODEL_PATH" == *"qwen35"* ]]; then
+if [[ "$MODEL_PATH" == *"Qwen3.8"* ]] || [[ "$MODEL_PATH" == *"qwen38"* ]]; then
+    # Qwen3.8-27B (model_type qwen3_5, architecture Qwen3_5ForConditionalGeneration) is NOT
+    # matched by the "Qwen3.5" glob below despite the shared architecture family, so it fell
+    # through to the generic else-branch -- which passes NO --tool-call-parser. The 3WC
+    # monalisa suite grades tool calls, so that silently scored every tool call as a miss
+    # (verified against this ckpt's own chat_template.jinja: <tool_call><function=...> XML,
+    # the same format the qwen36 family uses qwen3_xml for). Added 2026-08-17.
+    echo "Detected Qwen 3.8 model"
+    echo "ENABLE_THINKING=$ENABLE_THINKING"
+    echo ""
+    print_startup_heartbeat_status
+    THINKING_ARGS=()
+    if [[ "$ENABLE_THINKING" == "1" ]]; then
+        THINKING_ARGS+=(--reasoning-parser qwen3)
+        echo "Thinking mode: ENABLED (--reasoning-parser qwen3)"
+    else
+        THINKING_ARGS+=(--default-chat-template-kwargs '{"enable_thinking": false}')
+        echo "Thinking mode: DISABLED (--default-chat-template-kwargs enable_thinking=false)"
+    fi
+    SERVED_NAME_ARGS=()
+    [[ -n "${SERVED_MODEL_NAME:-}" ]] && { SERVED_NAME_ARGS+=(--served-model-name "$SERVED_MODEL_NAME"); echo "Served model name: $SERVED_MODEL_NAME (alias for $MODEL_PATH)"; }
+    build_perf_args 0.85
+    run_qwen35_vllm serve "$MODEL_PATH" \
+        --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
+        --max-model-len "$MAX_MODEL_LEN" \
+        --trust-remote-code \
+        --mm-encoder-tp-mode data \
+        --mm-processor-cache-type shm \
+        --media-io-kwargs '{"video": {"num_frames": 2048}}' \
+        --tool-call-parser qwen3_xml \
+        --enable-auto-tool-choice \
+        --port "$PORT" \
+        --enable-chunked-prefill \
+        "$PREFIX_CACHING_ARG" \
+        "${PERF_ARGS[@]}" \
+        "${SERVED_NAME_ARGS[@]}" \
+        "${THINKING_ARGS[@]}"
+
+elif [[ "$MODEL_PATH" == *"Qwen3.6"* ]] || [[ "$MODEL_PATH" == *"qwen36"* ]]; then
+    # Qwen3.6-27B and its GRPO derivatives (e.g. grpo_thinkingcap_qwen36_27b_...) were falling
+    # through to the generic else-branch, which has TWO known-bad defaults for this family:
+    #   1. No --tool-call-parser at all -- same class of bug the Qwen3.8 branch above already
+    #      fixed 2026-08-17 for a different family. This ckpt's chat_template.jinja uses the same
+    #      <tool_call><function=...> XML format, so qwen3_xml is the correct parser here too.
+    #   2. run_qwen35_vllm's inherited default venv (qwen3.5-serving-home-venv) FAILS outright on
+    #      this ckpt: "Tokenizer class TokenizersBackend does not exist or is not currently
+    #      imported" (transformers 4.57.6 in that venv vs the export's TokenizersBackend).
+    #      Confirmed by direct reproduction 2026-08-17 (af4 step_150 launch, job 138880). The
+    #      correct pinned stack for this family is glm52-serving-home-venv / vLLM 0.23.0 (per the
+    #      3wc-appliedai-eval skill's "Serving facts already settled" -- board-standard for every
+    #      qwen36 GRPO eval row). Forced LOCALLY (does not leak to branches after this one) unless
+    #      the caller already set QWEN35_VENV explicitly.
+    #   Prefix caching: this family has a MEASURED degenerate-generation cliff with it OFF at
+    #   concurrency >=4 (see the PREFIX_CACHING comment above this if/elif chain) -- the
+    #   $PREFIX_CACHING_ARG default (OFF) is unsafe for any real eval load on this family. Pass
+    #   PREFIX_CACHING=1 explicitly for anything beyond a single-concurrency smoke probe.
+    QWEN35_VENV="${QWEN35_VENV:-/home/sgsilva/glm52-serving-home-venv}"
+    echo "Detected Qwen 3.6 model (or a qwen36 GRPO derivative)"
+    echo "ENABLE_THINKING=$ENABLE_THINKING"
+    echo "Serving venv forced to: $QWEN35_VENV (qwen3.5-serving-home-venv is incompatible with this family)"
+    if [ "$PREFIX_CACHING" != "1" ]; then
+        echo "⚠️  PREFIX_CACHING=$PREFIX_CACHING -- this family has a MEASURED degenerate-generation"
+        echo "    cliff with prefix caching OFF at concurrency >=4. Safe for single-request smoke"
+        echo "    probes only; pass PREFIX_CACHING=1 for anything with real concurrent load."
+    fi
+    echo ""
+    print_startup_heartbeat_status
+    THINKING_ARGS=()
+    if [[ "$ENABLE_THINKING" == "1" ]]; then
+        THINKING_ARGS+=(--reasoning-parser qwen3)
+        echo "Thinking mode: ENABLED (--reasoning-parser qwen3)"
+    else
+        THINKING_ARGS+=(--default-chat-template-kwargs '{"enable_thinking": false}')
+        echo "Thinking mode: DISABLED (--default-chat-template-kwargs enable_thinking=false)"
+    fi
+    SERVED_NAME_ARGS=()
+    [[ -n "${SERVED_MODEL_NAME:-}" ]] && { SERVED_NAME_ARGS+=(--served-model-name "$SERVED_MODEL_NAME"); echo "Served model name: $SERVED_MODEL_NAME (alias for $MODEL_PATH)"; }
+    build_perf_args 0.85
+    run_qwen35_vllm serve "$MODEL_PATH" \
+        --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
+        --max-model-len "$MAX_MODEL_LEN" \
+        --trust-remote-code \
+        --mm-encoder-tp-mode data \
+        --mm-processor-cache-type shm \
+        --media-io-kwargs '{"video": {"num_frames": 2048}}' \
+        --tool-call-parser qwen3_xml \
+        --enable-auto-tool-choice \
+        --port "$PORT" \
+        --enable-chunked-prefill \
+        "$PREFIX_CACHING_ARG" \
+        "${PERF_ARGS[@]}" \
+        "${SERVED_NAME_ARGS[@]}" \
+        "${THINKING_ARGS[@]}"
+
+elif [[ "$MODEL_PATH" == *"Qwen3.5"* ]] || [[ "$MODEL_PATH" == *"Qwen/Qwen3.5"* ]] || [[ "$MODEL_PATH" == *"qwen35"* ]]; then
     echo "Detected Qwen 3.5 model"
     echo "ENABLE_THINKING=$ENABLE_THINKING"
     echo ""
