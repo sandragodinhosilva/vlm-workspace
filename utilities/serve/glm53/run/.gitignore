@@ -1,0 +1,5 @@
+# Runtime state written by serve_glm53.sbatch once the server is healthy, and removed by its
+# cleanup trap. Node/jobid change every launch, so it is never meaningful to version.
+endpoint.env
+slurm-*.log
+vllm.log

@@ -41,6 +41,10 @@ MODELS["glm-4.7"]="/mnt/data/shared/models/GLM-4.7"
 # /mnt/data/shared/models/GLM-5.2, which per the vLLM recipe needs MULTI-NODE.
 MODELS["glm-5.2-fp8"]="/mnt/data/shared/cache/hub/models--zai-org--GLM-5.2-FP8/snapshots/31cba24fb749908a485082bdeed6eb1ac6cffc2f"
 MODELS["glm-5.2-nvfp4"]="/mnt/data/shared/cache/hub/models--nvidia--GLM-5.2-NVFP4/snapshots/aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa"
+# GLM-5.3 FP8 — same GlmMoeDsaForCausalLM architecture and fp8 block quant as 5.2-FP8
+# (verified 2026-09-02: 142 shards, 756GB, complete). Single node TP=8. Served under the id
+# "glm-5.3" so clients written against the shared worker-31 LB work unchanged.
+MODELS["glm-5.3"]="/mnt/data/shared/cache/hub/models--zai-org--GLM-5.3/snapshots/935644c05e76fc198714f4cca449fd8b970ff6d7"
 MODELS["internvl3.5-241b"]="OpenGVLab/InternVL3_5-241B-A28B-HF"
 MODELS["kimi-k2.5"]="/mnt/data/shared/models/Kimi-K2.5/"
 MODELS["qwen3.5-397b-a17b"]="/mnt/data/shared/models/Qwen3.5-397B-A17B/"
@@ -536,7 +540,7 @@ elif [[ "$MODEL_PATH" == *"Kimi-K2.5"* ]]|| [[ "$MODEL_PATH" == *"kimi"* ]]; the
         "$PREFIX_CACHING_ARG" \
         "${PERF_ARGS[@]}"
 
-elif [[ "$MODEL_PATH" == *"GLM-5.2"* ]]; then
+elif [[ "$MODEL_PATH" == *"GLM-5.2"* ]] || [[ "$MODEL_PATH" == *"GLM-5.3"* ]]; then
     # Config from the official vLLM recipe (recipes.vllm.ai/zai-org/GLM-5.2),
     # B200/Blackwell section — this cluster is B300, same family.
     #
@@ -551,7 +555,7 @@ elif [[ "$MODEL_PATH" == *"GLM-5.2"* ]]; then
     # chat_template_kwargs={"reasoning_effort": "high"} per request; it is not a
     # server flag. Serving is identical for the high and max rows — one server
     # produces both, the client chooses.
-    echo "Detected GLM-5.2 - using vLLM-recipe (B200) configuration"
+    echo "Detected GLM-5.2/5.3 - using vLLM-recipe (B200) configuration"
     echo ""
     # max_position_embeddings=1048576; cap the request to that.
     GLM52_MAX_LEN=$MAX_MODEL_LEN
@@ -574,6 +578,9 @@ elif [[ "$MODEL_PATH" == *"GLM-5.2"* ]]; then
         GLM52_PERF_ARGS+=(--enable-expert-parallel)
         echo "Variant: NVFP4 (Blackwell-native) - adding --enable-expert-parallel"
         echo "⚠️  NVFP4 != the FP8 used for the published baselines - not like-for-like."
+    elif [[ "$MODEL_PATH" == *"GLM-5.3"* ]]; then
+        GLM52_SERVED_NAME="${SERVED_MODEL_NAME:-glm-5.3}"
+        echo "Variant: GLM-5.3 FP8 (served as 'glm-5.3', the same id the shared LB uses)"
     else
         GLM52_SERVED_NAME="${SERVED_MODEL_NAME:-glm-5.2-fp8}"
         echo "Variant: FP8 (matches the published baseline)"
