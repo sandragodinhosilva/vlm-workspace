@@ -19,6 +19,7 @@ Pure functions + one small SSH/HTTP-probing surface — no gr.State wiring, no
 Gradio imports. Caller owns state and wires .click()/.change() events.
 """
 
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple
@@ -27,8 +28,43 @@ import requests
 
 WORKER_NODES = [f"worker-{i}" for i in range(32)]  # worker-0 … worker-31
 VLLM_PORT = 8000
-VLLM_PORTS = [8000, 8001, 8002, 8003]  # scan a small range so non-8000 servers show up
 SCAN_TIMEOUT = 2.0  # seconds per node
+
+# Ports to probe. The 8000-8003 block is the historical default, but the serve
+# scripts under ~/utilities/serve/ bind the 90xx range (glm53 9000, phoenix 9002,
+# qwen35_9b_verifier 9010), so a scan limited to 800x reports "no servers found"
+# while three are live. Seed from the endpoint.env files the serve scripts WRITE
+# — that is the only source that tracks a port change without editing this file —
+# then union with the static block. Kept bounded: the scan is 32 nodes x N ports.
+SERVE_RUN_ROOT = "/home/sgsilva/utilities/serve"
+_STATIC_PORTS = [8000, 8001, 8002, 8003, 9000, 9001, 9002, 9010]
+
+
+def _ports_from_endpoint_files(root: str = SERVE_RUN_ROOT) -> List[int]:
+    """Read PORT= out of every ~/utilities/serve/*/run/endpoint.env*.
+
+    These files are written at serve time, so they name the ports actually in
+    use. Returns [] on any failure — the caller unions with _STATIC_PORTS, so a
+    miss degrades to the old behavior rather than an empty scan.
+    """
+    found = []
+    try:
+        import glob as _glob
+        import re as _re
+        for f in _glob.glob(os.path.join(root, "*", "run", "endpoint.env*")):
+            try:
+                with open(f, "r", errors="replace") as fh:
+                    m = _re.search(r"^PORT=(\d+)", fh.read(), _re.M)
+                if m:
+                    found.append(int(m.group(1)))
+            except OSError:
+                continue
+    except Exception:  # noqa: BLE001
+        return []
+    return found
+
+
+VLLM_PORTS = sorted(set(_STATIC_PORTS) | set(_ports_from_endpoint_files()))
 
 
 def get_vllm_owner(node: str, port: int = VLLM_PORT) -> str:
@@ -105,16 +141,26 @@ def scan_cluster() -> Tuple[str, list, List[str]]:
 
     lines = []
     choices = []
+    n_models = 0
     for node, port, models, owner in results:
         # only annotate the port when it's not the default, to keep labels clean
         port_tag = "" if port == VLLM_PORT else f":{port}"
-        for mid in models:
-            short = mid.split("/")[-1]  # short name for display
-            label = f"{node}{port_tag} | {owner} | {short}"
+        # One server can expose several ids for the SAME weights (vLLM --served-model-name
+        # aliases, e.g. worker-31:9000 serving glm-5.2-fp8 / glm-5.3 / zai-org/GLM-5.2-FP8).
+        # Two aliases can share a short name ("GLM-5.2-FP8" vs "zai-org/GLM-5.2-FP8"), and
+        # apply_scan_selection matches on that short name — a colliding label would silently
+        # resolve to whichever alias came first. Disambiguate with the full id when the short
+        # name is not unique on this server.
+        shorts = [m.split("/")[-1] for m in models]
+        for mid, short in zip(models, shorts):
+            disp = mid if shorts.count(short) > 1 else short
+            label = f"{node}{port_tag} | {owner} | {disp}"
             choices.append(label)
-            lines.append(f"✓ {node}:{port}  [{owner}]  {short}")
+            lines.append(f"✓ {node}:{port}  [{owner}]  {disp}")
+            n_models += 1
 
-    summary = f"Found {len(results)} live server(s):\n" + "\n".join(lines)
+    n_srv = len(results)
+    summary = (f"Found {n_srv} live server(s), {n_models} model id(s):\n" + "\n".join(lines))
     return summary, results, choices
 
 
@@ -134,6 +180,12 @@ def apply_scan_selection(selected: str, scan_results: list) -> Tuple[str, str]:
         sel_node, sel_port = node_part, VLLM_PORT
     for node, port, models, owner in scan_results:
         if node == sel_node and port == sel_port:
+            # `short` is the short name, or the FULL id when scan_cluster had to
+            # disambiguate colliding short names on this server. Try an exact
+            # full-id match first so an alias pair resolves to the chosen one.
+            for mid in models:
+                if mid == short:
+                    return f"http://{node}:{port}", mid
             for mid in models:
                 if mid.split("/")[-1] == short:
                     return f"http://{node}:{port}", mid

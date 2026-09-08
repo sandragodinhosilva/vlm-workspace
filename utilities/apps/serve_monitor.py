@@ -2,7 +2,7 @@
 """
 serve_monitor.py — Live vLLM serving monitor + settings frontend.
 
-Two purposes in one app (port 7875):
+Two purposes in one app (port 7878):
 
   TAB 1 "Monitor"  — watch what a served model is DOING right now: requests
     running/waiting/preempted, KV-cache usage, rolling prompt/generation tok/s
@@ -166,8 +166,9 @@ def resolve_default_server() -> tuple:
     fall back to a live cluster scan for MY_USER's most-recently-seen server.
     Never trust a hardcoded hostname blindly — the node behind it may have been
     reassigned to another job since the env var/default was set."""
-    if fetch_served_model(DEFAULT_SERVER):
-        return DEFAULT_SERVER, fetch_served_model(DEFAULT_SERVER)
+    served = fetch_served_model(DEFAULT_SERVER)
+    if served:
+        return DEFAULT_SERVER, served
     _summary, results, _choices = scan_cluster()
     mine = [r for r in results if r[3] == MY_USER]
     if mine:
@@ -397,7 +398,7 @@ def find_serve_logs(server: str, model_id: str = "", limit: int = 12) -> list:
                 head = open(f, "r", errors="replace").read(4000).lower()
                 if node and node in head:
                     s += 40
-                if short and short and short in head:
+                if short and short in head:
                     s += 40
             except OSError:
                 pass
@@ -599,7 +600,7 @@ def render_monitor(server: str, model_id: str, hist: dict):
       <div style='display:flex;gap:10px;flex-wrap:wrap'>
         <div style='flex:1;min-width:150px;padding:12px;background:#f1f3f4;border-radius:8px'>
           <div style='font-size:12px;color:#555'>AVG TTFT (prefill)</div>
-          <div style='font-size:22px;font-weight:700'>{ttft:.3f}s</div>
+          <div style='font-size:22px;font-weight:700'>{(ttft if ttft else 0):.3f}s</div>
         </div>
         <div style='flex:1;min-width:150px;padding:12px;background:#f1f3f4;border-radius:8px'>
           <div style='font-size:12px;color:#555'>AVG DECODE (per-request)</div>
@@ -728,7 +729,7 @@ def ask_model(server: str, model_id: str, question: str, history):
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 def build():
-    with gr.Blocks(theme=gr.themes.Soft(), title="serve-monitor") as demo:
+    with gr.Blocks(title="serve-monitor") as demo:
         gr.Markdown("## 🔭 vLLM Serve Monitor — live load, throughput, and settings")
 
         server_state = gr.State(DEFAULT_SERVER)
@@ -808,11 +809,17 @@ def build():
             # unknown-owner server is NOT mine and stays hidden by default.
             sel = results if show_all_servers else [r for r in results if r[3] == MY_USER]
             lines, choices = [], []
+            repaired = []
             for node, port, models, owner in sel:
                 port_tag = "" if port == 8000 else f":{port}"
                 # re-fetch the model id if the scan came back empty (happens when
-                # /v1/models returned an empty data list at scan time)
+                # /v1/models returned an empty data list at scan time). The
+                # re-fetched id must go back into the tuple the picker reads —
+                # apply_scan_selection matches the chosen short name against this
+                # list, so leaving it empty makes picking that server yield "".
                 mids = [m for m in models if m] or [fetch_served_model(f"http://{node}:{port}")]
+                mids = [m for m in mids if m]
+                repaired.append((node, port, mids, owner))
                 for mid in mids:
                     short = (mid or "?").split("/")[-1]
                     choices.append(f"{node}{port_tag} | {owner} | {short}")
@@ -820,7 +827,7 @@ def build():
             scope = "ALL users" if show_all_servers else MY_USER
             summary = (f"Found {len(sel)} server(s) ({scope}):\n" + "\n".join(lines)
                        if sel else f"No servers found for scope: {scope}.")
-            return summary, sel, gr.update(choices=choices, visible=bool(choices))
+            return summary, repaired, gr.update(choices=choices, visible=bool(choices))
         scan_btn.click(_scan, show_all, [scan_summary, scan_state, scan_dd])
 
         def _pick(sel, results):
@@ -873,4 +880,6 @@ def build():
 
 if __name__ == "__main__":
     port = int(os.environ.get("MONITOR_PORT", "7878"))
-    build().launch(server_name="0.0.0.0", server_port=port, share=False)
+    # gradio 6: theme moved from the Blocks constructor to launch()
+    build().launch(server_name="0.0.0.0", server_port=port, share=False,
+                   theme=gr.themes.Soft())

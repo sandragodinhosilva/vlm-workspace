@@ -5,7 +5,9 @@
 # launch_app.sh / apps_registry.yaml assume VLM paths and venvs. Nothing here imports
 # them, so the two stay independent (see CLAUDE.local.md "membrane").
 #
-#   /home/sgsilva/utilities/3wc_apps/run_app.sh                 # full merged corpus (.index_files), port 7860
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh                 # trace viewer, full merged corpus, port 7860
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh medconv         # medication-mention viewer, port 7883
+#   /home/sgsilva/utilities/3wc_apps/run_app.sh elicit          # behaviour viewer (dormancy / PT handback), port 7884
 #   /home/sgsilva/utilities/3wc_apps/run_app.sh -p 7865         # pick a port
 #   /home/sgsilva/utilities/3wc_apps/run_app.sh --era 0907      # index ONLY the 0907 export (skip 2206/2606)
 #   /home/sgsilva/utilities/3wc_apps/run_app.sh --fg            # run in foreground (Ctrl-C to stop)
@@ -23,16 +25,30 @@ APP_DIR="${APP_DIR:-/home/sgsilva/dawn-research/3wc}"           # the app itself
 DATA_ROOT="${DATA_DIR:-/mnt/data/shared/3wc}"                   # READ-ONLY: never write here
                                                                 # (moved from /mnt/data/pmartins/3-way-chat-thrive, 2026-07-28)
 PYTHON="${PYTHON:-/mnt/data/sgsilva/.venvs/uv/bin/python3}"
+MEDCONV_PYTHON="${MEDCONV_PYTHON:-/home/sgsilva/dawn-research-3wc-home-venv/bin/python}"
 LOG_DIR="${LOG_DIR:-/mnt/data/sgsilva/logs/3wc}"
 
-PORT="${PORT:-7860}"
+PORT="${PORT:-}"
 HOST="${HOST:-0.0.0.0}"
 ERA=""
 MODE="bg"
 
+# App registry: name -> "script relative to APP_DIR | default port".
+# `trace` is the original viewer; add a row here rather than writing a second launcher,
+# so start/stop/status/ownership checks stay in ONE place.
+APP="trace"
+declare -A APP_SCRIPT=( [trace]="app.py"        [medconv]="apps/med_conversations.py"  [elicit]="apps/elicit_behavior.py" )
+declare -A APP_PORT=(   [trace]="7860"          [medconv]="7883"                       [elicit]="7884" )
+declare -A APP_DESC=(
+  [trace]="Langfuse trace viewer — Member / Phoenix / Specialist"
+  [medconv]="medication-mention conversations (member + send_message)"
+  [elicit]="behaviours: policy vs Sonnet per turn (dormancy escalation, PT handback)"
+)
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -p|--port) PORT="$2"; shift 2 ;;
+    trace|medconv|elicit) APP="$1"; shift ;;
     --host)    HOST="$2"; shift 2 ;;
     --era)     ERA="$2";  shift 2 ;;
     --fg)      MODE="fg"; shift ;;
@@ -48,15 +64,23 @@ done
 # launcher itself), and those report ~0% CPU — misleading when checking health.
 # argv[0] is the discriminator: for the real process it IS the interpreter.
 pid_on_port() {
-  pgrep -u "$USER" -f "app\.py" 2>/dev/null | while read -r p; do
+  # Match the SELECTED app's script (app.py or apps/med_conversations.py), not a literal
+  # app.py -- otherwise --status/--stop silently report "not running" for every app but
+  # the trace viewer. Ownership stays enforced by `pgrep -u "$USER"`.
+  local _leaf="${SCRIPT##*/}"
+  pgrep -u "$USER" -f "${_leaf//./\\.}" 2>/dev/null | while read -r p; do
     mapfile -d '' -t argv < "/proc/$p/cmdline" 2>/dev/null || continue
     [[ "${argv[0]:-}" == *python* ]] || continue          # argv[0] must be the interpreter
-    [[ "${argv[1]:-}" == *app.py  ]] || continue          # argv[1] must be the script
+    [[ "${argv[1]:-}" == *"$_leaf" ]] || continue         # argv[1] must be the script
     for ((i = 2; i < ${#argv[@]}; i++)); do
       [[ "${argv[i]}" == "--port" && "${argv[i+1]:-}" == "$PORT" ]] && { echo "$p"; break; }
     done
   done | head -1
 }
+
+# Resolve the app BEFORE any mode runs: --status/--stop need SCRIPT + the app's default port.
+SCRIPT="${APP_SCRIPT[$APP]}"
+PORT="${PORT:-${APP_PORT[$APP]}}"
 
 case "$MODE" in
   status)
@@ -82,7 +106,8 @@ esac
 
 # --- preflight -------------------------------------------------------------- #
 [[ -d "$DATA_ROOT" ]] || { echo "FATAL: DATA_DIR not found: $DATA_ROOT" >&2; exit 1; }
-[[ -f "$APP_DIR/app.py" ]] || { echo "FATAL: app.py not found: $APP_DIR/app.py" >&2; exit 1; }
+[[ -f "$APP_DIR/$SCRIPT" ]] || { echo "FATAL: not found: $APP_DIR/$SCRIPT" >&2; exit 1; }
+echo "app:   $APP — ${APP_DESC[$APP]}"
 [[ -x "$PYTHON"    ]] || { echo "FATAL: python not executable: $PYTHON" >&2; exit 1; }
 "$PYTHON" -c 'import gradio' 2>/dev/null || { echo "FATAL: gradio missing in $PYTHON" >&2; exit 1; }
 
@@ -111,7 +136,15 @@ else
   echo "corpus: merged (.index_files)"
 fi
 
-export ONLY_UNIT="${ONLY_UNIT:-thrive}"
+# medconv reads a multi-unit dump (thrive/bloom/pulse) and must not be unit-scoped;
+# it also runs on the 3wc venv, which is what core/ + the screen vocabulary import against.
+if [[ "$APP" == "medconv" || "$APP" == "elicit" ]]; then
+  PYTHON="$MEDCONV_PYTHON"
+  export ONLY_UNIT="${ONLY_UNIT:-All}"
+else
+  export ONLY_UNIT="${ONLY_UNIT:-thrive}"
+fi
+: "${ONLY_UNIT:?}"
 # Keep every write under /home/sgsilva — /tmp is a shared mount. Overriding
 # unconditionally is deliberate: a `GRADIO_TEMP_DIR=/tmp/...` inherited from the
 # ambient shell would otherwise win over a `:-` default and silently put temp
@@ -125,11 +158,11 @@ echo "tmp:   $GRADIO_TEMP_DIR"
 
 cd "$APP_DIR"
 if [[ "$MODE" == "fg" ]]; then
-  exec "$PYTHON" app.py --port "$PORT" --host "$HOST"
+  exec "$PYTHON" "$SCRIPT" --port "$PORT" --host "$HOST"
 fi
 
-LOG="$LOG_DIR/app_${PORT}_$(date +%Y%m%d_%H%M%S).log"
-nohup "$PYTHON" app.py --port "$PORT" --host "$HOST" > "$LOG" 2>&1 &
+LOG="$LOG_DIR/${APP}_${PORT}_$(date +%Y%m%d_%H%M%S).log"
+nohup "$PYTHON" "$SCRIPT" --port "$PORT" --host "$HOST" > "$LOG" 2>&1 &
 pid=$!
 echo "started pid=$pid  port=$PORT"
 echo "log:   $LOG"

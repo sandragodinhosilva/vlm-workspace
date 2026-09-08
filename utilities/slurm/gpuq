@@ -7,10 +7,9 @@ to flag "rogue" usage — GPUs in use without a slurm job claiming them
 (common on dev nodes, or when someone bypasses the scheduler).
 
 Usage:
-    ./gpuq.py                          # default: slurm + ssh probe
+    ./gpuq.py                          # default: squeue listing + slurm + ssh probe
+    ./gpuq.py --no-queue               # skip the plain squeue listing
     ./gpuq.py --no-probe               # slurm only, no ssh
-    ./gpuq.py --procs                  # also show owner+model per GPU process
-    ./gpuq.py --serving                # show a "what's served with vLLM" section
     ./gpuq.py --extra dev01,dev02      # also include nodes outside slurm
     ./gpuq.py --timeout 5              # bump ssh timeout
     watch -c -n2 ./gpuq.py             # live refresh
@@ -31,9 +30,8 @@ RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
 RED, GREEN, YELLOW = "\033[31m", "\033[32m", "\033[33m"
 MAGENTA, CYAN, GRAY = "\033[35m", "\033[36m", "\033[90m"
 
-USE_COLOR = (
-    os.environ.get("NO_COLOR") is None
-    and (os.environ.get("FORCE_COLOR") or sys.stdout.isatty())
+USE_COLOR = os.environ.get("NO_COLOR") is None and (
+    os.environ.get("FORCE_COLOR") or sys.stdout.isatty()
 )
 
 
@@ -189,17 +187,37 @@ def fetch_nodes():
             or parse_gpu_count(d.get("Gres", ""))[0]
             or "gpu"
         )
+
         # CPU info — CPUEfctv is the allocatable count (CPUTot minus reserved cores)
         def _int(x):
-            try: return int(x)
-            except (TypeError, ValueError): return 0
+            try:
+                return int(x)
+            except (TypeError, ValueError):
+                return 0
+
         cpu_used = _int(d.get("CPUAlloc"))
         cpu_total = _int(d.get("CPUEfctv")) or _int(d.get("CPUTot"))
         # Memory is reported in MB by scontrol
         mem_used = _int(d.get("AllocMem"))
         mem_total = _int(d.get("RealMemory"))
+        # State like IDLE+CLOUD+DRAIN: keep the base plus the flags that matter
+        # (drain/down/...), drop noise like CLOUD/COMPLETING/PLANNED.
+        parts = d.get("State", "?").lower().split("+")
+        flags = [
+            p for p in parts[1:]
+            if p in ("drain", "down", "fail", "maint", "reboot", "not_responding", "invalid_reg")
+        ]
+        state = "+".join([parts[0]] + flags)
+        # Reason= is free text with spaces (KV_RE can't capture it); grab it raw,
+        # trimmed to the first sentence and without the "[root@date]" suffix.
+        reason = ""
+        if flags:
+            m = re.search(r"\bReason=(.*)$", line)
+            if m:
+                reason = re.split(r"\.\s|\s\[\w+@|\sClean up", m.group(1), 1)[0].strip()[:80]
         nodes[d["NodeName"]] = {
-            "state": d.get("State", "?").split("+")[0].lower(),
+            "state": state,
+            "reason": reason,
             "type": gtype,
             "total": gtotal,
             "used": gused,
@@ -239,7 +257,12 @@ def job_gpu_count(d):
 # Job states that still hold node resources (not just RUNNING).
 # Slurm marks a node 'allocated' while jobs sit in any of these.
 ACTIVE_JOB_STATES = {
-    "RUNNING", "COMPLETING", "CONFIGURING", "SUSPENDED", "RESIZING", "STOPPED",
+    "RUNNING",
+    "COMPLETING",
+    "CONFIGURING",
+    "SUSPENDED",
+    "RESIZING",
+    "STOPPED",
 }
 
 
@@ -297,296 +320,49 @@ def state_color(s):
     return GRAY
 
 
-USED_CH = "●"   # slurm-allocated
+USED_CH = "●"  # slurm-allocated
 ROGUE_CH = "◆"  # in use per nvidia-smi but no slurm job
 FREE_CH = "○"
 
 # Heuristic for "in use" from nvidia-smi: above either threshold counts as busy.
-PROBE_MEM_MB = 200      # >200 MB of memory used
-PROBE_UTIL_PCT = 5      # >5% utilization
+PROBE_MEM_MB = 200  # >200 MB of memory used
+PROBE_UTIL_PCT = 5  # >5% utilization
 
 SSH_OPTS = [
-    "-o", "BatchMode=yes",
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "LogLevel=ERROR",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "LogLevel=ERROR",
 ]
 
 
-# Marker separating the payloads we pack into one SSH round-trip.
-PROBE_SEP = "===GPUQ-PROCS==="
+def probe_node(host, timeout):
+    """SSH to host, run nvidia-smi, return (total_gpus, busy_idx_set, type_name).
 
-GPU_QUERY = (
-    "nvidia-smi --query-gpu=index,memory.used,utilization.gpu,name "
-    "--format=csv,noheader,nounits"
-)
-# Process attribution, only sent when --procs: compute-apps + a uuid→idx map
-# + a process tree (pid/ppid/user) so we can attribute each GPU PID, AND the
-# full untruncated cmdline of every process via /proc (ps truncates args and
-# frameworks like vLLM rename the worker procs — the model arg lives on an
-# ancestor). We walk the tree locally to find the model-bearing ancestor.
-PROC_QUERY = (
-    "echo " + PROBE_SEP + "; "
-    "nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory "
-    "--format=csv,noheader,nounits 2>/dev/null; "
-    "echo " + PROBE_SEP + "; "
-    "nvidia-smi --query-gpu=index,uuid --format=csv,noheader 2>/dev/null; "
-    "echo " + PROBE_SEP + "; "
-    "ps -eo pid=,ppid=,user= 2>/dev/null; "
-    "echo " + PROBE_SEP + "; "
-    # full cmdlines: 'PID<TAB>arg0 arg1 ...' (NULs in /proc → spaces)
-    "for f in /proc/[0-9]*/cmdline; do p=${f%/cmdline}; p=${p#/proc/}; "
-    "printf '%s\\t' \"$p\"; tr '\\0' ' ' < \"$f\" 2>/dev/null; echo; done"
-)
-
-
-def _norm_gpu_name(raw):
-    # turn 'NVIDIA H100 80GB HBM3' → 'h100_80gb_hbm3' to match slurm style
-    n = re.sub(r"^nvidia[\s_-]+", "", raw.lower())
-    return re.sub(r"\s+", "_", n)
-
-
-# Recognizable model-bearing flags, tried in order.
-_MODEL_FLAGS = ("--served-model-name", "--model", "--model-path",
-                "--model_name_or_path", "--pretrained", "--checkpoint")
-
-
-def _shorten_model(p):
-    """Keep the last 2 path segments so the label stays informative but short."""
-    p = p.rstrip("/")
-    segs = [s for s in p.split("/") if s]
-    if len(segs) <= 2:
-        return p
-    return ".../" + "/".join(segs[-2:])
-
-
-def extract_model(args_str):
-    """Best-effort 'what model is this' from a process command line.
-
-    Smart chain: explicit serving/training model flags → an HF/checkpoint path
-    token → the python entry script. Returns a short label or None.
+    Returns None on any failure (no ssh, no nvidia-smi, timeout, etc).
     """
-    if not args_str:
-        return None
-    toks = args_str.split()
-    # `vllm serve <model>` / `... serve <model>`: the positional after 'serve'
-    # is the model (HF id or path), even with no --model flag.
-    for i, t in enumerate(toks[:-1]):
-        if t == "serve" and not toks[i + 1].startswith("-"):
-            return _shorten_model(toks[i + 1])
-    for i, t in enumerate(toks):
-        for flag in _MODEL_FLAGS:
-            if t == flag and i + 1 < len(toks):
-                return _shorten_model(toks[i + 1])
-            if t.startswith(flag + "="):
-                return _shorten_model(t.split("=", 1)[1])
-    for t in toks:
-        if ("/" in t and not t.startswith("-")
-                and re.search(r"(checkpoint|step\d+|/models?/|huggingface|/hf_|"
-                              r"[Qq]wen|merged|sft|grpo|dpo)", t)):
-            return _shorten_model(t)
-    for t in toks:
-        if t.endswith(".py"):
-            return os.path.basename(t)
-    return None
-
-
-# ─── vLLM serving detection ───────────────────────────────────────────
-# A process is a vLLM API server if its cmdline launches the OpenAI-compatible
-# server. Covers both entrypoints: `vllm serve ...` and the module form
-# `python -m vllm.entrypoints.openai.api_server ...`.
-def _is_vllm_server(args_str):
-    if not args_str:
-        return False
-    # Exclude our own probe payload (a bash -c loop that greps for 'vllm serve'
-    # would otherwise match itself).
-    if "/proc/[0-9]*/cmdline" in args_str or "GPUQ-PROCS" in args_str:
-        return False
-    # Every vLLM OpenAI-server entrypoint form seen in the wild:
-    #   vllm serve <model>                              (console script)
-    #   python -m vllm.entrypoints.openai.api_server    (legacy module)
-    #   python -m vllm.entrypoints.cli.main serve       (modern CLI module)
-    #   .../bin/vllm serve                              (venv console script)
-    if "vllm.entrypoints.openai.api_server" in args_str:
-        return True
-    if "vllm.entrypoints.cli.main" in args_str and " serve" in args_str:
-        return True
-    # `vllm serve` where the token before 'serve' ends in 'vllm' (bare command,
-    # console-script path, or `python .../vllm serve`).
-    if re.search(r"(^|/|\s)vllm\s+serve(\s|$)", args_str):
-        return True
-    return False
-
-
-def _extract_port(args_str, default=8000):
-    """Port a vLLM server listens on: `--port N` / `--port=N`, else the default
-    (start_vllm_server.sh's default is 8000)."""
-    m = re.search(r"--port[=\s]+(\d+)", args_str or "")
-    return int(m.group(1)) if m else default
-
-
-def _vllm_servers_from_cmdlines(ppid, user_of, cmdline):
-    """Find vLLM API-server processes on a node from its full process table.
-
-    Returns list of dicts: {pid, user, port, model} — deduped by port so a
-    parent launcher + its api-server child don't both show up.
-    """
-    by_port = {}
-    for pid, args in cmdline.items():
-        if not _is_vllm_server(args):
-            continue
-        port = _extract_port(args)
-        by_port.setdefault(port, {
-            "pid": pid,
-            "user": user_of.get(pid, "?"),
-            "port": port,
-            # Prefer --served-model-name (the id evals use); fall back to the
-            # served path / model flag, then a parent-chain walk.
-            "model": (_served_model_name(args) or extract_model(args)
-                      or _model_for_pid(pid, ppid, cmdline)),
-        })
-    return list(by_port.values())
-
-
-def _served_model_name(args_str):
-    """The --served-model-name value, if the launch set one."""
-    m = re.search(r"--served-model-name[=\s]+(\S+)", args_str or "")
-    return m.group(1) if m else None
-
-
-def _model_for_pid(pid, ppid, cmdline, depth=12):
-    """Walk a PID up its parent chain, returning the first model label found.
-
-    GPU processes are often renamed workers (e.g. 'VLLM::Worker_TP0') whose
-    real `vllm serve <model>` / training cmdline lives on an ancestor. Stop at
-    the slurmstepd / init boundary so we don't bleed into unrelated processes.
-    """
-    p = pid
-    for _ in range(depth):
-        args = cmdline.get(p, "")
-        if "slurmstepd" in args:
-            break
-        m = extract_model(args)
-        if m:
-            return m
-        parent = ppid.get(p)
-        if not parent or parent == p or parent == "1":
-            break
-        p = parent
-    return None
-
-
-def _parse_procs(apps_block, uuid_block, tree_block, cmd_block):
-    """Stitch compute-apps + uuid→idx + process tree + cmdlines into rows."""
-    uuid2idx = {}
-    for line in uuid_block.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) >= 2 and parts[0].isdigit():
-            uuid2idx[parts[1]] = int(parts[0])
-    ppid, user_of = {}, {}
-    for line in tree_block.strip().splitlines():
-        m = re.match(r"\s*(\d+)\s+(\d+)\s+(\S+)\s*$", line)
-        if m:
-            ppid[m.group(1)] = m.group(2)
-            user_of[m.group(1)] = m.group(3)
-    cmdline = {}
-    for line in cmd_block.strip().splitlines():
-        if "\t" in line:
-            pid, args = line.split("\t", 1)
-            cmdline[pid.strip()] = args.strip()
-    rows = []
-    for line in apps_block.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 2 or not parts[1].isdigit():
-            continue
-        pid = parts[1]
-        gpu_idx = uuid2idx.get(parts[0], -1)
-        user = user_of.get(pid, "?")
-        rows.append((gpu_idx, pid, user, _model_for_pid(pid, ppid, cmdline)))
-    return rows
-
-
-def probe_vllm_health(host, ports, timeout):
-    """Curl /v1/models on host for each port (from the node, over localhost).
-
-    Returns {port: served_id_or_None}. served_id is the exact id vLLM reports
-    (what evals must copy verbatim) — None means the port didn't answer, i.e.
-    the process is still starting up or wedged.
-    """
-    if not ports:
-        return {}
-    # One SSH: loop the ports, curl each, print 'PORT<TAB>json-or-empty'.
-    plist = " ".join(str(p) for p in ports)
-    remote = (
-        "for p in " + plist + "; do "
-        "printf '%s\\t' \"$p\"; "
-        "curl -s --max-time 3 http://127.0.0.1:$p/v1/models 2>/dev/null; "
-        "echo; done"
-    )
-    cmd = ["ssh", "-o", f"ConnectTimeout={int(timeout)}", *SSH_OPTS, host, remote]
+    cmd = [
+        "ssh",
+        "-o",
+        f"ConnectTimeout={int(timeout)}",
+        *SSH_OPTS,
+        host,
+        "nvidia-smi --query-gpu=index,memory.used,utilization.gpu,name "
+        "--format=csv,noheader,nounits",
+    ]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           timeout=timeout + 5 + 3 * len(ports))
-    except (subprocess.TimeoutExpired, OSError):
-        return {}
-    out = {}
-    for line in r.stdout.splitlines():
-        if "\t" not in line:
-            continue
-        port_s, body = line.split("\t", 1)
-        try:
-            port = int(port_s)
-        except ValueError:
-            continue
-        served = None
-        m = re.search(r'"id"\s*:\s*"([^"]+)"', body)
-        if m:
-            served = m.group(1)
-        out[port] = served
-    return out
-
-
-def _parse_tree_cmd(tree_block, cmd_block):
-    """Parse the ps tree + /proc cmdline blocks into (ppid, user_of, cmdline)."""
-    ppid, user_of = {}, {}
-    for line in tree_block.strip().splitlines():
-        m = re.match(r"\s*(\d+)\s+(\d+)\s+(\S+)\s*$", line)
-        if m:
-            ppid[m.group(1)] = m.group(2)
-            user_of[m.group(1)] = m.group(3)
-    cmdline = {}
-    for line in cmd_block.strip().splitlines():
-        if "\t" in line:
-            pid, args = line.split("\t", 1)
-            cmdline[pid.strip()] = args.strip()
-    return ppid, user_of, cmdline
-
-
-def probe_node(host, timeout, want_procs=False, want_serving=False):
-    """SSH to host, run nvidia-smi, return a probe dict (or None on failure).
-
-    Keys: total, busy (idx set), type. With want_procs, also 'procs': a list of
-    (gpu_idx, pid, user, model_label) for live compute processes. With
-    want_serving, also 'servers': a list of {pid, user, port, model} for vLLM
-    API-server processes found on the node.
-    """
-    # Serving detection needs the same full cmdline/tree payload as --procs.
-    need_payload = want_procs or want_serving
-    remote = GPU_QUERY + ((" ; " + PROC_QUERY) if need_payload else "")
-    cmd = ["ssh", "-o", f"ConnectTimeout={int(timeout)}", *SSH_OPTS, host, remote]
-    try:
-        r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout + 5
-        )
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
     except (subprocess.TimeoutExpired, OSError):
         return None
     if r.returncode != 0:
         return None
 
-    blocks = r.stdout.split(PROBE_SEP)
     total = 0
     busy = set()
     name = None
-    for line in blocks[0].strip().splitlines():
+    for line in r.stdout.strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 4:
             continue
@@ -600,28 +376,19 @@ def probe_node(host, timeout, want_procs=False, want_serving=False):
         if mem_mb > PROBE_MEM_MB or util > PROBE_UTIL_PCT:
             busy.add(idx)
         if name is None:
-            name = _norm_gpu_name(parts[3])
-
-    result = {"total": total, "busy": busy, "type": name}
-    if need_payload and len(blocks) >= 5:
-        if want_procs:
-            result["procs"] = _parse_procs(
-                blocks[1], blocks[2], blocks[3], blocks[4])
-        if want_serving:
-            ppid, user_of, cmdline = _parse_tree_cmd(blocks[3], blocks[4])
-            result["servers"] = _vllm_servers_from_cmdlines(
-                ppid, user_of, cmdline)
-    return result
+            # turn 'NVIDIA H100 80GB HBM3' → 'h100_80gb_hbm3' to match slurm style
+            name = re.sub(r"^nvidia[\s_-]+", "", parts[3].lower())
+            name = re.sub(r"\s+", "_", name)
+    return total, busy, name
 
 
-def probe_all(hosts, timeout, want_procs=False, want_serving=False):
+def probe_all(hosts, timeout):
     """Probe many hosts in parallel. Returns dict host -> result-or-None."""
     if not hosts:
         return {}
     out = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as ex:
-        futs = {ex.submit(probe_node, h, timeout, want_procs, want_serving): h
-                for h in hosts}
+        futs = {ex.submit(probe_node, h, timeout): h for h in hosts}
         for fut in concurrent.futures.as_completed(futs):
             out[futs[fut]] = fut.result()
     return out
@@ -636,8 +403,10 @@ def gpu_dots(d):
     # If slurm gave us positions for all its allocations, render by position.
     if slurm_idx or rogue_idx:
         return "".join(
-            c(USED_CH, RED) if i in slurm_idx
-            else c(ROGUE_CH, YELLOW) if i in rogue_idx
+            c(USED_CH, RED)
+            if i in slurm_idx
+            else c(ROGUE_CH, YELLOW)
+            if i in rogue_idx
             else c(FREE_CH, GREEN)
             for i in range(n)
         )
@@ -680,31 +449,29 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Pretty slurm queue + per-node GPU view with rogue detection."
     )
-    p.add_argument("--no-probe", action="store_true",
-                   help="Skip nvidia-smi/ssh cross-check (slurm-only, faster)")
-    p.add_argument("--extra", default="",
-                   help="Comma-separated nodes outside slurm to also include "
-                        "(e.g. dev01,dev02). Requires probe.")
-    p.add_argument("--timeout", type=float, default=3.0,
-                   help="SSH connect timeout per node in seconds (default 3)")
-    p.add_argument("--procs", action="store_true",
-                   help="Show a per-node sub-line of live GPU processes "
-                        "(gpu#, owner, detected model). Extra ssh cost.")
-    p.add_argument("--serving", "--vllm", action="store_true", dest="serving",
-                   help="Show a 'what's served with vLLM' section: each live "
-                        "vLLM server's node:port, exact served-id (from "
-                        "/v1/models), model, and owner. Extra ssh cost.")
-    # Bare subcommand: `gpuq vllm` (or `gpuq serving`) == `gpuq --serving`.
-    p.add_argument("mode", nargs="?", default=None,
-                   help="Optional subcommand. 'vllm'/'serving' = show the "
-                        "vLLM serving section (same as --serving).")
-    args = p.parse_args()
-    if args.mode in ("vllm", "serving", "serve"):
-        args.serving = True
-    elif args.mode is not None:
-        p.error(f"unknown subcommand: {args.mode!r} "
-                "(did you mean 'vllm'?)")
-    return args
+    p.add_argument(
+        "--no-queue",
+        action="store_true",
+        help="Skip the plain squeue listing printed above the dashboard",
+    )
+    p.add_argument(
+        "--no-probe",
+        action="store_true",
+        help="Skip nvidia-smi/ssh cross-check (slurm-only, faster)",
+    )
+    p.add_argument(
+        "--extra",
+        default="",
+        help="Comma-separated nodes outside slurm to also include "
+        "(e.g. dev01,dev02). Requires probe.",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=3.0,
+        help="SSH connect timeout per node in seconds (default 3)",
+    )
+    return p.parse_args()
 
 
 def print_squeue_listing():
@@ -715,11 +482,12 @@ def print_squeue_listing():
     Bump Name if your longest job name doesn't fit.
     """
     try:
-        out = run([
-            "squeue",
-            "--Format=JobID:10,UserName:12,Name:60,Partition:12,"
-            "State:10,NodeList:30",
-        ])
+        out = run(
+            [
+                "squeue",
+                "--Format=JobID:10,UserName:12,Name:60,Partition:12,State:10,NodeList:30",
+            ]
+        )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return
     print(out.rstrip())
@@ -729,44 +497,39 @@ def print_squeue_listing():
 def main():
     args = parse_args()
 
-    print_squeue_listing()
+    if not args.no_queue:
+        print_squeue_listing()
 
     nodes = fetch_nodes()
     fetch_jobs(nodes)
     fetch_reservations(nodes)
 
     extras = [n.strip() for n in args.extra.split(",") if n.strip()]
-    # --serving needs SSH; it overrides --no-probe (you can't detect servers
-    # without reaching the nodes).
-    do_probe = not args.no_probe or extras or args.serving
-
-    # host -> [ {pid,user,port,model}, ... ] for vLLM servers, filled during probe.
-    servers_by_host = {}
+    do_probe = not args.no_probe or extras  # extras imply probe
 
     # Probe slurm-known nodes for rogue usage + any extras for everything.
     if do_probe:
         targets = list(nodes.keys()) + extras
-        probed = probe_all(targets, args.timeout,
-                           want_procs=args.procs, want_serving=args.serving)
+        probed = probe_all(targets, args.timeout)
 
         for name, result in probed.items():
             if result is None:
                 continue
-            ptotal, pbusy, pname = result["total"], result["busy"], result["type"]
-            pprocs = result.get("procs")
-            psrv = result.get("servers")
-            if psrv:
-                servers_by_host[name] = psrv
+            ptotal, pbusy, pname = result
             if name in nodes:
                 # Slurm node: derive rogue = busy - slurm_allocated
                 d = nodes[name]
-                d["rogue"] = pbusy - d["idx"] if d["idx"] else (
+                d["rogue"] = (
+                    pbusy - d["idx"]
+                    if d["idx"]
                     # no IDX from slurm — best-effort: any busy slot beyond
                     # what slurm counts as used is rogue
-                    set(list(pbusy)[d["used"]:]) if len(pbusy) > d["used"] else set()
+                    else (
+                        set(list(pbusy)[d["used"] :])
+                        if len(pbusy) > d["used"]
+                        else set()
+                    )
                 )
-                if pprocs:
-                    d["procs"] = pprocs
             else:
                 # Extra node: synthesize a slurm-less entry
                 nodes[name] = {
@@ -781,7 +544,6 @@ def main():
                     "mem_used": 0,
                     "mem_total": 0,
                     "jobs": [],
-                    "procs": pprocs or [],
                 }
 
     if not nodes:
@@ -804,27 +566,29 @@ def main():
             return (0, name)
         if jobs:
             return (1, min(jid_num(j) for j in jobs))
+        if any(k in state for k in ("drain", "down", "fail")):
+            return (3, name)
         return (2, name)
 
     # ─── fixed column widths so rows never shift ───────────────────────
     # If your cluster has names/types longer than these, bump the constants.
-    W_NODE  = max(10, max(len(n) for n in nodes) + 1)
-    W_STATE = 12
-    W_GPUS  = max((d["total"] for d in nodes.values()), default=8)  # max GPU count
-    W_GRATIO = 8       # e.g. "0+3/8 "
-    W_CRATIO = 9       # e.g. "192/192 "
-    W_MRATIO = 11      # e.g. "2.4T/2.4T "
-    W_TYPE  = max(22, max(len(d["type"]) for d in nodes.values()) + 2)
+    W_NODE = max(10, max(len(n) for n in nodes) + 1)
+    W_STATE = 16
+    W_GPUS = max((d["total"] for d in nodes.values()), default=8)  # max GPU count
+    W_GRATIO = 8  # e.g. "0+3/8 "
+    W_CRATIO = 9  # e.g. "192/192 "
+    W_MRATIO = 11  # e.g. "2.4T/2.4T "
+    W_TYPE = max(22, max(len(d["type"]) for d in nodes.values()) + 2)
     GAP = "  "
 
     # ─── header row ────────────────────────────────────────────────────
     header_parts = [
-        vpad("NODE",  W_NODE),
+        vpad("NODE", W_NODE),
         vpad("STATE", W_STATE),
-        vpad("GPUS",  W_GPUS + 1 + W_GRATIO),
-        vpad("CPU",   BAR_TOTAL_WIDTH + 1 + W_CRATIO),
-        vpad("MEM",   BAR_TOTAL_WIDTH + 1 + W_MRATIO),
-        vpad("TYPE",  W_TYPE),
+        vpad("GPUS", W_GPUS + 1 + W_GRATIO),
+        vpad("CPU", BAR_TOTAL_WIDTH + 1 + W_CRATIO),
+        vpad("MEM", BAR_TOTAL_WIDTH + 1 + W_MRATIO),
+        vpad("TYPE", W_TYPE),
         "JOBS",
     ]
     print(c(GAP.join(header_parts), BOLD, DIM))
@@ -839,7 +603,8 @@ def main():
 
         gratio = (
             f"{d['used']}+{c(str(rogue_n), YELLOW)}/{d['total']}"
-            if rogue_n else f"{d['used']}/{d['total']}"
+            if rogue_n
+            else f"{d['used']}/{d['total']}"
         )
         cratio = f"{d['cpu_used']}/{d['cpu_total']}"
         mratio = f"{fmt_mem(d['mem_used'])}/{fmt_mem(d['mem_total'])}"
@@ -849,14 +614,18 @@ def main():
         dots = gpu_dots(d) + " " * max(0, W_GPUS - d["total"])
 
         cells = [
-            vpad(c(name, BOLD),                              W_NODE),
-            vpad(c(d["state"], state_color(d["state"])),     W_STATE),
-            vpad(dots + " " + gratio,                        W_GPUS + 1 + W_GRATIO),
-            vpad(pct_bar(d["cpu_used"], d["cpu_total"]) + " " + cratio.rjust(W_CRATIO),
-                 BAR_TOTAL_WIDTH + 1 + W_CRATIO),
-            vpad(pct_bar(d["mem_used"], d["mem_total"]) + " " + mratio.rjust(W_MRATIO),
-                 BAR_TOTAL_WIDTH + 1 + W_MRATIO),
-            vpad(c(d["type"], DIM),                          W_TYPE),
+            vpad(c(name, BOLD), W_NODE),
+            vpad(c(d["state"], state_color(d["state"])), W_STATE),
+            vpad(dots + " " + gratio, W_GPUS + 1 + W_GRATIO),
+            vpad(
+                pct_bar(d["cpu_used"], d["cpu_total"]) + " " + cratio.rjust(W_CRATIO),
+                BAR_TOTAL_WIDTH + 1 + W_CRATIO,
+            ),
+            vpad(
+                pct_bar(d["mem_used"], d["mem_total"]) + " " + mratio.rjust(W_MRATIO),
+                BAR_TOTAL_WIDTH + 1 + W_MRATIO,
+            ),
+            vpad(c(d["type"], DIM), W_TYPE),
         ]
         line = GAP.join(cells)
 
@@ -868,93 +637,21 @@ def main():
             )
         for res in d.get("reservations", []):
             line += GAP + c(f"[reservation:{res}]", MAGENTA)
+        if d.get("reason"):
+            r = d["reason"]
+            line += GAP + c(r if r.startswith("[") else f"[{r}]", RED, DIM)
         print(line)
-
-        # Optional per-node process sub-line(s): owner + detected model per GPU.
-        # Owner is shown here even though it also appears in the JOBS column —
-        # this is the ground-truth nvidia-smi/ps owner of the live process.
-        if args.procs:
-            for gidx, pid, user, model in sorted(
-                d.get("procs") or [], key=lambda r: (r[0], r[1])
-            ):
-                gpu_lbl = f"gpu{gidx}" if gidx >= 0 else "gpu?"
-                print(
-                    "    "
-                    + c(f"└ {gpu_lbl}", GRAY) + " "
-                    + c(user, CYAN) + " "
-                    + c(f"pid {pid}", DIM) + "  "
-                    + c(model or "(unknown)", BOLD)
-                )
 
     if any_rogue:
         print(
-            c(f"\n{ROGUE_CH} = in use per nvidia-smi but no slurm job claims it",
-              DIM, YELLOW),
+            c(
+                f"\n{ROGUE_CH} = in use per nvidia-smi but no slurm job claims it",
+                DIM,
+                YELLOW,
+            ),
             file=sys.stderr,
         )
-
-    if args.serving:
-        print_serving_section(servers_by_host, args.timeout)
-
     return 0
-
-
-def print_serving_section(servers_by_host, timeout):
-    """Print a 'what's served with vLLM' table below the node dashboard.
-
-    For each detected vLLM server, health-check /v1/models from the node itself
-    to get the EXACT served-id (what evals must copy verbatim per the eval-plan
-    gate) and confirm the endpoint answers. A server that's still coming up (no
-    /v1/models yet) shows a 'starting?' health flag, not a happy-path guess.
-    """
-    print()
-    print(c("── SERVED WITH vLLM ──", BOLD, CYAN))
-    if not servers_by_host:
-        print(c("  (no live vLLM servers detected on any probed node)", DIM))
-        return
-
-    # Health-check each host's ports in parallel (one SSH per host).
-    healths = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as ex:
-        futs = {
-            ex.submit(probe_vllm_health, host,
-                      [s["port"] for s in srvs], timeout): host
-            for host, srvs in servers_by_host.items()
-        }
-        for fut in concurrent.futures.as_completed(futs):
-            healths[futs[fut]] = fut.result()
-
-    # Flatten to rows and compute column widths.
-    rows = []
-    for host in sorted(servers_by_host):
-        health = healths.get(host, {})
-        for s in sorted(servers_by_host[host], key=lambda x: x["port"]):
-            served = health.get(s["port"])  # None => not answering
-            rows.append({
-                "endpoint": f"{host}:{s['port']}",
-                "served": served,
-                "model": s["model"] or "(unknown)",
-                "user": s["user"],
-                "live": served is not None,
-            })
-
-    w_ep = max(8, max(len(r["endpoint"]) for r in rows) + 1)
-    w_served = max(10, max(len(r["served"] or "starting?") for r in rows) + 1)
-    w_user = max(6, max(len(r["user"]) for r in rows) + 1)
-    print(c("  " + vpad("ENDPOINT", w_ep) + vpad("SERVED-ID", w_served)
-            + vpad("USER", w_user) + "MODEL", BOLD, DIM))
-    for r in rows:
-        served_txt = (c(r["served"], GREEN) if r["live"]
-                      else c("starting?", YELLOW))
-        print(
-            "  "
-            + vpad(c(r["endpoint"], BOLD), w_ep)
-            + vpad(served_txt, w_served)
-            + vpad(c(r["user"], CYAN), w_user)
-            + c(r["model"], DIM)
-        )
-    print(c("  SERVED-ID = exact /v1/models id — copy verbatim for evals.",
-            DIM))
 
 
 if __name__ == "__main__":
