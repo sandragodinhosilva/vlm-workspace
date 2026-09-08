@@ -13,6 +13,7 @@
 #   /home/sgsilva/utilities/3wc_apps/run_app.sh --fg            # run in foreground (Ctrl-C to stop)
 #   /home/sgsilva/utilities/3wc_apps/run_app.sh --status        # is it up? where is it logging?
 #   /home/sgsilva/utilities/3wc_apps/run_app.sh --stop          # stop the instance on this port
+#   APP_ARGS="--colleague --share" run_app.sh medconv -p 7886     # extra app flags (colleague view + SWORD relay link)
 #
 # First launch scans the corpus to build byte-offset indexes (~34 GB for the full
 # merged set, a few minutes); every later launch loads them from .trace_index/ and
@@ -150,6 +151,9 @@ fi
 # ambient shell would otherwise win over a `:-` default and silently put temp
 # files back on /tmp. Set TMP_3WC to choose a different location.
 export GRADIO_TEMP_DIR="${TMP_3WC:-/home/sgsilva/tmp/gradio_3wc}"
+# Unbuffered stdout: under nohup Gradio's "Running on public URL" line (the SWORD relay share link) sat
+# in the block buffer and never reached the log, so a shared instance looked link-less (2026-09-08).
+export PYTHONUNBUFFERED=1
 mkdir -p "$GRADIO_TEMP_DIR" "$LOG_DIR"
 
 echo "host:  $(hostname)"
@@ -158,11 +162,13 @@ echo "tmp:   $GRADIO_TEMP_DIR"
 
 cd "$APP_DIR"
 if [[ "$MODE" == "fg" ]]; then
-  exec "$PYTHON" "$SCRIPT" --port "$PORT" --host "$HOST"
+  # shellcheck disable=SC2086  -- APP_ARGS is a word list by design (e.g. "--colleague --share")
+  exec "$PYTHON" "$SCRIPT" --port "$PORT" --host "$HOST" ${APP_ARGS:-}
 fi
 
 LOG="$LOG_DIR/${APP}_${PORT}_$(date +%Y%m%d_%H%M%S).log"
-nohup "$PYTHON" "$SCRIPT" --port "$PORT" --host "$HOST" > "$LOG" 2>&1 &
+# shellcheck disable=SC2086
+nohup "$PYTHON" "$SCRIPT" --port "$PORT" --host "$HOST" ${APP_ARGS:-} > "$LOG" 2>&1 &
 pid=$!
 echo "started pid=$pid  port=$PORT"
 echo "log:   $LOG"
