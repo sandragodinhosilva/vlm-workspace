@@ -7,6 +7,7 @@ write into `/mnt/data/shared/3wc/` (pmartins-owned) and never mutate a run dir.
 | --- | --- |
 | `preview_eval_jsonl.py` | Readable preview of a run's `generations*.jsonl` / `judged.jsonl` — summary (replay_status mix, judge-score means, flat-metric warning) + per-row block (decision, tool call, judge scores, gen_text). Also `--list` for a whole run dir. |
 | `preview_conversations.py` | The companion "why" view: the **conversation the model saw**, its output, and the judge's per-metric comments, for the same rows. Imports the reader from `preview_eval_jsonl.py`. |
+| `preview_elicited_edits.py` | The **elicited rows** of a sample package (`dormancy_samples`, `med_samples`) as plain text for plausibility review: BEFORE/AFTER of the edited message, the conversation around it, the mutator's own account, then the rollouts. Filters `--mode` / `--review`. Not an eval-run view — a GRPO row has no judge; the question is whether a real clinician could have written the edit. |
 | `preview_by_conversation.py` | **turn → eval → turn → eval** for one member: every graded turn of one `(account, program_uuid)` in timestamp order, each followed by all its eval rows, with `PHOENIX did` / `MODEL did` side by side. Needs `--turns`; `--trace` adds the ground-truth line. |
 | `build_trace_offsets.py` | One-time `turn_id → byte-offset` sidecar for a 22–102 GB Langfuse trace file, so the above can *seek* instead of cold-starting the repo's full corpus index. |
 
