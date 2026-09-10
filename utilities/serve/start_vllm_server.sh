@@ -33,20 +33,38 @@ MODELS["qwen3-vl-8b-thinking"]="Qwen/Qwen3-VL-8B-Thinking"
 MODELS["qwen3-vl-32b-instruct"]="Qwen/Qwen3-VL-32B-Instruct"
 MODELS["qwen3-vl-32b-thinking"]="Qwen/Qwen3-VL-32B-Thinking"
 MODELS["glm-4.5v"]="zai-org/GLM-4.5V"
+# ⛔ BROKEN 2026-09-10 (dir /mnt/data/shared/models/GLM-4.6V does not exist):
 MODELS["glm-4.6v"]="/mnt/data/shared/models/GLM-4.6V"
+# ⛔ BROKEN 2026-09-10 (dir /mnt/data/shared/models/GLM-4.7 does not exist):
 MODELS["glm-4.7"]="/mnt/data/shared/models/GLM-4.7"
 # GLM-5.2 FP8 — the exact variant behind the 3WC monalisa "open source model
 # comparison" baselines. Pinned to the HF-cache snapshot (already on shared
 # storage, 141 shards, complete) rather than the 2.8TB BF16 copy at
 # /mnt/data/shared/models/GLM-5.2, which per the vLLM recipe needs MULTI-NODE.
+# ⛔ BROKEN 2026-09-10 (HF-cache snapshot purged 2026-09-10; shared/models/GLM-5.2 is BF16, NOT this build):
 MODELS["glm-5.2-fp8"]="/mnt/data/shared/cache/hub/models--zai-org--GLM-5.2-FP8/snapshots/31cba24fb749908a485082bdeed6eb1ac6cffc2f"
+# ⛔ BROKEN 2026-09-10 (HF-cache snapshot purged 2026-09-10; no NVFP4 copy on disk):
 MODELS["glm-5.2-nvfp4"]="/mnt/data/shared/cache/hub/models--nvidia--GLM-5.2-NVFP4/snapshots/aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa"
 # GLM-5.3 FP8 — same GlmMoeDsaForCausalLM architecture and fp8 block quant as 5.2-FP8
 # (verified 2026-09-02: 142 shards, 756GB, complete). Single node TP=8. Served under the id
 # "glm-5.3" so clients written against the shared worker-31 LB work unchanged.
-MODELS["glm-5.3"]="/mnt/data/shared/cache/hub/models--zai-org--GLM-5.3/snapshots/935644c05e76fc198714f4cca449fd8b970ff6d7"
+# ⚠️ 2026-09-10 CACHE PURGE: the big quantized models were deleted from /mnt/data/shared/cache/hub
+# (8 model dirs left of what was there; GLM-5.2-FP8, GLM-5.2-NVFP4 and GLM-5.3 snapshots all GONE).
+# glm-5.3 was repointed to the surviving canonical copy under /mnt/data/shared/models (same build,
+# verified fp8 e4m3 / GlmMoeDsaForCausalLM). The entries marked BROKEN below have NO verified
+# equivalent on disk -- /mnt/data/shared/models/GLM-5.2 is UNQUANTIZED (2.8T, quant=none), so it is
+# NOT a drop-in for glm-5.2-fp8; serving it would silently change precision. Re-download or point at
+# a build you have verified before un-breaking them.
+# 2026-09-10: the HF-cache snapshot was deleted from /mnt/data/shared/cache/hub (job 154989 had served it
+# for 3 days; a resubmit died instantly with "Local model not found"). The canonical copy under
+# /mnt/data/shared/models survives -- same build (GlmMoeDsaForCausalLM, fp8 e4m3, 141 shards), so labels
+# stay comparable across the outage. Old path kept here for provenance:
+#   /mnt/data/shared/cache/hub/models--zai-org--GLM-5.3/snapshots/935644c05e76fc198714f4cca449fd8b970ff6d7
+MODELS["glm-5.3"]="/mnt/data/shared/models/GLM-5.3"
 MODELS["internvl3.5-241b"]="OpenGVLab/InternVL3_5-241B-A28B-HF"
+# ⛔ BROKEN 2026-09-10 (dir /mnt/data/shared/models/Kimi-K2.5 does not exist (Kimi-K3 does)):
 MODELS["kimi-k2.5"]="/mnt/data/shared/models/Kimi-K2.5/"
+# ⛔ BROKEN 2026-09-10 (dir /mnt/data/shared/models/Qwen3.5-397B-A17B does not exist):
 MODELS["qwen3.5-397b-a17b"]="/mnt/data/shared/models/Qwen3.5-397B-A17B/"
 MODELS["qwen3.5-122b-a10b"]="/mnt/data/shared/models/Qwen3.5-122B-A10B"
 MODELS["qwen3.5-27b"]="/mnt/data/shared/models/Qwen3.5-27B"
