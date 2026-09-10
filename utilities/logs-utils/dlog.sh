@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# dlog — register a created dataset in ~/.claude/VLM_DATASETS.md
+# dlog — register a created dataset in ~/.claude/VLM_DATASETS.md (or another registry)
+#
+# Registries (one per workstream, so a reasoning corpus never lands in the VLM list):
+#   VLM_DATASETS.md   default
+#   REAS_DATASETS.md  --registry reas   (reasoning-trace / ReasoningFlow corpora, 2026-09-10)
+#   any file          --registry /abs/path.md   or   DLOG_REGISTRY=/abs/path.md
 #
 # Every dataset we materialize gets one entry: full path, how it was built
 # (builder + args), source inputs, a one-line purpose, row count, and date.
@@ -12,6 +17,8 @@
 #        --builder "<script + key args>" \
 #        --sources "<input dataset(s)>" \
 #        [--rows N]            # auto-counted via HF load if omitted & loadable
+#        [--name <heading>]    # entry heading; default = basename of --path (bad for .../input)
+#        [--registry vlm|reas|/abs/path.md]
 #        [--status canonical|superseded|component]   # default: canonical
 #        [--superseded-by <name>]                     # the dataset that replaces this one
 #
@@ -24,8 +31,8 @@
 
 set -euo pipefail
 
-REG="$HOME/.claude/VLM_DATASETS.md"
-PATH_ARG="" PURPOSE="" BUILDER="" SOURCES="" ROWS="" STATUS="canonical" SUPERSEDED_BY=""
+REG="${DLOG_REGISTRY:-$HOME/.claude/VLM_DATASETS.md}"
+PATH_ARG="" PURPOSE="" BUILDER="" SOURCES="" ROWS="" STATUS="canonical" SUPERSEDED_BY="" NAME=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,6 +43,12 @@ while [ $# -gt 0 ]; do
     --rows)          ROWS="$2";          shift 2;;
     --status)        STATUS="$2";        shift 2;;  # canonical | superseded | component (default: canonical)
     --superseded-by) SUPERSEDED_BY="$2"; shift 2;;  # name of the replacing dataset
+    --name)          NAME="$2";          shift 2;;  # entry heading (default: basename of --path)
+    --registry)      case "$2" in
+                       vlm)  REG="$HOME/.claude/VLM_DATASETS.md";;
+                       reas) REG="$HOME/.claude/REAS_DATASETS.md";;
+                       *)    REG="$2";;
+                     esac; shift 2;;
     *) echo "dlog: unknown arg '$1'" >&2; exit 2;;
   esac
 done
@@ -74,7 +87,7 @@ fi
 # Prepend the new entry directly under the `---` separator (newest first).
 ENTRY="$(cat <<EOF
 
-### \`$(basename "$PATH_ARG")\`  ($DATE)
+### \`${NAME:-$(basename "$PATH_ARG")}\`  ($DATE)
 - **Status:** $STATUS$([ -n "$SUPERSEDED_BY" ] && printf ' (superseded by `%s`)' "$SUPERSEDED_BY")
 - **Path:** \`$PATH_ARG\`
 - **Purpose:** $PURPOSE
@@ -90,4 +103,4 @@ awk -v entry="$ENTRY" '
   { print }
 ' "$REG" > "$REG.tmp" && mv "$REG.tmp" "$REG"
 
-echo "dlog: registered $(basename "$PATH_ARG") ($ROWS rows) → $REG"
+echo "dlog: registered ${NAME:-$(basename "$PATH_ARG")} ($ROWS rows) → $REG"
