@@ -32,7 +32,7 @@ if [[ -f "$VLM_DOC_INDEX" ]]; then
     case "$b" in *_LIVE.md) continue;; esac
     grep -q "$b" "$VLM_DOC_INDEX" 2>/dev/null || unindexed=$((unindexed+1))
   done < <(find "$REPORTS" -maxdepth 1 -name '*.md' 2>/dev/null)
-  [[ "$unindexed" -gt 0 ]] && issues+="  • $unindexed report(s) not in VLM_DOC_INDEX → run /report-status"$'\n'
+  [[ "$unindexed" -gt 0 ]] && issues+="  • $unindexed report(s) not in VLM_DOC_INDEX → run /vlm-report-status or /3wc-report-status"$'\n'
 fi
 
 # 2) plans without a STATUS banner in their first 3 lines (unstamped by /plan-status)

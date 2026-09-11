@@ -47,11 +47,20 @@ while [ $# -gt 0 ]; do
     --registry)      case "$2" in
                        vlm)  REG="$HOME/.claude/VLM_DATASETS.md";;
                        reas) REG="$HOME/.claude/REAS_DATASETS.md";;
+                       3wc)  REG="$HOME/.claude/3WC_DATASETS.md";;
                        *)    REG="$2";;
-                     esac; shift 2;;
+                     esac; REG_EXPLICIT=1; shift 2;;
     *) echo "dlog: unknown arg '$1'" >&2; exit 2;;
   esac
 done
+
+# Route by path when --registry was not given: a 3WC dataset must not land in the VLM registry.
+# (2026-09-11: three 3WC datasets had been written into VLM_DATASETS.md by the silent default.)
+if [ -z "${REG_EXPLICIT:-}" ] && [ -n "${PATH_ARG:-$DPATH}" ]; then
+  case "${PATH_ARG:-$DPATH}" in
+    */3wc/*|*/dawn-research/*) REG="$HOME/.claude/3WC_DATASETS.md";;
+  esac
+fi
 
 case "$STATUS" in
   canonical|superseded|component) ;;
@@ -96,6 +105,15 @@ ENTRY="$(cat <<EOF
 - **Rows:** $ROWS
 EOF
 )"
+
+# The entry is inserted after the first '---' line. A registry WITHOUT that anchor (e.g. the 3WC table
+# registry, whose rows are markdown-table rows) must FAIL here, not print "registered" over a no-op --
+# 2026-09-11: two entries were silently lost that way.
+if ! grep -q '^---$' "$REG"; then
+  echo "dlog: registry $REG has no '^---\$' anchor line -- entry NOT written." >&2
+  echo "dlog: this registry is not in the '### entry' format; add the row by hand (or add a '---' line where entries should go)." >&2
+  exit 3
+fi
 
 # Insert after the first '---' line.
 awk -v entry="$ENTRY" '

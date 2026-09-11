@@ -114,7 +114,7 @@ fi
 if [[ "${1:-}" == "--reap" ]]; then
     echo "Reap: marking stale 'running' entries whose node is dead..."
     "$PY" - <<'PYEOF'
-import json, subprocess, time
+import json, os, subprocess, time
 IDX="/mnt/data/sgsilva/logs/index.jsonl"
 LOCK="/mnt/data/sgsilva/logs/index.lock"
 # stale = running and epoch older than 24h
@@ -131,7 +131,90 @@ with open(IDX, errors="replace") as f:
         cur = runs.get(lf)
         if cur is None or (r.get("epoch") or 0) >= (cur.get("epoch") or 0):
             runs[lf] = r
-stale = [r for r in runs.values() if r.get("status") == "running" and (r.get("epoch") or 0) < cutoff]
+candidates = [r for r in runs.values() if r.get("status") == "running" and (r.get("epoch") or 0) < cutoff]
+
+# 2026-09-11: this used to reap every >24h 'running' entry on age ALONE -- it imported
+# subprocess but never called it, so a legitimately long job (a multi-day serve) would be
+# falsely marked nfs_lost. Now the owner must be PROVABLY gone before we close its run.
+#   origin "<node>_p<pid>" -> local process, alive if `ps -p <pid>` succeeds ON THAT NODE
+#   origin "j<jobid>"      -> SLURM job, alive if squeue still lists it
+# Unknown/unparseable origin, or a liveness probe we cannot run (different node) -> KEEP,
+# because a false 'nfs_lost' destroys a real run's record while a missed one is only noise.
+_here = subprocess.run(["hostname", "-s"], capture_output=True, text=True).stdout.strip()
+
+# A run whose owner cannot be probed is closed only when it is far past any plausible runtime.
+# 14 days is deliberately generous: the longest legitimate run in this index is a multi-day
+# serve, and a false 'nfs_lost' destroys a real record while a missed one is only noise.
+VERY_OLD_S = 14 * 86400
+def _very_old(r):
+    return (time.time() - (r.get("epoch") or time.time())) > VERY_OLD_S
+
+# One ssh per NODE, not per pid: fetch that node's whole pid set once and answer from it.
+# (A per-pid probe took minutes across ~700 candidates.)
+_node_pids = {}
+def _pids_on(node):
+    """set of pids on <node>, or None if unreachable."""
+    if node in _node_pids:
+        return _node_pids[node]
+    if node == _here:
+        try:
+            out = subprocess.run(["ps", "-eo", "pid="], capture_output=True, text=True, timeout=20)
+            res = {x.strip() for x in out.stdout.split() if x.strip()}
+        except Exception:
+            res = None
+    else:
+        try:
+            cp = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", node, "ps -eo pid="],
+                capture_output=True, text=True, timeout=25)
+            res = {x.strip() for x in cp.stdout.split() if x.strip()} if cp.returncode == 0 else None
+        except Exception:
+            res = None
+    _node_pids[node] = res
+    return res
+
+def _pid_alive_on(node, pid):
+    """True/False if we could probe <node>, None if the node is unreachable."""
+    pids = _pids_on(node)
+    if pids is None:
+        return None
+    return pid in pids
+
+def _squeue_alive():
+    try:
+        out = subprocess.run(["squeue", "-h", "-o", "%i", "-u", os.environ.get("USER", "")],
+                             capture_output=True, text=True, timeout=20)
+        return {j.strip().split("_")[0] for j in out.stdout.split() if j.strip()}
+    except Exception:
+        return None   # cannot tell -> treat every slurm run as alive
+
+_live_jobs = _squeue_alive()
+
+def _owner_gone(r):
+    o = (r.get("origin") or "").strip()
+    if not o:
+        return False
+    if o.startswith("j") and o[1:].split("_")[0].isdigit():
+        if _live_jobs is None:
+            return False
+        return o[1:].split("_")[0] not in _live_jobs
+    if "_p" in o:
+        node, _, pid = o.rpartition("_p")
+        if not pid.isdigit():
+            return _very_old(r)
+        if node and _here and node != _here:
+            alive = _pid_alive_on(node, pid)
+            if alive is None:
+                return _very_old(r)      # unreachable node -> fall back to the age backstop
+            return not alive
+        return subprocess.run(["ps", "-p", pid], capture_output=True).returncode != 0
+    # origin with no pid at all (e.g. "claude"): age backstop only
+    return _very_old(r)
+
+stale = [r for r in candidates if _owner_gone(r)]
+kept = len(candidates) - len(stale)
+if kept:
+    print(f"  ({kept} stale-looking entries KEPT -- owner still alive or not provable)")
 if not stale:
     print("No stale running entries found.")
 else:
