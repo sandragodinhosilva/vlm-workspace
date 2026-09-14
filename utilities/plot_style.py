@@ -18,6 +18,11 @@ MODEL_LABEL = {
     "nemotron4": "Nemotron-4B",
     "glm52": "GLM-5.2",
     "glm53": "GLM-5.3",
+    # accuracy-transfer pool (2026-09-09): Qwen3.5-27B is NOT qwen27 (Qwen3.6-27B)
+    "qwen4": "Qwen3.5-4B",
+    "qwen27_35": "Qwen3.5-27B",
+    # MathArena AIME 2026 source corpora (2026-09-10): external traces, not our generations
+    "deepseek_v4_pro": "DeepSeek-v4-Pro",
 }
 MODEL_COLOR = {
     "qwen27": "#1c5cab",     # Qwen family = blues; the larger model is the darker one
@@ -25,7 +30,10 @@ MODEL_COLOR = {
     "gemma12": "#eb6834",
     "nemotron4": "#2e9e5b",
     "glm52": "#17a2b8",
-    "glm53": "#17a2b8",
+    "glm53": "#0d7a8c",      # distinct from glm52: the two appear together in judge comparisons
+    "qwen4": "#9cc4ef",      # lightest blue: the smallest Qwen
+    "qwen27_35": "#2f6fbf",  # between qwen27 and qwen9: a 27B of the older generation
+    "deepseek_v4_pro": "#7b4fa8",  # a different provider => its own hue, not a Qwen blue
 }
 
 # --- sign semantics for transfer deltas (Vasco's validated diverging ramp) ----------------
@@ -57,7 +65,12 @@ BEHAVIOUR_COLOR = {
 }
 
 # --- source-trace correctness ------------------------------------------------------------
-SOURCE_CORRECT_COLOR = {"source_right": "#1c5cab", "source_wrong": "#b52c2b"}
+# ⚠️ Deliberately NOT the POS/NEG sign ramp. Those hexes are also MODEL_COLOR["qwen27"] and
+# NEG, so reusing them put two DIFFERENT meanings (a model, and "the source answered right")
+# in the same colour on w1_kseed_noise_and_averaged.png and w1_after_minus_before.png --
+# a reader cannot tell which series a swatch belongs to. Teal/amber is a distinct pair that
+# no model and no sign uses.
+SOURCE_CORRECT_COLOR = {"source_right": "#0f8b8d", "source_wrong": "#d4761a"}
 SOURCE_CORRECT_LABEL = {"source_right": "Source trace answered right",
                         "source_wrong": "Source trace answered wrong"}
 
