@@ -165,7 +165,7 @@ _log_finalize() {
 }
 
 log_end() {
-    local logfile="$1" code="${2:-0}"
+    local logfile="${1:-${_LOG_RUN_FILE:-}}" code="${2:-0}"   # default: the run log_start opened (callers under set -u pass nothing)
     local status; if [[ "$code" == "0" ]]; then status="done"; else status="failed"; fi
     _log_finalize "$status" "$code" "$logfile" "${_LOG_RUN_META:-}" "${_LOG_RUN_RUNDIR:-}"
     export _LOG_RUN_ENDED=1
