@@ -21,6 +21,7 @@ MODEL_LABEL = {
     # accuracy-transfer pool (2026-09-09): Qwen3.5-27B is NOT qwen27 (Qwen3.6-27B)
     "qwen4": "Qwen3.5-4B",
     "qwen27_35": "Qwen3.5-27B",
+    "qwen35_2b": "Qwen3.5-2B",
     # MathArena AIME 2026 source corpora (2026-09-10): external traces, not our generations
     "deepseek_v4_pro": "DeepSeek-v4-Pro",
 }
@@ -31,6 +32,7 @@ MODEL_COLOR = {
     "nemotron4": "#2e9e5b",
     "glm52": "#17a2b8",
     "glm53": "#0d7a8c",      # distinct from glm52: the two appear together in judge comparisons
+    "qwen35_2b": "#c7ddf6",  # palest blue: the smallest Qwen in the 3.5 ladder (2B)
     "qwen4": "#9cc4ef",      # lightest blue: the smallest Qwen
     "qwen27_35": "#2f6fbf",  # between qwen27 and qwen9: a 27B of the older generation
     "deepseek_v4_pro": "#7b4fa8",  # a different provider => its own hue, not a Qwen blue
