@@ -7,6 +7,7 @@ Small, dependency-light converters for turning working files into shareable arti
 | `render_mmd_png.py` | mermaid `.mmd` → PNG (+ SVG sidecar), fully offline |
 | `md_to_docx.py` | Markdown → .docx |
 | `md_to_html.py` | Markdown → standalone HTML |
+| `md_to_pdf.py` | Markdown → PDF with the figures it references placed inline |
 
 ---
 
@@ -67,3 +68,30 @@ One-time setup (chromium ~114 MB, already done):
 - Diagram outputs → `/mnt/data/sgsilva/results/visual_obs/diagrams/` (or the relevant
   results subdir). Never `/tmp`.
 - Log real runs: `clog misc <run_name> -- <cmd>`.
+
+
+---
+
+## `md_to_pdf.py` — Markdown → PDF with figures placed inline
+
+```bash
+/home/sgsilva/venvs/reasoningflow/bin/python \
+  /home/sgsilva/utilities/conversion/md_to_pdf.py \
+  <report.md> --out <report.pdf> [--dpi 300] [--raster]
+```
+
+A **reading copy** of a report: headings, paragraphs, lists, tables and every figure the
+markdown references, laid out on A4. Inline code, links and emphasis render as plain text --
+for a paper, write the tables in LaTeX instead.
+
+**Why it exists.** The cluster has no pandoc, wkhtmltopdf, LaTeX or browser, so the usual
+routes to a PDF are unavailable. matplotlib writes the pages, PIL reads the PNGs, and `pypdf`
+stamps vector figures in.
+
+**Figures are vector when a twin exists.** A figure referenced as `foo.png` is embedded from
+`foo.pdf` beside it if that file is there, so its type stays sharp at any zoom; otherwise the
+PNG is embedded as a bitmap at `--dpi`. `--raster` forces the bitmap path. Scripts under
+`what-is-a-good-reasoning/scripts/analysis/` write those twins automatically (see the
+`Figure.savefig` wrapper in `present/figures.py`).
+
+Needs `pypdf` — present in `/home/sgsilva/venvs/reasoningflow`.
