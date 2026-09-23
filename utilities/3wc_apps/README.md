@@ -96,7 +96,7 @@ temp files back on `/tmp`, which is a shared mount.
 
 ## Related
 
-- Status reference for the whole project: `~/.claude/reports/3wc/2026-07-27_3wc_status_reference.md`
+- Status reference for the whole project: `~/.claude/reports/3wc/_archive/2026-07-27_3wc_status_reference.md`
 - My personal 3WC hub: `~/.claude/3WC_HOME.md` · index: `~/.claude/3WC_DOC_INDEX.md`
 - Team-authoritative context: `dawn-research/AGENTS.md` + `.knowledge/`
 - The pipeline scripts this app's corpus feeds: `dawn-research/3wc/scripts/`

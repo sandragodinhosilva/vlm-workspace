@@ -43,7 +43,7 @@ the baseline explicit, and the entry states when history is unreachable instead 
 `track_3wc_changes.py` flags commits touching `prompts/`, `registry/specialized/`, `*.jinja`,
 `evals/`, `scenarios/`, `precision_of_care`. Prompt-semantics drift makes `decision_correctness` /
 `protocol_adherence` non-comparable across eval eras — see
-`~/.claude/reports/3wc/2026-07-29_3wc_prompt_layer.md` §6. Extend the `HOT` dict when a new area
+`~/.claude/reports/3wc/onboarding/2026-07-29_3wc_prompt_layer.md` §6. Extend the `HOT` dict when a new area
 starts mattering.
 
 ## Why these live here, not in the repo

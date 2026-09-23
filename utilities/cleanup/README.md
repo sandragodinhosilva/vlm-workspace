@@ -137,6 +137,22 @@ use `cleanup_checkpoints.py` instead.
 
 ---
 
+### `vault_link_check.py` — broken-link finder/fixer for `~/.claude` ✅
+Run after renaming or moving any report, plan, handoff or memory file. It checks written-out vault
+paths (`~/.claude/...`, bare `reports/...`), relative markdown links and (with `--wikilinks`)
+memory `[[wikilinks]]`. A link whose target filename exists at exactly one place is FIXABLE, and
+`--fix` repoints it. Ambiguous or missing targets are only reported. It never touches `_backups/`
+or session-history dirs (`projects/<session-uuid>/`), which are immutable.
+
+It walks the files itself on purpose. In Claude Code sessions `grep` is a ugrep wrapper with
+`--ignore-files`, and the vault's whitelist `.gitignore` makes it silently skip `handoffs/` and
+anything else untracked. A `grep -r` link sweep reports clean when it isn't.
+
+```bash
+python3 vault_link_check.py            # report (exit 1 if anything is broken)
+python3 vault_link_check.py --fix      # repoint FIXABLE links
+```
+
 ### `test_cleanup_checkpoints.py` — test suite
 pytest tests for `cleanup_checkpoints.py` (board detector, export guard, run-key matching).
 
