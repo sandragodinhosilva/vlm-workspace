@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pipeline-inspector — VObs-tool-SFT pipeline quality inspector (port 7880).
+pipeline-inspector — VObs-tool-SFT pipeline quality inspector (port 7890; 7880-7889 belong to the 3WC apps).
 
 Row-by-row inspection of the run_tool_sft_4k.py output (gen → rewrite → judge →
 regen trail, the rep's own video, the per-step `step_metrics` block) + a
@@ -2336,7 +2336,7 @@ def build_ui() -> gr.Blocks:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--port", type=int, default=7880)
+    ap.add_argument("--port", type=int, default=7890)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--share", action="store_true",
                     help="Expose a share link via the self-hosted SWORD relay "

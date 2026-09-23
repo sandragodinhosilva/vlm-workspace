@@ -2,7 +2,7 @@
 
 Everything needed to launch, browse, and build input datasets for Sandra's
 data-inspection Gradio apps. For **which app to use for a given task**, see the
-`/vlm-apps` skill's "I want to…" routing table — this file is the mechanical reference
+`/apps` skill's "I want to…" routing table — this file is the mechanical reference
 (ports, launch, schemas, registry).
 
 ## Quick start
@@ -12,9 +12,8 @@ data-inspection Gradio apps. For **which app to use for a given task**, see the
 ~/utilities/apps/launch_app.sh --list              # see all 19 apps + ports
 ~/utilities/apps/launch_app.sh video-sft           # launch; prints browser URL
 
-# On your local Mac/PC (tunnel — remote port + 10000):
-ssh -N -L 17862:localhost:7862 new-login-1
-# Then open: http://localhost:17862/
+# On your Mac: clusterweb (SOCKS profile) opens http://login-1:7862/ directly.
+# Tunnel fallback only for localhost-bound apps (terminate on the app's node): ssh -N -L 17862:127.0.0.1:7862 login-1
 ```
 
 ## Layout
@@ -46,7 +45,7 @@ hold all app sources; moving the embedded ones here would break their imports.
 
 ## Port table (all unique — all apps can run concurrently)
 
-Grouped by **workstream** (matches the registry's `workstream:` field and the `/vlm-apps`
+Grouped by **workstream** (matches the registry's `workstream:` field and the `/apps`
 skill's routing table).
 
 ### General
@@ -141,7 +140,7 @@ picks them up automatically (rescans on restart).
 Key rules: `messages` must be a real list (not a JSON string); `video_id` must resolve
 under `/mnt/data/shared/vlm/data/10k/all/<video_id>/` or via `metadata.video_path`;
 always supply true per-rep `fps` (never hardcode 30); set `need_to_flip` explicitly.
-Full schema detail is in the `/vlm-apps` skill.
+Full schema detail is in the `/apps` skill.
 
 ## Adding a new app to the registry
 
@@ -176,7 +175,7 @@ counter; a filter dropdown that scopes nav (hidden when the field is absent);
 detail; a color-coded status banner when rows carry a verdict; and metadata rendering
 that walks the dict rather than hard-coding an allowlist. Reference implementation:
 `web/image_row_viewer.py` (`image-viewer`, port 7867) — fork it for new HF image-row /
-judge-review viewers. Full detail in the `/vlm-apps` skill.
+judge-review viewers. Full detail in the `/apps` skill.
 
 ## Full audit report
 

@@ -15,8 +15,8 @@
 #   launch_app.sh --status
 #
 # After launch, open in browser:
-#   http://localhost:1<PORT>/   (local port = 10000 + remote port)
-# e.g. remote port 7862 → http://localhost:17862/
+#   http://<host>:<PORT>/   (open via clusterweb; apps bind 0.0.0.0)
+# e.g. http://login-1:7862/  — tunnel fallback: http://localhost:1<PORT>/
 #
 # Registry: ~/utilities/apps/apps_registry.yaml
 
@@ -276,8 +276,8 @@ REMOTE
     echo "│  ${_GOAL}"
     echo "│  Script  : ${_REPO}/${_SCRIPT}"
     echo "│  Venv    : ${_VENV}"
-    echo "│  Port    : ${_PORT} (remote) → ${_LOCAL_PORT} (local)"
-    echo "│  Browser : http://localhost:${_LOCAL_PORT}/"
+    echo "│  Port    : ${_PORT}"
+    echo "│  Browser : http://${LOGIN_NODE}:${_PORT}/   (clusterweb; tunnel fallback http://localhost:${_LOCAL_PORT}/)"
     echo "│  Logs    : ssh ${LOGIN_NODE} -t 'tmux attach -t ${TMUX_SESSION}'"
     echo "└─────────────────────────────────────────────────────────────"
     echo ""
@@ -377,8 +377,8 @@ echo "│  $LABEL"
 echo "│  $GOAL"
 echo "│  Script  : $REPO/$SCRIPT"
 echo "│  Venv    : $VENV"
-echo "│  Port    : $PORT (remote) → $LOCAL_PORT (local)"
-echo "│  Browser : http://localhost:$LOCAL_PORT/"
+echo "│  Port    : $PORT"
+echo "│  Browser : http://$(hostname):$PORT/   (clusterweb; tunnel fallback http://localhost:$LOCAL_PORT/)"
 echo "└─────────────────────────────────────────────────────────────"
 echo ""
 
